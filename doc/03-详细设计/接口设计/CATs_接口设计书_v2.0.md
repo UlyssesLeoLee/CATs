@@ -15,7 +15,7 @@
 | 作者 | 架构师 |
 | 状态 | 评审前草稿 |
 | 密级 | 仅社内 |
-| 上游文档 | [CATs 微服务架构设计书 v1.0](../../02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)、[CATs 技术选型书 v2.0](../../02-基础设计/技术选型/CATs_技术选型书_v2.0.md)、[CATs 命名变更说明](../../02-基础设计/架构设计/CATs_命名变更说明.md)、[OFCAT 接口设计书 v1.0（历史/旧架构参考，格式沿用）](./OFCAT_接口设计书_v1.0.md) |
+| 上游文档 | [CATs 微服务架构设计书 v1.0](../../02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)、[CATs 技术选型书 v2.0](../../02-基础设计/技术选型/CATs_技术选型书_v2.0.md)、[CATs 命名变更说明](../../02-基础设计/架构设计/CATs_命名变更说明.md)、[CATs 游戏本地化模块设计书 v1.0](../模块设计/CATs_游戏本地化模块设计书_v1.0.md)、[OFCAT 接口设计书 v1.0（历史/旧架构参考，格式沿用）](./OFCAT_接口设计书_v1.0.md) |
 
 ### 修订履历
 
@@ -23,6 +23,7 @@
 |---|---|---|---|
 | 1.0 | 2026-06-25 | 架构师 | （OFCAT）扩展↔引擎 API-01~10 完整契约、SSE 事件、错误码，见历史文档 |
 | 2.0 | 2026-08-18 | 架构师 | 全面重做：微服务化后 15 个服务的 REST/gRPC/Kafka 完整接口契约，承接《CATs 微服务架构设计书 v1.0》§4、§6、§9 |
+| 2.1 | 2026-08-18 | 架构师 | 新增 §4.7 `game-localization-service` 接口契约，承接《CATs 游戏本地化模块设计书 v1.0》 |
 
 ### 审批栏
 
@@ -635,6 +636,50 @@ message TranslatedSegment { string segment_id = 1; string target_text = 2; strin
 该事件是任务整体完成判定的关键信号之一，task-service 消费后综合各阶段状态判定任务是否 `completed`/`partially_failed`。
 
 **`dub`（TTS 配音）**：MVP 不实现，`render_kind=dub` 当前直接返回 `status=failed, error_code=NOT_IMPLEMENTED`，接口预留，符合技术选型书 ADR「MVP 只留接口钩子」。
+
+---
+
+### 4.7 game-localization-service
+
+**职责**：游戏本地化引擎适配（Unity/Unreal/Godot），承接《CATs 游戏本地化模块设计书 v1.0》§2 的 `EngineAdapter` 抽象，将三引擎的抽取/回写差异收敛在本服务，产出统一中间表示 `GameLocaleUnit` 后同步调用 `translation-core.TranslateBatch`（§3.10）复用现有 TM/术语/QA 管线。与其余 6 个媒体处理服务同为**无独立数据库对外 REST**，业务数据落 `project_db.game_locale_units`（数据库设计书 §4.9），供 project-service 侧统一按项目查询。
+
+**对外 REST（供 `cats-gameloc-cli` 与三引擎 Editor 插件调用，经 Envoy Gateway）**：
+
+| Method | Path | 说明 | 认证 | 幂等性 |
+|---|---|---|---|---|
+| POST | `/v1/game-localization/extract` | 上传引擎工程解析产物（Unity YAML/Unreal `.manifest`+`.archive`/Godot `.po`）或已在本地解析好的 `GameLocaleUnit[]` JSON（私有化"本地解析模式"，游戏本地化模块设计书 §10.3），触发抽取入库 | Bearer | 否（`Idempotency-Key`，同一批次重复提交不产生重复 `game_locale_units` 行） |
+| GET | `/v1/game-localization/projects/{project_id}/units` | 查询已抽取的 `GameLocaleUnit` 列表（分页，按 `engine`/`sync_status` 过滤） | Bearer | 是 |
+| POST | `/v1/game-localization/projects/{project_id}/translate` | 对指定 `unit_id` 集合（或"全部未翻译"）触发翻译，内部转换为 `TranslateBatch` 调用 | Bearer | 否（`Idempotency-Key`） |
+| GET | `/v1/game-localization/projects/{project_id}/inject` | 按引擎格式导出回写产物（Unity `.asset` 增量/Unreal `.archive`/Godot `.po`/`.csv`），供 CI 拉取后执行编译步骤（游戏本地化模块设计书 §5.1「Compile Text」由客户 CI 自行完成，本接口只产出编译前产物） | Bearer | 是（只读导出） |
+| GET | `/v1/game-localization/projects/{project_id}/qa-report` | 伪本地化/字体缺字/疑似溢出等 §9 类检查结果汇总 | Bearer | 是 |
+
+**`POST /v1/game-localization/extract` 请求示例**：
+```json
+{
+  "project_id": "prj_01HZX...",
+  "engine": "godot",
+  "units": [
+    {
+      "unit_id": "godot://dialogue/greeting_001",
+      "source_text": "Hello, traveler!",
+      "context_hint": "NPC 村长首次见面台词",
+      "placeholders": [],
+      "rich_text_dialect": "none",
+      "engine_meta": { "pot_context": "dialogue", "msgid_hash": "a1b2c3" }
+    }
+  ]
+}
+```
+`units[].*` 字段结构对应游戏本地化模块设计书 §3 `GameLocaleUnit`，`engine_meta` 原样透传不做通用化解析。
+
+**响应 202**（异步入库，增量抽取按 `content_hash` 去重，游戏本地化模块设计书 §10.2）：
+```json
+{ "accepted_count": 1, "unchanged_count": 0, "new_or_changed_count": 1 }
+```
+
+**内部同步调用**：`翻译` 接口内部将 `GameLocaleUnit[]` 转换为 `translation-core.TranslateBatch`（§3.10）的 `Segment[]`（`segment_id = unit_id`），`context_hint` 注入翻译请求供 AI 网关理解场景；`占位符`/`复数规则` 校验复用 `tag_protector` 模块扩展的 `unity_richtext`/`unreal_ftext`/`bbcode` 方言规则（游戏本地化模块设计书 §4.4/§5.3）。
+
+**异步事件**：Topic `project.events` 内新增 `event_type='game_locale.units_extracted'`（`project_id, engine, new_or_changed_count`），供 report-service 统计游戏本地化用量；`game_locale.injection_ready`（导出产物就绪，供 notification-service 提醒项目方拉取）。
 
 ---
 
