@@ -15,7 +15,7 @@
 | 作者 | 架构师 |
 | 状态 | 评审前草稿 |
 | 密级 | 仅社内 |
-| 上游文档 | [CATs 微服务架构设计书 v1.0](../../02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)（§5 数据库划分、§7 Outbox+CDC）、[CATs 技术选型书 v2.0](../../02-基础设计/技术选型/CATs_技术选型书_v2.0.md)（ADR-18 主存储、ADR-21 CDC、ADR-30 向量检索）、[OFCAT 数据库设计书 v1.0（历史/旧架构参考，格式沿用）](./OFCAT_数据库设计书_v1.0.md) |
+| 上游文档 | [CATs 微服务架构设计书 v1.0](../../02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)（§5 数据库划分、§7 Outbox+CDC）、[CATs 技术选型书 v2.0](../../02-基础设计/技术选型/CATs_技术选型书_v2.0.md)（ADR-18 主存储、ADR-21 CDC、ADR-30 向量检索）、[CATs 游戏本地化模块设计书 v1.0](../模块设计/CATs_游戏本地化模块设计书_v1.0.md)、[OFCAT 数据库设计书 v1.0（历史/旧架构参考，格式沿用）](./OFCAT_数据库设计书_v1.0.md) |
 
 ### 修订履历
 
@@ -23,6 +23,7 @@
 |---|---|---|---|
 | 1.0 | 2026-06-25 | 架构师 | （OFCAT）SQLite 单机库表结构，见历史文档 |
 | 2.0 | 2026-08-18 | 架构师 | 全面重做：8 个 PostgreSQL 逻辑库完整 DDL、索引、分区策略、Debezium 对应关系，承接《CATs 微服务架构设计书 v1.0》§5、§7 |
+| 2.1 | 2026-08-18 | 架构师 | `project_db` 新增 `game_locale_units` 表，承接《CATs 游戏本地化模块设计书 v1.0》§10.1 |
 
 ### 审批栏
 
@@ -275,6 +276,30 @@ CREATE TABLE outbox_event (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_project_db_outbox_created_at ON outbox_event (created_at);
+
+-- 游戏本地化：引擎中间表示单元（承接《CATs 游戏本地化模块设计书 v1.0》§10.1，
+-- 挂载于 project_db，不新建独立数据库，由 game-localization-service 独占写入）
+CREATE TABLE game_locale_units (
+    id                  BIGSERIAL PRIMARY KEY,
+    project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    engine              TEXT NOT NULL CHECK (engine IN ('unity','unreal','godot')),
+    unit_id             TEXT NOT NULL,        -- 引擎专属定位符，如 unity://{guid}#{fileID}
+    source_text         TEXT NOT NULL,
+    target_text         TEXT,
+    context_hint        TEXT,
+    placeholders_json   JSONB,
+    plural_json         JSONB,
+    ui_constraint_json  JSONB,
+    rich_text_dialect   TEXT,
+    engine_meta_json    JSONB NOT NULL,       -- 不透明透传字段，仅产出方 Adapter 自身认识
+    content_hash        TEXT NOT NULL,        -- source_text 归一化哈希，驱动增量抽取
+    sync_status         TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN ('pending','translated','injected','orphaned')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, engine, unit_id)
+);
+CREATE INDEX idx_glu_project_hash ON game_locale_units (project_id, content_hash);
+CREATE INDEX idx_glu_project_sync_status ON game_locale_units (project_id, sync_status);
 ```
 
 ### 4.4 `task_db`（含任务生命周期、媒体资产、ASR/字幕明细）
