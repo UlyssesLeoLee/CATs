@@ -1,0 +1,16 @@
+# 临时/废弃
+_trash_*
+*.tmp
+*.bak
+*.swp
+*.swo
+__pycache__/
+*.pyc
+# IDE
+.vscode/
+.idea/
+# 系统
+.DS_Store
+Thumbs.db
+# 临时
+*.log
