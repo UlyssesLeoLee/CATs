@@ -1,0 +1,91 @@
+openapi: 3.0.3
+info:
+  title: CATs Platform Core REST API
+  description: Universal Computer-Assisted Translation SaaS API Gateway Contracts
+  version: 1.0.0
+servers:
+  - url: https://api.cats.internal/v1
+    description: Internal K3s Envoy Gateway Endpoint
+
+paths:
+  /auth/login:
+    post:
+      summary: User Login
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, tenant_id]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                tenant_id: { type: string }
+      responses:
+        '200':
+          description: Login Successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer }
+
+  /projects:
+    get:
+      summary: List Workspace Projects
+      tags: [Project]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Projects list
+    post:
+      summary: Create Project
+      tags: [Project]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, source_lang, target_lang]
+              properties:
+                name: { type: string }
+                source_lang: { type: string }
+                target_lang: { type: string }
+                tm_id: { type: string }
+                termbase_id: { type: string }
+      responses:
+        '201':
+          description: Project created
+
+  /tasks:
+    post:
+      summary: Dispatch Media Translation Task
+      tags: [Task]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, file_id, media_type]
+              properties:
+                project_id: { type: string }
+                file_id: { type: string }
+                media_type: 
+                  type: string
+                  enum: [TEXT, AUDIO, VIDEO, PDF, OFFICE, GAME]
+      responses:
+        '202':
+          description: Task Accepted

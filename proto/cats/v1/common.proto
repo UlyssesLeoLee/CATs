@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package cats.v1;
+
+option go_package = "github.com/cats/proto/v1;catsv1";
+option java_multiple_files = true;
+option java_package = "com.cats.proto.v1";
+
+message Pagination {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message PageMeta {
+  int32 page = 1;
+  int32 page_size = 2;
+  int64 total_count = 3;
+  int32 total_pages = 4;
+}
+
+enum LanguageCode {
+  LANG_UNSPECIFIED = 0;
+  LANG_ZH_CN = 1;
+  LANG_ZH_TW = 2;
+  LANG_EN_US = 3;
+  LANG_JA_JP = 4;
+  LANG_KO_KR = 5;
+  LANG_DE_DE = 6;
+  LANG_FR_FR = 7;
+  LANG_ES_ES = 8;
+  LANG_RU_RU = 9;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_PARSING = 2;
+  TASK_STATUS_TRANSLATING = 3;
+  TASK_STATUS_QA_REVIEWING = 4;
+  TASK_STATUS_RENDERING = 5;
+  TASK_STATUS_COMPLETED = 6;
+  TASK_STATUS_FAILED = 7;
+}

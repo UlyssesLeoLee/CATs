@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package cats.v1;
+
+import "proto/cats/v1/common.proto";
+
+option go_package = "github.com/cats/proto/v1;catsv1";
+
+service TranslationCoreService {
+  rpc MatchTM(MatchTMRequest) returns (MatchTMResponse);
+  rpc TranslateSegment(TranslateSegmentRequest) returns (TranslateSegmentResponse);
+  rpc RunQA(RunQARequest) returns (RunQAResponse);
+  rpc BatchTranslate(BatchTranslateRequest) returns (BatchTranslateResponse);
+}
+
+message TMMatchItem {
+  string tm_id = 1;
+  string source_text = 2;
+  string target_text = 3;
+  float similarity = 4;
+  bool is_exact = 5;
+}
+
+message MatchTMRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string source_text = 3;
+  LanguageCode source_lang = 4;
+  LanguageCode target_lang = 5;
+  float threshold = 6;
+}
+
+message MatchTMResponse {
+  repeated TMMatchItem matches = 1;
+}
+
+message TermItem {
+  string source_term = 1;
+  string target_term = 2;
+  bool forbidden = 3;
+}
+
+message TranslateSegmentRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string segment_id = 3;
+  string source_text = 4;
+  LanguageCode source_lang = 5;
+  LanguageCode target_lang = 6;
+  repeated TermItem injected_terms = 7;
+  repeated TMMatchItem tm_hints = 8;
+  string model_provider = 9;
+  bool fail_closed = 10;
+}
+
+message TranslateSegmentResponse {
+  string segment_id = 1;
+  string target_text = 2;
+  string model_used = 3;
+  int32 prompt_tokens = 4;
+  int32 completion_tokens = 5;
+  float confidence_score = 6;
+}
+
+message QAViolation {
+  string rule_id = 1;
+  string rule_category = 2;
+  string message = 3;
+  int32 start_pos = 4;
+  int32 end_pos = 5;
+  string severity = 6;
+}
+
+message RunQARequest {
+  string segment_id = 1;
+  string source_text = 2;
+  string target_text = 3;
+  LanguageCode source_lang = 4;
+  LanguageCode target_lang = 5;
+  repeated TermItem expected_terms = 6;
+}
+
+message RunQAResponse {
+  string segment_id = 1;
+  bool passed = 2;
+  repeated QAViolation violations = 3;
+}
+
+message BatchTranslateRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  repeated TranslateSegmentRequest segments = 3;
+}
+
+message BatchTranslateResponse {
+  repeated TranslateSegmentResponse results = 1;
+}

@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package cats.v1;
+
+import "proto/cats/v1/common.proto";
+
+option go_package = "github.com/cats/proto/v1;catsv1";
+
+service MediaProcessingService {
+  rpc TranscribeAudio(TranscribeAudioRequest) returns (TranscribeAudioResponse);
+  rpc ExtractOCR(ExtractOCRRequest) returns (ExtractOCRResponse);
+  rpc BurnSubtitles(BurnSubtitlesRequest) returns (BurnSubtitlesResponse);
+}
+
+message SubtitleSegment {
+  int32 index = 1;
+  int64 start_time_ms = 2;
+  int64 end_time_ms = 3;
+  string text = 4;
+  float confidence = 5;
+}
+
+message TranscribeAudioRequest {
+  string file_id = 1;
+  string audio_url = 2;
+  LanguageCode spoken_language = 3;
+  bool prompt_vad = 4;
+}
+
+message TranscribeAudioResponse {
+  string file_id = 1;
+  repeated SubtitleSegment segments = 2;
+  int64 total_duration_ms = 3;
+}
+
+message OCRBoundingBox {
+  int32 x = 1;
+  int32 y = 2;
+  int32 width = 3;
+  int32 height = 4;
+  string text = 5;
+  float confidence = 6;
+}
+
+message ExtractOCRRequest {
+  string file_id = 1;
+  string image_url = 2;
+  repeated LanguageCode target_langs = 3;
+}
+
+message ExtractOCRResponse {
+  string file_id = 1;
+  repeated OCRBoundingBox text_blocks = 2;
+}
+
+message BurnSubtitlesRequest {
+  string video_file_id = 1;
+  repeated SubtitleSegment subtitles = 2;
+  string font_family = 3;
+  int32 font_size = 4;
+}
+
+message BurnSubtitlesResponse {
+  string output_file_id = 1;
+  string output_video_url = 2;
+}
