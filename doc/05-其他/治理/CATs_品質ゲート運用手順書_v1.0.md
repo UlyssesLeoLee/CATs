@@ -117,7 +117,7 @@
 
 ```toml
 avoid-breaking-exported-api = false
-msrv = "1.79"
+msrv = "1.79"  # 最低支持版本，CI 实际用最新 stable（QA-024 决议）
 ```
 
 #### 配置（`Cargo.toml`）

@@ -92,8 +92,8 @@
 | 工具 | 版本 | 用途 |
 |------|------|------|
 | Git | 2.42+ | 版本控制 |
-| Rust | 1.79+ (stable) | 后端开发 |
-| cargo | 1.79+ | Rust 包管理 |
+| Rust | **最新 stable** (2026-08-20 决议 QA-024) | 后端开发 |
+| cargo | 随 Rust | Rust 包管理 |
 | Node.js | 20 LTS | 前端开发 |
 | pnpm | 9+ | 前端包管理 |
 | Docker | 24+ | 容器构建 |
@@ -152,7 +152,7 @@ open http://localhost:3000
 
 ```dockerfile
 # ---- Build Stage ----
-FROM rust:1.79-slim AS builder
+FROM rust:latest-slim AS builder
 WORKDIR /app
 
 # 缓存依赖

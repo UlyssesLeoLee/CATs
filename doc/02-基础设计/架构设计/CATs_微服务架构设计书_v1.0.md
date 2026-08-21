@@ -159,7 +159,7 @@ K3s 集群拓扑：
 | 入口网关 | Envoy Gateway (Gateway API) | **必须** | 统一南北向流量入口 |
 | 裸金属负载均衡 | MetalLB | **必须** | 局域网无云 LB，需 L2/BGP 模式暴露 Service |
 | 硬件负载均衡冗余 | HAProxy + Keepalived（VIP） | 可暂缓 | 仅当 MetalLB 单一模式不满足跨网段/更强 HA 需求时引入，MVP 阶段 MetalLB 足够 |
-| 主存储 | PostgreSQL 16 + CloudNativePG | **必须** | 唯一权威存储 |
+| 主存储 | **PostgreSQL 最新 stable** + CloudNativePG | **必须** | 唯一权威存储（2026-08-20 决议 QA-026 跟随最新） |
 | 连接池 | PgBouncer | **必须** | 应对连接数膨胀，事务级/会话级池化 |
 | 向量检索 | pgvector 扩展 | **必须**（TM 语义召回场景） | 复用主库，见技术选型 ADR-30 |
 | 缓存/会话/限流/锁 | Valkey | **必须** | 严格禁止做主存储 |

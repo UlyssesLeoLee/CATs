@@ -22,7 +22,8 @@
 
 | 版本 | 日期 | 修订者 | 修订内容 |
 |---|---|---|---|
-| 1.0 | 2026-08-19 | 架构师 | 初版。Rust 生态深度选型：① 工具链（rustc/cargo/clippy/rustfmt/cargo-audit 等）；② 异步运行时（Tokio）；③ Web 框架（Axum / Tauri）；④ 数据库（sqlx）；⑤ 消息（rdkafka / redis-rs）；⑥ 序列化（serde / prost）；⑦ 可观测性（tracing / OpenTelemetry / metrics）；⑧ 安全（ring / jsonwebtoken / argon2）；⑨ 测试（cargo test / mockall / testcontainers / proptest）；⑩ 媒体处理（ffmpeg-next / image） |
+| 1.0 | 2026-08-19 | 架构师 | 初版。Rust 生态深度选型：① 工具链（rustc/cargo/clippy/rustfmt/cargo-audit 等）；② 异步运行时（Tokio）；③ Web 框架（actix-web / Tauri）；④ 数据库（sqlx）；⑤ 消息（rdkafka / redis-rs）；⑥ 序列化（serde / prost）；⑦ 可观测性（tracing / OpenTelemetry / metrics）；⑧ 安全（ring / jsonwebtoken / argon2）；⑨ 测试（cargo test / mockall / testcontainers / proptest）；⑩ 媒体处理（ffmpeg-next / image） |
+| 1.0+6 | 2026-08-20 | PMO | 决议更新（QA-022/024）：axum → actix-web；MSRV 1.75+ → 最新 stable |
 
 ### 审批栏
 
@@ -57,7 +58,7 @@
 
 - 工具链：rustc、cargo、clippy、rustfmt、cargo-audit、cargo-deny、cargo-outdated、cargo-nextest、cargo-flamegraph
 - 异步运行时：Tokio
-- Web 框架：Axum（服务）+ Tauri（客户端）+ tower（中间件）
+- Web 框架：actix-web（服务）+ Tauri（客户端）+ tower（中间件，与 actix-web 桥接）
 - 序列化：serde、prost
 - 数据库：sqlx、tokio-postgres、deadpool
 - 消息：rdkafka、redis-rs、deadpool-redis
@@ -80,7 +81,7 @@
 | 维度 | v2.0 技术选型书 | 本书（Rust 选型） |
 |---|---|---|
 | 范围 | 全部技术基线 | 仅 Rust 生态 |
-| 颗粒度 | 顶层技术选型（如 Tauri、K3s、PostgreSQL） | Rust 库选型（如 axum、tokio、sqlx） |
+| 颗粒度 | 顶层技术选型（如 Tauri、K3s、PostgreSQL） | Rust 库选型（如 actix-web、tokio、sqlx） |
 | 决策 | 30+ 个 ADR | 20+ 个 ADR（Rust 专用） |
 | 适用读者 | 全员 | Rust 开发 / 架构师 |
 | 版本锁定 | 顶层版本 | 库版本（带 semver） |
@@ -119,7 +120,7 @@
 | 内存安全 | 默认选择不依赖 `unsafe` 或依赖极少 `unsafe` 的库 | 20% |
 | 性能 | 同类库中性能优者（基准测试支持） | 20% |
 | 可维护性 | 文档齐全、API 稳定、升级路径清晰 | 15% |
-| 兼容性 | 与 CATs 其他选型（Tokio/serde/axum）兼容 | 10% |
+| 兼容性 | 与 CATs 其他选型（Tokio/serde/actix-web）兼容 | 10% |
 | 团队熟悉度 | 团队已有经验或学习曲线平缓 | 5% |
 | 许可证 | 兼容商用部署 | 5% |
 
@@ -133,24 +134,30 @@
 
 | 选型 | 决策 | 版本 | 理由 |
 |---|---|---|---|
-| Rust 稳定版（stable） | **采纳** | 1.83+ | 生产环境不用 nightly/beta |
-| MSRV | **锁定 1.75+** | — | 让依赖库可使用 2024 edition 特性；CI 中 `cargo +1.75 check` 兜底 |
+| Rust 稳定版（stable） | **采纳** | 最新 stable | 生产环境不用 nightly/beta；跟随官方 release |
+| MSRV | **跟随最新** | — | 2026-08-20 决议（QA-024）：不锁定 MSRV，跟随最新 stable；M1-S0 时锁定到具体版本；CI 用 rust-toolchain.toml 固定 |
 | Edition | **2021** | — | 2024 edition 仍部分库未支持，待生态稳定后评估 |
 | 组件（rustup） | `rustc`, `cargo`, `clippy`, `rustfmt`, `rust-src`, `rust-analyzer` | 全部 stable 组件 | — |
 
-**ADR-R-01 锁定 Rust 1.75+ MSRV**
+**ADR-R-01 跟随 Rust 最新 stable（不锁定 MSRV）**
 
-- **背景**：CATs 项目周期 12+ 月，生态快速迭代，需要确定 MSRV
+- **背景**：CATs 项目周期 16+ 月，2026-08-20 决议（QA-024）：跟随 Rust 最新 stable，不锁定 MSRV
 - **候选**：
-  1. 1.75（保守）
-  2. 1.80（中等）
-  3. 不锁定（用最新稳定）
-- **决策**：1.75
+  1. 锁定 1.75+（保守）
+  2. 锁定 1.80（中等）
+  3. 不锁定（用最新稳定）✅
+- **决策**：跟随最新 stable（候选 3）
 - **理由**：
-  - 1.75 是 2024 年初的稳定版，覆盖所有核心需求（含 `let-else`、`impl Trait` 改进）
-  - Tokio / axum / sqlx 主流 crate 都支持 1.75
-  - 留 1-2 年升级缓冲（每半年升一次小版本）
-- **取舍**：无法用 1.80+ 引入的少数新特性（影响小）
+  - 灵活性最大，6 周一个新 release，新特性可用
+  - 团队开发机随 rustup 升级无障碍
+  - Cargo.lock 锁定 transitive deps，CI 测试兜底
+  - 季度评估：是否需要锁定到具体 stable
+- **取舍**：
+  - 潜在 breaking change 风险 → 缓解：CI 强测试 + 季度评估
+  - M1-S0 时锁定到具体版本
+- **实施**：
+  - `rust-toolchain.toml` 固定 CI Runner 版本
+  - 项目 `Cargo.toml` 不写 `rust-version`（或写 `1.79` 作为最低支持）
 
 ### 3.2 构建工具
 
@@ -290,7 +297,7 @@ avoid-breaking-exported-api = true
   3. monoio（io_uring 高性能）
 - **决策**：tokio
 - **理由**：
-  - 生态最完整：axum、tonic、sqlx、reqwest、rdkafka-rs 全部基于 tokio
+  - 生态最完整：actix-web、tonic、sqlx、reqwest、rdkafka-rs 全部基于 tokio
   - 文档齐全、性能稳定、生产验证充分
   - 团队熟悉度高
 - **取舍**：相比 monoio，io_uring 利用较少（但 TCP 场景差距不大）
@@ -371,33 +378,42 @@ async fn main() -> Result<()> {
 
 | 选型 | 决策 | 版本 | 理由 |
 |---|---|---|---|
-| `axum` | **强制** | 0.7+ | Tokio 团队官方，类型安全，中间件生态完整 |
-| `actix-web` | **备选** | 4.9+ | 性能高，但生态与 Tokio 不完全兼容 |
+| `actix-web` | **强制** | 4.9+ | 性能业界顶级，actix-rt runtime；与 Tokio 用 `actix_web::web::block` 桥接 |
+| `axum` | **备选** | 0.7+ | 与 Tokio 完美集成，但性能略低 |
 | `warp` | **不采用** | 0.3+ | API 灵活但维护放缓 |
 | `rocket` | **不采用** | 0.5+ | 同步为主，不适合微服务 |
 
-**ADR-R-06 选 axum 作为 HTTP 服务框架**
+**ADR-R-06 选 actix-web 作为 HTTP 服务框架**（2026-08-20 决议 QA-022）
 
 - **背景**：所有 Rust 微服务（auth/user/project/task 等）需要 HTTP 框架
 - **候选**：
   1. axum（Tokio 团队官方）
-  2. actix-web（性能领先）
+  2. actix-web（性能领先）✅
   3. tonic（仅 gRPC）
-- **决策**：axum
+- **决策**：actix-web
 - **理由**：
-  - 与 tokio 完美集成（`tokio::main` + `axum::serve`）
-  - tower 生态（超时/限流/熔断/trace）
-  - 类型安全的路由（编译期校验）
-  - 团队熟悉度高
-- **取舍**：纯性能略低于 actix-web（差异 < 10%，业务场景可忽略）
+  - 性能业界顶级（TechEmpower 基准领先）
+  - actix-rt 自有 runtime，不强制 Tokio
+  - 生态成熟，4.0+ 稳定
+  - 团队对 actix-web 性能信任
+- **取舍**：
+  - 与 Tokio 生态集成需要 `actix_web::web::block` 桥接
+  - tower 中间件通过 actix 自有 middleware 适配
+- **桥接方案**：
+  - actix-web 的 handler 中用 `web::block` 跑 Tokio 异步任务
+  - gRPC (tonic) 与 actix-web 在同一进程时用 `tokio::runtime::Handle::current()`
 
 **核心中间件**：
 
 ```toml
 [dependencies]
-axum = { version = "0.7", features = ["macros", "matched-path"] }
+actix-web = { version = "4.9", features = ["macros"] }
+actix-rt = "2.10"
+actix-cors = "0.7"
+actix-web-httpauth = "0.8"
+# Tokio 桥接（如需）
+tokio = { version = "1.40", features = ["full"] }
 tower = { version = "0.5", features = ["util", "timeout", "limit"] }
-tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "request-id", "util"] }
 ```
 
 ### 5.2 HTTP 客户端
@@ -442,7 +458,7 @@ static HTTP: Lazy<reqwest::Client> = Lazy::new(|| {
 - **决策**：tonic
 - **理由**：
   - 纯 Rust 实现，无 FFI 依赖
-  - 与 axum 共享 tower 中间件
+  - 与 actix-web 共享 tower 中间件（通过 actix-web 适配）
   - 支持 HTTP/2、streaming、reflection
   - 活跃维护、性能领先
 - **取舍**：某些高级特性（如 metadata 扩展）需要 workaround
@@ -452,7 +468,7 @@ static HTTP: Lazy<reqwest::Client> = Lazy::new(|| {
 | 选型 | 决策 | 版本 | 用途 |
 |---|---|---|---|
 | `tokio-tungstenite` | **强制** | 0.24+ | WebSocket 客户端/服务器 |
-| `axum::extract::ws` | **强制** | 0.7+ | axum 内置 WebSocket 支持 |
+| `actix-web-actors` | **强制** | 4.3+ | actix-web 内置 WebSocket 支持 |
 | `tungstenite` | **采纳** | 0.24+ | 底层库（tokio-tungstenite 依赖） |
 | `async-tungstenite` | **不采用** | 0.28+ | 通用异步（不如 tokio-tungstenite 优化） |
 
@@ -793,7 +809,7 @@ let tracer = opentelemetry_otlp::new_pipeline()
 |---|---|---|---|
 | `metrics` | **强制** | 0.23+ | 抽象指标 API |
 | `metrics-exporter-prometheus` | **强制** | 0.15+ | Prometheus 导出 |
-| `axum-prometheus` | **采纳** | 0.7+ | axum HTTP 指标自动埋点 |
+| `actix-web-prom` | **采纳** | 0.8+ | actix-web HTTP 指标自动埋点 |
 | `autometrics` | **采纳** | 1.0+ | 函数级指标宏 |
 
 ```rust
@@ -1088,7 +1104,7 @@ let stream = ictx.streams().best(ffmpeg::media::Type::Video).unwrap();
 | Crate | 版本 | 用途 | 锁定期 |
 |---|---|---|---|
 | tokio | 1.40+ | 异步运行时 | 6 月（minor） |
-| axum | 0.7+ | Web 框架 | 6 月 |
+| actix-web | 4.9+ | Web 框架 | 6 月 |
 | tonic | 0.12+ | gRPC | 6 月 |
 | sqlx | 0.8+ | 数据库 | 6 月 |
 | rdkafka | 0.36+ | Kafka | 6 月 |
@@ -1137,7 +1153,7 @@ let stream = ictx.streams().best(ffmpeg::media::Type::Video).unwrap();
 | 类别 | Crate | 版本 | 替代方案（不采用） |
 |---|---|---|---|
 | 异步运行时 | tokio | 1.40+ | async-std / smol / monoio |
-| Web 框架（服务） | axum | 0.7+ | actix-web / warp / rocket |
+| Web 框架（服务） | actix-web | 4.9+ | axum / warp / rocket |
 | Web 框架（客户端） | tauri | 2.1+ | — |
 | HTTP 客户端 | reqwest | 0.12+ | ureq / isahc |
 | gRPC | tonic | 0.12+ | grpc-rs |
@@ -1190,7 +1206,7 @@ let stream = ictx.streams().best(ffmpeg::media::Type::Video).unwrap();
 | 测试断言 | pretty_assertions | 1.4+ | 友好错误输出 |
 | 测试夹具 | rstest | 0.21+ | 参数化测试 |
 | 异步测试 | tokio-test | 0.4+ | 异步测试辅助 |
-| 监控 | axum-prometheus | 0.7+ | axum HTTP 指标 |
+| 监控 | actix-web-prom | 0.8+ | actix-web HTTP 指标 |
 | 函数级指标 | autometrics | 1.0+ | 自动埋点 |
 | OpenFeature | openfeature-rs | 0.2+ | 特性开关 |
 | OAuth | oauth2 / openidconnect | 5.0+ / 3.5+ | OAuth/OIDC 客户端 |
@@ -1229,7 +1245,7 @@ let stream = ictx.streams().best(ffmpeg::media::Type::Video).unwrap();
 - **Rust 官方**：[The Rust Programming Language](https://doc.rust-lang.org/book/)、[Cargo Book](https://doc.rust-lang.org/cargo/)、[Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
 - **Rust 性能**：[The Rust Performance Book](https://nnethercote.github.io/perf-book/)、[Criterion.rs](https://github.com/bheisler/criterion.rs)
 - **Tokio**：[Tokio Tutorial](https://tokio.rs/tokio/tutorial)、[Async Rust in Production](https://www.lurklurk.org/effective-rust/)
-- **Axum**：[Axum Docs](https://docs.rs/axum/latest/axum/)
+- **actix-web**：[actix-web Docs](https://docs.rs/actix-web/latest/actix_web/)
 - **Tonic**：[Tonic gRPC](https://github.com/hyperium/tonic)
 - **sqlx**：[sqlx Docs](https://docs.rs/sqlx/latest/sqlx/)
 - **rdkafka**：[rdkafka-rs](https://github.com/fede1024/rust-rdkafka)

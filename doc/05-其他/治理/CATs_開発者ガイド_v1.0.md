@@ -72,8 +72,8 @@
 | 工具 | 版本 | 安装命令 |
 |------|------|----------|
 | Git | 2.42+ | https://git-scm.com |
-| Rust | 1.79+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| cargo | 1.79+ | 随 Rust |
+| Rust | **最新 stable** | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh`（跟随官方，2026-08-20 决议 QA-024） |
+| cargo | 随 Rust | 随 Rust |
 | Node.js | 20 LTS | nvm |
 | pnpm | 9+ | `npm i -g pnpm` |
 | Docker | 24+ | Docker Desktop |

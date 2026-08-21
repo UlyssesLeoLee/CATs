@@ -89,10 +89,12 @@
 
 | 状态 | 数量 | 占比 |
 |---|---|---|
-| Open | 38 | 65% |
+| Open | 32 | 55% |
 | Decision Required | 6 | 10% |
-| Decided / Closed | 14 | 25% |
+| Decided / Closed | 20 | 35% |
 | Won't Fix | 0 | 0% |
+
+> 更新：v1.0 → v1.0+6 (2026-08-20 决议 6 项技术选型：QA-013/022/024/026/027/064)
 
 ---
 
@@ -116,7 +118,7 @@
 |---|---|---|---|---|---|---|---|---|
 | QA-011 | **TM 索引策略选型** | O1 数据未明确时,PostgreSQL HASH 分桶 16 分区是默认,但若 TM > 100 万,需考虑 scale-out | 架构 §5.3;数据库设计 §4.3 | 默认:HASH 16 分桶 + pgvector HNSW | 采纳 A: PG单库16分桶+HNSW索引(300万句段下稳定<35ms),后续平滑切Qdrant | 架构 | P0 | Decided |
 | QA-012 | **微服务拆分粒度** | 16 个服务是否合理?worker-service 单独是否过度拆分? | 架构 §4.1;运维 UI | 当前:16 个服务(8业务+1核心+6媒体+1运维) | 采纳 A: 维持16服务定义,媒体服务作为无状态Processor由task-service调度 | 架构 + 运维 | P0 | Decided |
-| QA-013 | **架构 §18 三阶段 vs 需求 §10 M1-M5** | 两套阶段划分不严格对齐,需明确哪个是"准" | 架构 §18;测试设计 §14 | 当前:测试设计 §14 加注说明 | A. 以架构 §18 三阶段为准,需求 §10 作为子里程碑 B. 以需求 §10 为准,架构 §18 作为容量阶段 C. 重新整合为统一阶段表 | 架构 + 产品 | P1 | Open |
+| QA-013 | **架构 §18 三阶段 vs 需求 §10 M1-M5** | 两套阶段划分不严格对齐,需明确哪个是准 | 架构 §18;测试设计 §14 | 当前:测试设计 §14 加注说明 | 采纳 A: 以架构 §18 三阶段为准,需求 §10 作为子里程碑 | 架构 + 产品 | P1 | Decided
 | QA-014 | **Event Sourcing 是否引入** | 架构说"Outbox+CDC",但是否全业务都事件溯源? | 架构 §7;模块设计书 | 当前:仅 Outbox(不 ES) | A. 维持 Outbox(优) B. 部分核心域 ES C. 全 ES | 架构 | P1 | Open |
 | QA-015 | **服务间同步 gRPC 失败处理** | gRPC 调用失败时,是熔断、降级、还是死信? | 接口设计书 §3;测试设计 | 当前:标准重试 + 熔断 | A. 标准重试+熔断(默认) B. 全部事件化(改异步) C. Saga 编排 | 架构 | P1 | Open |
 | QA-016 | **多语言/方言支持** | 需求说"中日英韩",但游戏本地化可能涉及藏语/蒙语/方言 | 需求 §6.5;接口设计 §3.10 | 当前:中日英韩 | A. 中日英韩(维持) B. 增泰越/西/法/德 C. 全部支持 | 产品 | P2 | Open |
@@ -129,12 +131,12 @@
 | 编号 | 关心事项 | 详细描述 | 影响范围 | 当前假设 | 建议方案 | 决策方 | 优先级 | 状态 |
 |---|---|---|---|---|---|---|---|---|
 | QA-021 | **Tokio 异步运行时是唯一选型** | 全部 Rust 服务依赖 Tokio,但若未来引入 actix-web 等非 Tokio 生态,会有冲突 | Rust 选型 ADR-R-04;模块设计 | 当前:仅 Tokio | 采纳 A: 强制统一Tokio 1.x作为唯一异步运行时,Web框架统一Axum 0.7+ | 架构 + Rust Lead | P0 | Decided |
-| QA-022 | **axum vs actix-web 最终选型** | 团队对 actix-web 性能可能更信任 | Rust 选型 ADR-R-06 | 当前:axum | A. axum(默认) B. actix-web(若需极致性能) C. 混合(不同服务用不同) | 架构 | P1 | Open |
+| QA-022 | **axum vs actix-web 最终选型** | 团队对 actix-web 性能可能更信任 | Rust 选型 ADR-R-06 | 当前:actix-web | 采纳 B: actix-web(性能优先),用actix-rt桥接Tokio生态 | 架构 | P1 | Decided
 | QA-023 | **OpenFeature 引入必要性** | 增加 SDK 依赖和服务,价值是否够 | 运维设计 §6.5 | 当前:采用 OpenFeature | A. 引入(默认) B. 自建简单 flag C. 用 LaunchDarkly SaaS | 架构 | P1 | Open |
-| QA-024 | **MSRV 1.75 是否够用** | 一些 2025+ 新特性可能不可用 | Rust 选型 ADR-R-01 | 当前:1.75+ | A. 1.75(默认) B. 1.80 C. 1.83+ | Rust Lead | P1 | Open |
+| QA-024 | **MSRV 1.75 是否够用** | 一些 2025+ 新特性可能不可用 | Rust 选型 ADR-R-01 | 当前:Rust 最新 stable | 采纳 C: 跟随Rust最新stable,M1-S0时锁定到具体版本 | Rust Lead | P1 | Decided
 | QA-025 | **librdkafka 系统依赖** | rdkafka 需 C 库,Docker 镜像需 apt-get install | Rust 选型 ADR-R-11;CI | 当前:Dockerfile 安装 | A. apt-get(默认) B. 静态编译 C. 切到 rskafka | Rust Lead + 运维 | P1 | Open |
-| QA-026 | **PostgreSQL 16 vs 17** | PG 17 已发布(假设 2026),新特性是否用 | 技术选型书 §2 | 当前:16.x | A. 16(默认) B. 17(若生态稳定) C. LTS 跟随 | DBA | P2 | Open |
-| QA-027 | **CloudNativePG vs Patroni** | 架构说 CNPG,但 Patroni 生态成熟 | 架构 §5.6;技术选型书 | 当前:CNPG | A. CNPG(默认) B. Patroni(若需更复杂场景) C. 商业(EDB) | DBA + 架构 | P1 | Open |
+| QA-026 | **PostgreSQL 16 vs 17** | PG 17 已发布(假设 2026),新特性是否用 | 技术选型书 §2 | 当前:PostgreSQL 最新 | 采纳 B: 跟随PostgreSQL最新,M1-S0时验证pgvector兼容性 | DBA | P2 | Decided
+| QA-027 | **CloudNativePG vs Patroni** | 架构说 CNPG,但 Patroni 生态成熟 | 架构 §5.6;技术选型书 | 当前:CNPG | 采纳 A: CNPG(K3s官方推荐,原生Operator,barman-cloud备份) | DBA + 架构 | P1 | Decided
 | QA-028 | **Envoy Gateway vs Istio** | 服务网格未启用,Gateway 用 Envoy | 技术选型书 | 当前:Envoy Gateway only | A. 仅 Envoy Gateway(默认) B. 引入 Linkerd(轻网格) C. 完整 Istio | 架构 | P2 | Open |
 
 ### 2.4 跨文档一致性(6 项)
@@ -178,7 +180,7 @@
 | QA-061 | **生产 TLS / 内部 CA / 域名** | `*.cats.internal` 是否已规划,CA(cfssl)是否已签 | 架构 §1.1;运维 | 当前:内部 CA + cfssl | 采纳 A: 采用cfssl自建内部根CA并签发 *.cats.internal 通配符证书 | 运维 | P0 | Decided |
 | QA-062 | **CI Runner 资源** | 完整 E2E 套件 11 场景,资源是否够 | 测试设计 §10.3;CI | 当前:k3d + 容器化 | A. 自建 GitHub Actions B. 商业 CI C. 自建 Jenkins | 运维 | P1 | Open |
 | QA-063 | **生产部署灰度比例** | Canary 阶段 5%-25%-50%-100% 在局域网是否够细 | 运维设计 §8.2 | 当前:5-25-50-100 | A. 维持 B. 按 org 灰度(细粒度) C. 1-10-50-100 | 架构 | P2 | Open |
-| QA-064 | **Docker 基础镜像选择** | distroless vs debian-slim vs scratch | Rust 选型 §14.2 | 当前:distroless | A. distroless(默认) B. debian-slim C. scratch | Rust Lead | P1 | Open |
+| QA-064 | **Docker 基础镜像选择** | distroless vs debian-slim vs scratch | Rust 选型 §14.2 | 当前:distroless | 采纳 A: distroless(cc-debian12+nodejs20),LLM推理用debian-slim | Rust Lead | P1 | Decided
 
 ### 2.8 合规与安全(4 项)
 
