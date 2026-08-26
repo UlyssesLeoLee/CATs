@@ -10,18 +10,20 @@
 |---|---|
 | 文档编号 | CATs-ARCH-001 |
 | 文档名 | 微服务架构设计书（K3s / 局域网私有化 SaaS，50–3000 并发用户） |
-| 版本 | 第 1.0 版（草稿） |
+| 版本 | 第 1.1 版（基线升级：Rust 1.98.0 + PostgreSQL 18.6 + pgvector 0.8.6） |
 | 创建日 | 2026-08-17 |
-| 作者 | 架构师 |
+| 更新 | v1.0 → v1.1（2026-08-26 锁定 Rust 1.98.0 + PG 18.6 + pgvector 0.8.6，见 `CATs_技术基线_v1.0`） |
+| 作者 | 架构师 + Rust Lead + DBA（worker 代签 per DEC-008） |
 | 状态 | 评审前草稿 |
 | 密级 | 仅社内 |
-| 上游文档 | [CATs 技术选型书 v2.0](../技术选型/CATs_技术选型书_v2.0.md)、[CATs 命名变更说明](./CATs_命名变更说明.md)、[OFCAT 基础设计书 v1.0（历史/旧架构参考）](./OFCAT_基础设计书_v1.0.md)、[OFCAT 需求定义书 v1.1（历史需求输入）](../../01-需求/需求规格说明/OFCAT_需求定义书_v1.1.md) |
+| 上游文档 | [CATs 技术选型书 v2.0](../技术选型/CATs_技术选型书_v2.0.md)、[`CATs_技术基线_v1.0`](../技术选型/CATs_技术基线_v1.0.md)、[CATs 命名变更说明](./CATs_命名变更说明.md)、[OFCAT 基础设计书 v1.0（历史/旧架构参考）](./OFCAT_基础设计书_v1.0.md)、[OFCAT 需求定义书 v1.1（历史需求输入）](../../01-需求/需求规格说明/OFCAT_需求定义书_v1.1.md) |
 
 ### 修订履历
 
 | 版本 | 日期 | 修订者 | 修订内容 |
 |---|---|---|---|
 | 1.0 | 2026-08-17 | 架构师 | 初版。OFCAT 单机架构向 CATs 微服务 SaaS 架构转型，含 K3s/Kafka/PostgreSQL/Envoy Gateway/Outbox+CDC/GitOps 全套设计与三阶段落地路线图 |
+| **1.1** | **2026-08-26** | **架构师 + Rust Lead + DBA（worker 代签 per DEC-008）** | **基线升级：主存储锁定 PostgreSQL 18.6 + CloudNativePG 1.30+ + pgvector 0.8.6，统一引用 `CATs_技术基线_v1.0`** |
 
 ### 审批栏
 
@@ -159,9 +161,9 @@ K3s 集群拓扑：
 | 入口网关 | Envoy Gateway (Gateway API) | **必须** | 统一南北向流量入口 |
 | 裸金属负载均衡 | MetalLB | **必须** | 局域网无云 LB，需 L2/BGP 模式暴露 Service |
 | 硬件负载均衡冗余 | HAProxy + Keepalived（VIP） | 可暂缓 | 仅当 MetalLB 单一模式不满足跨网段/更强 HA 需求时引入，MVP 阶段 MetalLB 足够 |
-| 主存储 | **PostgreSQL 最新 stable** + CloudNativePG | **必须** | 唯一权威存储（2026-08-20 决议 QA-026 跟随最新） |
+| 主存储 | **PostgreSQL 18.6** + CloudNativePG 1.30+ | **必须** | 唯一权威存储（2026-08-26 锁定 18.6，见 `CATs_技术基线_v1.0`） |
 | 连接池 | PgBouncer | **必须** | 应对连接数膨胀，事务级/会话级池化 |
-| 向量检索 | pgvector 扩展 | **必须**（TM 语义召回场景） | 复用主库，见技术选型 ADR-30 |
+| 向量检索 | pgvector 0.8.6 扩展 | **必须**（TM 语义召回场景） | 复用主库，见技术选型 ADR-30；版本锁定见 `CATs_技术基线_v1.0` |
 | 缓存/会话/限流/锁 | Valkey | **必须** | 严格禁止做主存储 |
 | 消息队列 | Kafka (KRaft) | **必须**（阶段二起） | MVP 阶段可先只上线审计/通知两个 Topic，详见 §18 |
 | CDC | Debezium (Kafka Connect) | **必须**（阶段二起） | 配合 Outbox 模式解决双写一致性 |
@@ -571,7 +573,7 @@ rules:
 | `cats-core` | 自研核心业务微服务镜像 | `harbor.internal/cats-core/task-service:1.4.2` |
 | `cats-media` | 自研媒体处理微服务镜像 | `harbor.internal/cats-media/asr-service:0.9.0` |
 | `cats-frontend` | Web 控制台/客户端构建产物容器（如 Next.js 镜像） | `harbor.internal/cats-frontend/web-console:2.1.0` |
-| `cats-3rdparty` | 第三方基础镜像代理缓存（PostgreSQL/Kafka/Envoy/Prometheus 等） | `harbor.internal/cats-3rdparty/postgres:16.4` |
+| `cats-3rdparty` | 第三方基础镜像代理缓存（PostgreSQL/Kafka/Envoy/Prometheus 等） | `harbor.internal/cats-3rdparty/postgres:18.6` |
 
 ### 12.2 版本策略
 
