@@ -1,11 +1,13 @@
-# CATs 開発者ガイド v1.0
+# CATs 開発者ガイド v1.1
 
 > **文档编号**：CATs-IMPL-054  
 > **フェーズ**：54 コーディング + 编码规范 / Git 工作流 / 本地开发  
 > **关联任务**：150 任务 #54、#56（CR）、#57（Build）  
-> **版本**：v1.0（评审会前草稿）  
+> **版本**：v1.1（增 §5.5 UI/UX 规约，对齐 `CATs_UI-UX设计书_v1.1`）  
+> **基线**：v1.0（2026-08-20）  
 > **创建日**：2026-08-20  
-> **作者**：架构师 + Rust Lead + 前端 Lead
+> **更新**：v1.0 → v1.1（2026-08-26 增 §5.5）  
+> **作者**：架构师 + Rust Lead + 前端 Lead（worker 代签 per DEC-008）
 
 ---
 
@@ -25,7 +27,8 @@
 
 | 版本 | 日期 | 修订人 | 修订内容 |
 |------|------|--------|----------|
-| **v1.0** | **2026-08-20** | **架构师** | **评审前草稿：上手 + 编码 + Git + 本地** |
+| v1.0 | 2026-08-20 | 架构师 | 评审前草稿：上手 + 编码 + Git + 本地 |
+| **v1.1** | **2026-08-26** | **架构师 + Rust Lead + 前端 Lead** | **增 §5.5 UI/UX 规约（Design Token / 折叠屏 / 动态主题 / WCAG AAA / 极简速度 / PR 验收清单），对齐 `CATs_UI-UX设计书_v1.1`** |
 
 ---
 
@@ -232,6 +235,66 @@ types/
 - JSDoc 公共 API
 - 复杂组件加 README.md
 - 避免无意义注释
+
+### 5.5 UI/UX 规约（v1.1 增 / 对齐 `CATs_UI-UX设计书_v1.1`）
+
+> 完整设计语言见 `doc/02-基础设计/UI/CATs_UI-UX设计书_v1.1`。本节只列**开发落地必须遵循的硬规约**。
+
+#### 5.5.1 Design Token 三层（强制）
+
+- **禁止**在组件内硬编码颜色 / 间距 / 字号；
+- **必须**通过 `tokens.ts` 引用：`color.text` 而非 `#1F2328`、`space.md` 而非 `12px`；
+- 新增 token 必须先在 `packages/tokens/primitives.ts` 定义，再由 semantic / component 层引用；
+- Figma → Token 同步管道由前端 Lead 维护（OI-2）。
+
+#### 5.5.2 折叠屏适配（强制）
+
+- 所有页面**必须**基于 `@container` + CSS Grid 实现响应式；
+- 折叠屏展开态（≥ 900 px）默认进入**左：列表 / 右：详情**分栏；
+- 桌面 Web（≥ 1400 px）必须支持**三栏布局**（项目 / 文档 / 协同面板）；
+- 折叠 / 展开切换**禁止刷新页面**，用 `matchMedia` + 状态机实现 0.2s 过渡；
+- 跨应用拖拽（浏览器 → Tauri）HTML5 Drag-and-Drop 必须支持，禁用 `event.preventDefault()` 阻断。
+
+#### 5.5.3 动态主题（强制）
+
+- **禁止**在 CSS 中写 `color: #000` / `color: #FFFFFF` 等绝对值；
+- 深色模式背景**禁止**使用纯黑 `#000000`（光晕效应），用 `#0F1115`（已在 token）；
+- 主题切换 < 200ms 完成，**禁止触发网络请求**；
+- 用户偏好持久化到 `user.preferences.theme`（DB），跨设备同步；
+- 长任务（≥ 30min）自动启用护眼暖色滤镜，用户可手动覆盖。
+
+#### 5.5.4 WCAG 2.1 AAA（强制）
+
+- 正文文本对比度 ≥ **7:1**（AAA），大文本 ≥ 4.5:1；
+- **禁止仅靠颜色传达信息**：TM 命中、QA 警告必须图标 + 文字 + 颜色三冗余；
+- **禁止**用 `outline: none` 替代焦点环，焦点环必须 2px 实线 + 4px offset；
+- 协同自动保存、远端光标、LLM 流式输出必须 `aria-live="polite"` ；
+- CI 卡点：axe-core + pa11y-ci + Lighthouse a11y ≥ 95，违例阻断 merge。
+
+#### 5.5.5 极简速度预算（强制）
+
+- **冷启动 → 编辑器可输入** ≤ 1.0s（P99）；
+- **首页查词 → 释义显示** ≤ 0.5s（借鉴有道：1.5s 提速到 0.5s）；
+- **TM 召回（debounce 200ms）** ≤ 200ms；
+- 包体预算：Tauri 主包 ≤ 80MB；Web 首屏 JS ≤ 200KB gzip；LLM wasm ≤ 30MB；
+- 性能数据实时上报 telemetry，P99 劣化 > 20% 持续 5min 触发 P2 告警；
+- 核心功能区 / 拓展功能区**严格分层**（桌面 Web 3 Tab、Tauri 4 Tab、Chrome 扩展 1 Popup），禁止堆砌。
+
+#### 5.5.6 验收清单（PR 必勾）
+
+- [ ] 组件通过 Storybook a11y addon
+- [ ] axe-core / pa11y-ci 0 违例
+- [ ] Lighthouse a11y ≥ 95
+- [ ] 包体增量 ≤ 阈值（Tauri 1MB / Web 10KB gzip）
+- [ ] 折叠屏 / 桌面 Web 布局在 Playwright device emulation 截图通过
+- [ ] 主题切换无 FOUC（Flash of Unstyled Content）
+- [ ] Token 引用覆盖率 ≥ 95%（无硬编码）
+
+#### 5.5.7 引用
+
+- `CATs_UI-UX设计书_v1.1` §10-§14（有道设计语言 4 原则）
+- `CATs_開発者ガイド_v1.1`（本节）
+- `CATs_P1假设层决议_v1.1` §5（admin UI 段同步引用）
 
 ---
 
@@ -630,7 +693,11 @@ hotfix 分支 → PR（强评审）→ main
 | OI-3 | 本地测试 seed data | DBA | M1-S0 |
 | OI-4 | IDE 配置同步（settings.json / .vscode） | 前端 Lead | M1-S0 |
 | OI-5 | 知识库 wiki 平台选型 | PM | M1-S0 |
+| **OI-6** | **§5.5 UI/UX 规约 6 项 PR 验收清单（Storybook a11y / axe / Lighthouse / 包体 / 折叠屏 / 主题）落地** | **前端 Lead + QA** | **M1-S1 末** |
+| **OI-7** | **§5.5.2 折叠屏 Playwright device emulation 截图测试** | **前端 Lead** | **M1-S1 末** |
+| **OI-8** | **§5.5.5 包体预算 CI 卡点（≤ 80MB Tauri / ≤ 200KB Web JS）** | **SRE + 前端 Lead** | **M1-S0 末** |
+| **OI-9** | **§5.5.4 WCAG AAA axe-core / pa11y-ci CI 集成** | **QA + 前端** | **M1-S2 末** |
 
 ---
 
-**文档结束**
+**文档结束（v1.1）**
