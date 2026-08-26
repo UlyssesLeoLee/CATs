@@ -1,12 +1,13 @@
-# CATs As-Is 系统构成图 v1.0
+# CATs As-Is 系统构成图 v1.1
 
 > **文档编号**：CATs-REQ-BA-007
-> **版本**：v1.0
+> **版本**：v1.1
 > **创建日**：2026-08-26
-> **作者**：架构师 + 产品 + QA（worker 代签 per DEC-008）
+> **作者**：架构师 + Rust Lead + DBA（worker 代签 per DEC-008）
 > **任务编号**：150 任务 #7（P2 索引 #21）
 > **上游**：[CATs_微服务架构设计书 v1.0](../../02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md) §2/§3
 > **下游**：[CATs_ADR-001 微服务架构 v1.0](../../02-基础设计/决策/CATs_ADR-001_微服务架构_v1.0.md) §3
+> **基线引用**：[CATs_技术基线 v1.0](../../02-基础设计/技术选型/CATs_技术基线_v1.0.md) §1（**PostgreSQL 18.6 + pgvector 0.8.6**）
 
 ---
 
@@ -16,7 +17,7 @@
 
 | 角色 | 姓名 | 审批 | 日期 | 备注 |
 |------|------|------|------|------|
-| 起草 | 架构师 + 产品 + QA | ☑ | 2026-08-26 | worker 代签 per DEC-008 |
+| 起草 | 架构师 + Rust Lead + DBA | ☑ | 2026-08-26 | worker 代签 per DEC-008 |
 | 评审 | — | ☐ | — | 待评审会 |
 | 批准 | — | ☐ | — | 待评审会 |
 
@@ -24,7 +25,8 @@
 
 | 版本 | 日期 | 修订人 | 修订内容 |
 |------|------|--------|----------|
-| **v1.0** | **2026-08-26** | **架构师 + 产品 + QA** | **P2 索引 #21 落地：旧系统组件 + 接口 + 数据流 + To-Be 对比** |
+| v1.0 | 2026-08-26 | 架构师 + 产品 + QA | P2 索引 #21 落地：旧系统组件 + 接口 + 数据流 + To-Be 对比 |
+| **v1.1** | **2026-08-26** | **架构师 + Rust Lead + DBA** | **基线升级：To-Be 对比表 + 映射表 PG 16 + pgvector → PG 18.6 + pgvector 0.8.6（引用 CATs_技术基线_v1.0 §1）** |
 
 ---
 
@@ -54,7 +56,7 @@
 | 客户端 | COTS 桌面 + 浏览器 | Tauri 2.x + Next.js 控制台 + WXT 扩展 | ADR-004 §3 |
 | 服务架构 | 单体 / 文件共享 | 15 微服务 + 4 共享库 | ADR-001 §3 |
 | 通信 | 邮件 + 文件传输 | gRPC + Kafka + BFF | ADR-002 §3 |
-| 存储 | MySQL 5.7 单点 | PG 16 + pgvector + Redis + Kafka + MinIO | ADR-003 §3 |
+| 存储 | MySQL 5.7 单点 | PG 18.6 + pgvector 0.8.6 + Redis + Kafka + MinIO | ADR-003 §3 / [CATs_技术基线_v1.0 §1](../../02-基础设计/技术选型/CATs_技术基线_v1.0.md) |
 | 多租户 | 1 租户 / 文件夹隔离 | Keycloak + schema 隔离 + namespace | ADR-005 §3 |
 
 ---
@@ -186,7 +188,7 @@ sequenceDiagram
 | Trados Studio 桌面 | Tauri 2.x 客户端 + Chrome 扩展 | `gateway-bff` + `collab-ws` | ADR-004 §3 |
 | MemoQ 桌面 | Tauri 客户端（多端共用） | 同上 | ADR-004 §3 |
 | Office 套件 | `render-writer-service` 一键导出 | `render-writer` | ADR-001 §3 |
-| MySQL 5.7 | PostgreSQL 16 + 多 schema 隔离 | `tm` / `term` / `project` / `auth` | ADR-001 §3 / ADR-003 §3 |
+| MySQL 5.7 | PostgreSQL 18.6 + 多 schema 隔离 | `tm` / `term` / `project` / `auth` | ADR-001 §3 / ADR-003 §3 / [CATs_技术基线_v1.0 §1](../../02-基础设计/技术选型/CATs_技术基线_v1.0.md) |
 | 术语 Excel | `term` 服务（CRUD + 版本） | `term` | ADR-001 §3 核心域 |
 | SMB 共享盘 | MinIO S3 兼容 + presigned URL | `file` 域 | ADR-001 §3 支撑域 |
 | 企业邮件 | `notify` 服务（站内信 + WS 推送） | `notify` | ADR-001 §3 支撑域 |

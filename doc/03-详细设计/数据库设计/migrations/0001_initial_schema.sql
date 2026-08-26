@@ -1,6 +1,9 @@
 -- ==============================================================================
--- CATs Platform: Initial PostgreSQL 16 DDL Migration (0001_initial_schema.sql)
+-- CATs Platform: Initial PostgreSQL 18.6 DDL Migration (0001_initial_schema.sql)
 -- Multi-database / Logical schemas for CATs microservice ecosystem
+-- 版本基线：2026-08-26 锁定 PostgreSQL 18.6 + pgvector 0.8.6
+--           (见 CATs_技术基线_v1.0 §1)
+-- 注：DDL 主体不变；`CREATE EXTENSION vector;` 跟 OS PG 版本自动对齐
 -- ==============================================================================
 
 -- Enable Extensions
