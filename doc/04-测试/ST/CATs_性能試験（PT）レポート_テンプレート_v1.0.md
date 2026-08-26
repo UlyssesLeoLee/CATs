@@ -1,11 +1,11 @@
-# CATs 性能試験（PT）レポート テンプレート v1.0
+# CATs 性能試験（PT）レポート テンプレート v1.1
 
 > **文档编号**：CATs-ST-PT-TPL-001
-> **バージョン**：v1.0
+> **バージョン**：v1.1
 > **作成日**：2026-08-26
-> **作者**：SRE + QA + アーキテクト（worker 代签 per DEC-008）
+> **作者**：架构师 + Rust Lead + DBA（worker 代签 per DEC-008）
 > **状態**：M2 末触发（P2M3待触发索引 v1.0 §3.5 #50 / テスト設計書 v1.0 §10.3）
-> **配套**：CATs_テスト設計書 v1.0 §4.5 / §10.3 / CATs_ADR-001 §3 / CATs_ADR-002 §3 / CATs_ADR-003 §3 / CATs_ADR-004 §3 / CATs_ADR-005 §2
+> **配套**：CATs_テスト設計書 v1.0 §4.5 / §10.3 / CATs_ADR-001 §3 / CATs_ADR-002 §3 / CATs_ADR-003 §3 / CATs_ADR-004 §3 / CATs_ADR-005 §2 / [CATs_技术基线_v1.0](../../02-基础设计/技术选型/CATs_技术基线_v1.0.md) §1（PostgreSQL 18.6 + Rust 1.98.0）
 
 ---
 
@@ -15,7 +15,7 @@
 
 | 役割 | 氏名 | 承認 | 日付 | 備考 |
 |------|------|------|------|------|
-| 起案 | SRE + QA + アーキテクト（worker 代签 per DEC-008） | ☑ | 2026-08-26 | v1.0 テンプレ |
+| 起案 | 架构师 + Rust Lead + DBA（worker 代签 per DEC-008） | ☑ | 2026-08-26 | v1.1 テンプレ |
 | レビュー | — | ☐ | — | — |
 | 承認 | — | ☐ | — | — |
 
@@ -23,7 +23,8 @@
 
 | バージョン | 日付 | 修订者 | 修订内容 |
 |------|------|--------|----------|
-| **v1.0** | **2026-08-26** | **SRE + QA + アーキテクト（worker 代签 per DEC-008）** | **M2 末触发：環境 / シナリオ / 指標 / 結果 / 問題 / 改善 / 署名 7 章テンプレ** |
+| v1.0 | 2026-08-26 | SRE + QA + アーキテクト（worker 代签 per DEC-008） | M2 末触发：環境 / シナリオ / 指標 / 結果 / 問題 / 改善 / 署名 7 章テンプレ |
+| **v1.1** | **2026-08-26** | **架构师 + Rust Lead + DBA** | **基线升级：PostgreSQL 16.x → 18.6（CloudNativePG 1.30+）；Rust toolchain 1.81.x → 1.98.0（均引用 CATs_技术基线_v1.0 §1）** |
 
 ---
 
@@ -64,18 +65,20 @@
 | 组件 | 版本 |
 |------|------|
 | K3s | 1.30.x |
-| PostgreSQL | 16.x（CloudNativePG） |
+| PostgreSQL | 18.6（CloudNativePG 1.30+） |
 | Kafka | 3.7.x（KRaft） |
 | Redis | 7.2.x |
 | MinIO | RELEASE.2024-xx |
 | Keycloak | 24.x |
-| Rust toolchain | 1.81.x |
+| Rust toolchain | 1.98.0 |
 | Node.js | 20 LTS |
 | Python | 3.12 |
 | k6 | 0.49.x |
 | ghz | 0.1.x |
 | wrk2 | 5.x |
 | Tauri | 1.6.x |
+
+> **版本基线**：PostgreSQL 18.6 + CloudNativePG 1.30+ + Rust 1.98.0 + pgvector 0.8.6，引用 [CATs_技术基线_v1.0 §1](../../02-基础设计/技术选型/CATs_技术基线_v1.0.md)。
 
 ### 1.3 网络
 

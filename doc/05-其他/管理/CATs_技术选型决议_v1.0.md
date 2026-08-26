@@ -1,12 +1,14 @@
-# CATs 技术选型决议 v1.0
+# CATs 技术选型决议 v1.1
 
 > **文档编号**：CATs-PMO-008  
 > **フェーズ**：管理 フェーズ 决策类  
 > **关联任务**：QA-013 / QA-022 / QA-024 / QA-026 / QA-027 / QA-064  
-> **版本**：v1.0  
+> **版本**：v1.1(基线升级)  
 > **创建日**：2026-08-20  
-> **作者**：PMO + 架构师 + Rust Lead + DBA  
-> **状态**：评审会前草稿
+> **修订日**：2026-08-26  
+> **作者**：架构师 + Rust Lead + DBA(worker 代签 per DEC-008)  
+> **状态**：已锁定基线  
+> **基线引用**：[CATs_技术基线_v1.0 §1](../02-基础设计/技术选型/CATs_技术基线_v1.0.md)
 
 ---
 
@@ -26,7 +28,8 @@
 
 | 版本 | 日期 | 修订人 | 修订内容 |
 |------|------|--------|----------|
-| **v1.0** | **2026-08-20** | **PMO** | **6 项技术选型决议（用户调整 3 项）** |
+| v1.0 | 2026-08-20 | PMO | 6 项技术选型决议(用户调整 3 项) |
+| **v1.1** | **2026-08-26** | **架构师 + Rust Lead + DBA(worker 代签 per DEC-008)** | **基线升级(WT-H2)**:QA-024 由"跟随 Rust 最新 stable" → **锁定 Rust 1.98.0**;QA-026 由"跟随 PostgreSQL 最新" → **锁定 PostgreSQL 18.6**;引用 `CATs_技术基线_v1.0 §1`;原 2026-08-20 决议作为历史保留(§3.3/§3.4 标题保留"→ 锁定 1.98.0/18.6"以示反转) |
 
 ---
 
@@ -47,8 +50,8 @@
 |---|----|------|----------|--------|--------|------|
 | 1 | QA-013 | 阶段编号 | **A. 三阶段（M1/M2/M3）为准，需求 §10 M1-M5 作为子里程碑** | 架构 + 产品 | P1 | ✅ Decided |
 | 2 | QA-022 | Web 框架 | **B. actix-web**（用户指定） | 架构 | P1 | ✅ Decided |
-| 3 | QA-024 | MSRV | **C. Rust 最新 stable**（用户指定，跟随最新） | Rust Lead | P1 | ✅ Decided |
-| 4 | QA-026 | PostgreSQL | **B. PostgreSQL 最新**（用户指定） | DBA | P2 | ✅ Decided |
+| 3 | QA-024 | MSRV | **D. 锁定 Rust 1.98.0 (2026-08-20 release,2026-08-26 锁定)** | Rust Lead | P1 | ✅ Decided |
+| 4 | QA-026 | PostgreSQL | **C. 锁定 PostgreSQL 18.6 + pgvector 0.8.6 (2026-08-26 锁定)** | DBA | P2 | ✅ Decided |
 | 5 | QA-027 | PG Operator | **A. CloudNativePG (CNPG)** | DBA + 架构 | P1 | ✅ Decided |
 | 6 | QA-064 | Docker 基础镜像 | **A. distroless** | Rust Lead | P1 | ✅ Decided |
 
@@ -103,64 +106,70 @@
 
 ---
 
-### 3.3 QA-024 MSRV → Rust 最新 stable
+### 3.3 QA-024 MSRV → 锁定 Rust 1.98.0(2026-08-26 反转)
 
-**当前状况**：当前 1.75+ 假设。
+**当前状况**:v1.0 决议"跟随 Rust 最新 stable";2026-08-26 决议(WT-H2)反转为**锁定 1.98.0**。
 
-**决议**：**Rust 最新 stable**（跟随官方发布，跟随项目开发期升级）。
+**决议**:**锁定 Rust 1.98.0 (2026-08-20 release)**;基线引用 [CATs_技术基线_v1.0 §1](../02-基础设计/技术选型/CATs_技术基线_v1.0.md)。
 
-**理由**：
-- 不锁定 MSRV，灵活性最大
-- Rust 团队每 6 周 release，新特性可用
-- 工具链随 rustup 升级无障碍
-- 风险：新版本可能引入 breaking change，但 Cargo.lock + CI 测试可兜底
+**理由(2026-08-26 升级)**:
+- 项目跨度 16+ 月,需要可复现构建,不允许 rustup 自动漂移
+- 1.98.0 是 2026-08-20 release,2026-08-26 时为最新稳定
+- 团队开发机 / CI / 发布镜像三方一致
+- 季度评估窗口:2026-11 / 2027-02 / 2027-05 决定是否升 1.99 / 1.100
+- 风险:失去"自动跟随新特性"灵活性 → 缓解:明确的季度升版窗口
+- 风险:修复 backport 需等下个 release → 缓解:评估必要性,关键 CVE 走 patch 升级
 
-**具体策略**：
-- CI Runner 始终用当时最新 stable
-- 项目不写 `rust-version` 字段（或写 `rust-version = "1.79"` 作为最低支持线）
+**具体策略**:
+- `rust-toolchain.toml` 固定 `channel = "1.98.0"`
+- 项目 `Cargo.toml` 写 `rust-version = "1.98.0"`
+- CI Runner 镜像:`rust:1.98.0-slim-bookworm`
 - Cargo.lock 提交并锁定 transitive deps
-- 季度评估一次：是否锁定到某 stable（避免 breaking 风险）
+- 季度评估一次:是否升到下个 stable
 
-**影响**：
-- 所有 crate 用最新稳定版
-- 团队开发机跟随 rustup 升级
+**影响**:
+- 所有 crate 用 1.98.0
+- 团队开发机固定 1.98.0(rustup 默认 channel 不漂移)
 - CI self-hosted runner 用 rust-toolchain.toml 固定
+- M1-S0 需做"Hello-Cargo 冒烟"验证各关键 crate 对 1.98.0 兼容性(actix-web / tonic / yrs / tauri / sqlx / rdkafka,详见 Rust 选型书 §19.4)
 
-**同步文档**：
-- `CATs_Rust技术选型书_v1.0.md` §2 / §3 ADR-R-01：版本策略
-- `CATs_開発者ガイド_v1.0.md` §3 必装工具
-- `CATs_CI_CD_構築運用手順書_v1.0.md` §4.2 基础工具
+**同步文档**:
+- `CATs_Rust技术选型书_v1.0.md` §3.1 ADR-R-01:版本策略(已升级 v1.1)
+- `CATs_開発者ガイド_v1.0.md` §3 必装工具(已升级 v1.2)
+- `CATs_CI_CD_構築運用手順書_v1.0.md` §4.2 基础工具(已升级 v1.1)
 
 ---
 
-### 3.4 QA-026 PostgreSQL → 最新
+### 3.4 QA-026 PostgreSQL → 锁定 18.6(2026-08-26 反转)
 
-**当前状况**：当前 16.x。
+**当前状况**:v1.0 决议"PostgreSQL 最新 stable";2026-08-26 决议(WT-H2)反转为**锁定 PostgreSQL 18.6**。
 
-**决议**：**PostgreSQL 最新 stable**（跟随官方发布）。
+**决议**:**PostgreSQL 18.6**,CloudNativePG 1.30+ 管理;pgvector **0.8.6**;基线引用 [CATs_技术基线_v1.0 §1](../02-基础设计/技术选型/CATs_技术基线_v1.0.md) 与 [CATs_ADR-003_数据存储选型_v1.1](../02-基础设计/决策/CATs_ADR-003_数据存储选型_v1.1.md)。
 
-**理由**：
-- 跟随最新可用最新特性（pgvector 0.7+、逻辑复制增强等）
-- 但要求：**M1-S0 时确认 pgvector 对所选 PG 版本兼容性**
-- 上线期（2027-Q3）会再做一次评估，可能锁定到 LTS
-- 风险：新版本生态未完全 ready → 缓解：QA-041 Benchmark 强制验证
+**理由(2026-08-26 升级)**:
+- 18.6 是 2026-08-26 时点最新稳定;跳过 18.5(已知被跳)
+- pgvector 0.8.6 官方镜像 `pgvector/pgvector:pg18-trixie` 已验证兼容
+- CloudNativePG 1.30+ 默认 `18.6-system-trixie` 镜像可用
+- 风险:18.6 是次新 minor(18.5 被跳),生态适配窗口短 → 缓解:QA-041 Benchmark 强制验证
+- 风险:6-12 月后 18.7/18.8 出来需再评估 → 缓解:Minor 升级窗口(2026-11 / 2027-02)写在保守手册
 
-**具体策略**：
-- M1-S0 用当时最新 stable（如 17.x）
-- 所有 migrations / 测试用此版本
-- CNPG operator 必须支持
-- pgvector 扩展必须能装
+**具体策略**:
+- 镜像:`postgres:18.6` / `pgvector/pgvector:pg18-trixie` / CNPG `18.6-system-trixie`
+- 所有 migrations / 测试用 18.6
+- pgvector 0.8.6 扩展已验证可装
+- 18.5 不部署(已知跳过)
 
-**影响**：
-- 数据库设计书 §1 / §2：PG 版本描述
-- CI 用 `postgres:最新` 镜像
-- K3s 上 CNPG 配置 PG 最新版本
-- 备份策略适配新版本特性
+**影响**:
+- 数据库设计书 §1 / §2:PG 版本描述(后续同步)
+- CI 用 `postgres:18.6` 镜像
+- K3s 上 CNPG 配置 PG 18.6
+- 备份策略适配 18.x 特性
 
-**同步文档**：
+**同步文档**:
 - `CATs_数据库设计书_v2.0.md` §1 / §2 PG 版本
-- `CATs_Rust技术选型书_v1.0.md` §2 技术选型
+- `CATs_Rust技术选型书_v1.0.md` §6 数据持久化(sqlx 0.8+ 兼容 PG 18)
 - `CATs_可热插拔部署与运维设计_v1.0.md` §5 PG 配置
+- `CATs_ADR-003_数据存储选型_v1.1.md` §1/§3(已独立升版)
 
 ---
 

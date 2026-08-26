@@ -9,20 +9,23 @@
 | 项目 | 内容 |
 |---|---|
 | 文档编号 | CATs-QA-PRE-001 |
-| 文档名 | 实施前 QA 登记册（Pre-Implementation Concern Register） |
-| 版本 | 第 1.0 版（草稿） |
+| 文档名 | 实施前 QA 登记册(Pre-Implementation Concern Register) |
+| 版本 | 第 1.1 版(基线升级) |
 | 创建日 | 2026-08-19 |
-| 作者 | 架构师 / 测试负责人 |
-| 状态 | 评审前草稿 |
+| 修订日 | 2026-08-26 |
+| 作者 | 架构师 + 测试负责人 + Rust Lead + DBA(worker 代签 per DEC-008) |
+| 状态 | 已锁定基线 |
 | 密级 | 仅社内 |
 | 性质 | **pre-mortem**:在编码启动前,记录所有顾虑、疑问、未明确项,供项目干系人评审决策 |
 | 上游文档 | 全部 CATs 需求/基础/详细设计文档(本登记册由这些文档的产出过程提炼) |
+| 基线引用 | [CATs_技术基线_v1.0](../02-基础设计/技术选型/CATs_技术基线_v1.0.md) §1 |
 
 ### 修订履历
 
 | 版本 | 日期 | 修订者 | 修订内容 |
 |---|---|---|---|
 | 1.0 | 2026-08-19 | 架构师 / 测试负责人 | 初版。基于现有全部 CATs 设计文档(需求/基础/详细)与 Rust 技术选型/可热插拔部署/测试设计等横向补充文档,梳理实施前需要决策/澄清/确认的关心事项共 50+ 项 |
+| 1.1 | 2026-08-26 | 架构师 + Rust Lead + DBA(worker 代签 per DEC-008) | **基线升级(WT-H2)**:QA-024 由"跟随 Rust 最新 stable" → **锁定 Rust 1.98.0**;QA-026 由"跟随 PostgreSQL 最新" → **锁定 PostgreSQL 18.6 + pgvector 0.8.6**;§1.3 状态分布表追加 v1.1 决议说明;引用 `CATs_技术基线_v1.0 §1` |
 
 ### 审批栏
 
@@ -77,7 +80,7 @@
 | QA-011 | TM 索引策略(分桶/全表/scale-out)需 O1 数据定 |
 | QA-012 | 16 个微服务拆分是否与运维/SRE 团队能力匹配 |
 | QA-021 | Tokio 异步运行时与全部 Rust 服务的依赖兼容性 |
-| QA-041 | PostgreSQL 16 + pgvector 是否已实测支持 10000+ 条 TM 的 HNSW 性能 |
+| QA-041 | PostgreSQL 18.6 + pgvector 0.8.6 是否已实测支持 10000+ 条 TM 的 HNSW 性能 |
 | QA-042 | K3s 3 控制面节点(3HA)是否足够生产(50-3000 并发) |
 | QA-051 | 本地 LLM 资源:模型选型(Ollama Qwen 7B 量化)/GPU 节点数/部署位置 |
 | QA-052 | 合规敏感项目样本数据(10 段含 PII 源文本)来源与授权 |
@@ -94,7 +97,9 @@
 | Decided / Closed | 20 | 35% |
 | Won't Fix | 0 | 0% |
 
-> 更新：v1.0 → v1.0+6 (2026-08-20 决议 6 项技术选型：QA-013/022/024/026/027/064)
+> 更新:
+> - v1.0 → v1.0+6 (2026-08-20 决议 6 项技术选型:QA-013/022/024/026/027/064)
+> - v1.0+6 → v1.1 (2026-08-26 决议 WT-H2 基线升级:QA-024 锁定 Rust 1.98.0,QA-026 锁定 PostgreSQL 18.6 + pgvector 0.8.6,见 `CATs_技术基线_v1.0 §1`)
 
 ---
 
@@ -133,9 +138,9 @@
 | QA-021 | **Tokio 异步运行时是唯一选型** | 全部 Rust 服务依赖 Tokio,但若未来引入 actix-web 等非 Tokio 生态,会有冲突 | Rust 选型 ADR-R-04;模块设计 | 当前:仅 Tokio | 采纳 A: 强制统一Tokio 1.x作为唯一异步运行时,Web框架统一Axum 0.7+ | 架构 + Rust Lead | P0 | Decided |
 | QA-022 | **axum vs actix-web 最终选型** | 团队对 actix-web 性能可能更信任 | Rust 选型 ADR-R-06 | 当前:actix-web | 采纳 B: actix-web(性能优先),用actix-rt桥接Tokio生态 | 架构 | P1 | Decided
 | QA-023 | **OpenFeature 引入必要性** | 增加 SDK 依赖和服务,价值是否够 | 运维设计 §6.5 | 当前:采用 OpenFeature | A. 引入(默认) B. 自建简单 flag C. 用 LaunchDarkly SaaS | 架构 | P1 | Open |
-| QA-024 | **MSRV 1.75 是否够用** | 一些 2025+ 新特性可能不可用 | Rust 选型 ADR-R-01 | 当前:Rust 最新 stable | 采纳 C: 跟随Rust最新stable,M1-S0时锁定到具体版本 | Rust Lead | P1 | Decided
+| QA-024 | **MSRV 1.75 是否够用** | 一些 2025+ 新特性可能不可用 | Rust 选型 ADR-R-01(已升 v1.1) | 当前:锁定 Rust 1.98.0(2026-08-26 反转) | **采纳 D: 锁定 Rust 1.98.0 (2026-08-20 release),见 `CATs_技术基线_v1.0 §1`** | Rust Lead | P1 | Decided
 | QA-025 | **librdkafka 系统依赖** | rdkafka 需 C 库,Docker 镜像需 apt-get install | Rust 选型 ADR-R-11;CI | 当前:Dockerfile 安装 | A. apt-get(默认) B. 静态编译 C. 切到 rskafka | Rust Lead + 运维 | P1 | Open |
-| QA-026 | **PostgreSQL 16 vs 17** | PG 17 已发布(假设 2026),新特性是否用 | 技术选型书 §2 | 当前:PostgreSQL 最新 | 采纳 B: 跟随PostgreSQL最新,M1-S0时验证pgvector兼容性 | DBA | P2 | Decided
+| QA-026 | **PostgreSQL 16 vs 17** | PG 17 已发布(假设 2026),新特性是否用 | 技术选型书 §2 + ADR-003 v1.1 | 当前:锁定 PostgreSQL 18.6 + pgvector 0.8.6(2026-08-26 反转) | **采纳 C: 锁定 PostgreSQL 18.6 + pgvector 0.8.6,见 `CATs_技术基线_v1.0 §1` 与 `CATs_ADR-003_数据存储选型_v1.1`** | DBA | P2 | Decided
 | QA-027 | **CloudNativePG vs Patroni** | 架构说 CNPG,但 Patroni 生态成熟 | 架构 §5.6;技术选型书 | 当前:CNPG | 采纳 A: CNPG(K3s官方推荐,原生Operator,barman-cloud备份) | DBA + 架构 | P1 | Decided
 | QA-028 | **Envoy Gateway vs Istio** | 服务网格未启用,Gateway 用 Envoy | 技术选型书 | 当前:Envoy Gateway only | A. 仅 Envoy Gateway(默认) B. 引入 Linkerd(轻网格) C. 完整 Istio | 架构 | P2 | Open |
 

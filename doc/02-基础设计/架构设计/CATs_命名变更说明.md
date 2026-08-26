@@ -3,11 +3,19 @@
 | 项目 | 内容 |
 |---|---|
 | 文档编号 | CATs-NOTE-001 |
-| 版本 | 第 1.0 版 |
-| 创建日 | 2026-08-17 |
-| 作者 | 架构师 |
+| 版本 | 第 1.1 版 |
+| 创建日 | 2026-08-26 |
+| 作者 | 架构师 + Rust Lead + DBA（worker 代签 per DEC-008） |
 | 状态 | 已确认 |
 | 密级 | 仅社内 |
+| 关联基线 | [CATs_技术基线 v1.0 §1](../技术选型/CATs_技术基线_v1.0.md)（**PostgreSQL 18.6 + pgvector 0.8.6**） |
+
+### 修订履历
+
+| 版本 | 日期 | 修订人 | 修订内容 |
+|---|---|---|---|
+| 1.0 | 2026-08-17 | 架构师 | 首版：OFCAT → CATs 命名与范围转型说明 |
+| **1.1** | **2026-08-26** | **架构师 + Rust Lead + DBA** | **基线升级：PostgreSQL 集群 引用统一为 PostgreSQL 18.6 + pgvector 0.8.6（引用 CATs_技术基线_v1.0 §1）** |
 
 ---
 
@@ -18,7 +26,7 @@
 | 产品名 | OFCAT（AI 增强型 CAT 浏览器工作台） | **CATs**（Computer-Assisted Translation SaaS，全媒体翻译 SaaS 平台） |
 | 部署形态 | 薄浏览器扩展（MV3）+ 本地 Python 引擎（单机） | Rust 原生客户端（Tauri 2.x）+ Next.js Web 控制台 + K3s 微服务集群（局域网私有化 SaaS） |
 | 支持媒体 | 网页文本选区翻译为主 | 文本 / 音频（ASR+字幕+配音钩子）/ 视频（字幕提取/烧录/画面 OCR）/ PDF（文字层+扫描件 OCR+版面保留）/ 图文文档 / Office 全家桶（docx/xlsx/pptx 及 ODF）/ 动图（GIF/WebP 帧 OCR） |
-| 存储 | 单机 SQLite | PostgreSQL 集群（按服务逻辑库拆分）+ Valkey（缓存/会话，非权威存储） |
+| 存储 | 单机 SQLite | **PostgreSQL 18.6** 集群（按服务逻辑库拆分，见 [CATs_技术基线_v1.0 §1](../技术选型/CATs_技术基线_v1.0.md)）+ pgvector 0.8.6 + Valkey（缓存/会话，非权威存储） |
 | 用户规模假设 | 单用户/小团队本地使用 | 50–3000 并发用户，局域网内多租户 SaaS |
 | 架构文档 | `OFCAT_基础设计书_v1.0.md` | `CATs_微服务架构设计书_v1.0.md`（新增，不替换旧文档） |
 | 技术选型文档 | `OFCAT_技术选型书_v1.0.md` | `CATs_技术选型书_v2.0.md`（新增，version 号延续原文档序列） |
@@ -33,7 +41,7 @@
 ## 3. 什么被保留
 
 - **确定性优先、分层延迟、合规 fail-closed** 等核心设计原则在新架构中延续（见 `CATs_微服务架构设计书_v1.0.md` §1）。
-- **TM/术语/QA 的算法思路**（RapidFuzz + 语义向量混合匹配、标签占位符保护、术语强制校验）原样迁移为 `task-service`/`translation-core` 内部逻辑，只是运行时从单机 SQLite 迁移到 PostgreSQL 逻辑库。
+- **TM/术语/QA 的算法思路**（RapidFuzz + 语义向量混合匹配、标签占位符保护、术语强制校验）原样迁移为 `task-service`/`translation-core` 内部逻辑，只是运行时从单机 SQLite 迁移到 **PostgreSQL 18.6** 逻辑库（[CATs_技术基线_v1.0 §1](../技术选型/CATs_技术基线_v1.0.md)）。
 - **旧需求文档保留不动**：`doc/01-需求/` 下的 OFCAT 需求定义书作为历史输入保留，新架构文档中作为「上游历史文档」引用，不删除、不重写。
 
 ## 4. 文档地图
