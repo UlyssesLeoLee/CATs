@@ -9,20 +9,23 @@
 | 项目 | 内容 |
 |---|---|
 | 文档编号 | CATs-TS-002 |
-| 文档名 | 技术选型书（含选型决策记录 ADR，v2.0——微服务/全媒体版） |
-| 版本 | 第 2.0 版（草稿） |
+| 文档名 | 技术选型书(含选型决策记录 ADR,v2.1——基线锁定) |
+| 版本 | 第 2.1 版(基线锁定) |
 | 创建日 | 2026-08-17 |
-| 作者 | 架构师 |
-| 状态 | 评审前草稿 |
+| 修订日 | 2026-08-26 |
+| 作者 | 架构师 + DBA(worker 代签 per DEC-008) |
+| 状态 | 已锁定基线 |
 | 密级 | 仅社内 |
-| 上游文档 | [OFCAT 技术选型书 v1.0（历史/旧架构参考）](./OFCAT_技术选型书_v1.0.md)、[CATs 微服务架构设计书 v1.0](../架构设计/CATs_微服务架构设计书_v1.0.md)、[CATs 命名变更说明](../架构设计/CATs_命名变更说明.md) |
+| 上游文档 | [OFCAT 技术选型书 v1.0(历史/旧架构参考)](./OFCAT_技术选型书_v1.0.md)、[CATs 微服务架构设计书 v1.0](../架构设计/CATs_微服务架构设计书_v1.0.md)、[CATs 命名变更说明](../架构设计/CATs_命名变更说明.md) |
+| 基线引用 | [CATs_技术基线_v1.0 §1](./CATs_技术基线_v1.0.md) |
 
 ### 修订履历
 
 | 版本 | 日期 | 修订者 | 修订内容 |
 |---|---|---|---|
-| 1.0 | 2026-06-25 | 架构师 | （OFCAT）薄扩展+本地引擎技术栈选型，见历史文档 |
-| 2.0 | 2026-08-17 | 架构师 | 全面重做：Rust 原生客户端 + Next.js 控制台 + K3s 微服务平台 + 全媒体处理管线技术选型 |
+| 1.0 | 2026-06-25 | 架构师 | (OFCAT)薄扩展+本地引擎技术栈选型,见历史文档 |
+| 2.0 | 2026-08-17 | 架构师 | 全面重做:Rust 原生客户端 + Next.js 控制台 + K3s 微服务平台 + 全媒体处理管线技术选型 |
+| 2.1 | 2026-08-26 | 架构师 + DBA(worker 代签 per DEC-008) | **基线升级(WT-H2)**:主存储从 PostgreSQL 16 → **PostgreSQL 18.6(CloudNativePG 1.30+ 管理)**;ADR-18 同步;ADR-003 v1.1 已独立升版引用本基线;其他 ADR 维持;引用 `CATs_技术基线_v1.0 §1` |
 
 ---
 
@@ -49,7 +52,7 @@
 | 容器编排 | **K3s（3 控制面 + N 工作节点）** | 标准 K8s（kubeadm）/ K0s | 4.5 |
 | 服务网格/入口 | **Envoy Gateway（Kubernetes Gateway API）** | Nginx Ingress / Traefik | 4.4 |
 | 核心翻译引擎语言 | Python（FastAPI，沿用 OFCAT 编排逻辑）+ Rust（渲染回写高性能路径） | 纯 Python / 纯 Rust | 4.3 |
-| 主存储 | **PostgreSQL 16（CloudNativePG 管理）** | MySQL / CockroachDB | 4.6 |
+| 主存储 | **PostgreSQL 18.6(CloudNativePG 1.30+ 管理,2026-08-26 锁定)** | MySQL / CockroachDB | 4.6 |
 | 缓存/会话/限流 | **Valkey（Redis 兼容 Fork）** | Redis（许可证变更）/ KeyDB | 4.5 |
 | 消息队列 | **Kafka（KRaft 模式，无 ZooKeeper）** | NATS JetStream / RabbitMQ | 4.3 |
 | CDC | **Debezium（Kafka Connect）** | 自研双写 | 4.4 |
@@ -117,12 +120,12 @@
 - **理由**：Gateway API 是 Ingress API 的官方后继标准，天然支持 HTTP/2、gRPC、WebSocket（客户端与后端的翻译流式推送）、灰度发布（`HTTPRoute` weight 分流）、更细粒度的流量策略（`BackendTrafficPolicy` 限流/熔断/重试）；Envoy 本身是云原生服务网格事实标准数据面，性能与可观测性成熟，社区活跃，Apache-2.0 许可。
 - **取舍**：比 Nginx Ingress 学习曲线更陡（Gateway API 概念更多）→ 通过团队内部 Gateway API 使用手册与模板化 Helm values 降低门槛。
 
-### ADR-18 主存储：PostgreSQL（唯一权威存储）
+### ADR-18 主存储:PostgreSQL 18.6(唯一权威存储,2026-08-26 锁定)
 
-- **决策**：PostgreSQL 16，CloudNativePG（CNPG）Operator 管理，按微服务拆分逻辑库（`auth_db`/`user_db`/`project_db`/`task_db`/`report_db` 等），每库独立账号/最小权限。
-- **候选与对比**：见架构设计书 §5.6 HA 方案对比（CloudNativePG vs Patroni vs Stolon）。
-- **理由**：PostgreSQL 功能最全（JSONB、全文检索、pgvector 扩展支持向量召回、成熟的 PITR/流复制生态），是本方案**唯一权威数据存储**，杜绝"缓存/消息队列兼做存储"的反模式。CloudNativePG 是 CNCF Sandbox 项目，原生 K8s Operator 模式，比 Patroni（需要额外的 DCS 如 etcd/Consul 才能选主）在 K8s 环境下运维更简单，Apache-2.0 许可。
-- **取舍**：CNPG 生态比 Patroni 年轻 → MVP 阶段用 CNPG；若后续遇到 CNPG 未覆盖的高级需求（如跨区域多活）可平滑切换 Patroni（同样基于标准 PostgreSQL，SQL 层无锁定）。
+- **决策**:**PostgreSQL 18.6**,CloudNativePG 1.30+ (CNPG) Operator 管理,按微服务拆分逻辑库(`auth_db`/`user_db`/`project_db`/`task_db`/`report_db` 等),每库独立账号/最小权限;详见 [CATs_技术基线_v1.0 §1](./CATs_技术基线_v1.0.md) 与 [CATs_ADR-003_数据存储选型_v1.1](./决策/CATs_ADR-003_数据存储选型_v1.1.md)
+- **候选与对比**:见架构设计书 §5.6 HA 方案对比(CloudNativePG vs Patroni vs Stolon)
+- **理由**:PostgreSQL 功能最全(JSONB、全文检索、pgvector 0.8.6 扩展支持向量召回、成熟的 PITR/流复制生态),是本方案**唯一权威数据存储**,杜绝"缓存/消息队列兼做存储"的反模式;**18.6 是 2026-08-26 时点最新稳定,锁定 18.6 跳过 18.5(已知版本被跳)**;CloudNativePG 1.30+ 原生 K8s Operator 模式,比 Patroni(需要额外的 DCS 如 etcd/Consul 才能选主)在 K8s 环境下运维更简单,Apache-2.0 许可
+- **取舍**:CNPG 生态比 Patroni 年轻 → MVP 阶段用 CNPG;若后续遇到 CNPG 未覆盖的高级需求(如跨区域多活)可平滑切换 Patroni(同样基于标准 PostgreSQL,SQL 层无锁定)
 
 ### ADR-19 缓存层：Valkey
 

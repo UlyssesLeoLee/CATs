@@ -9,21 +9,24 @@
 | 项目 | 内容 |
 |---|---|
 | 文档编号 | CATs-TS-RUST-001 |
-| 文档名 | Rust 技术选型书（含 ADR 决策记录，Rust 生态深度） |
-| 版本 | 第 1.0 版（草稿） |
+| 文档名 | Rust 技术选型书(含 ADR 决策记录,Rust 生态深度) |
+| 版本 | 第 1.1 版(基线锁定) |
 | 创建日 | 2026-08-19 |
-| 作者 | 架构师 |
-| 状态 | 评审前草稿 |
+| 修订日 | 2026-08-26 |
+| 作者 | 架构师 + Rust Lead + DBA(worker 代签 per DEC-008) |
+| 状态 | 已锁定基线 |
 | 密级 | 仅社内 |
 | 适用标准 | Rust API Guidelines / Rust Standard Library / RFC 标准化 / [Rust 官方 ISRG 选择清单](https://www.rust-lang.org/) |
-| 上游文档 | [CATs 技术选型书 v2.0](./CATs_技术选型书_v2.0.md)（横向补充：本书专门深化 Rust 生态） |
+| 上游文档 | [CATs 技术选型书 v2.0](./CATs_技术选型书_v2.0.md)(横向补充:本书专门深化 Rust 生态) |
+| 基线引用 | [CATs_技术基线_v1.0](./CATs_技术基线_v1.0.md) §1 |
 
 ### 修订履历
 
 | 版本 | 日期 | 修订者 | 修订内容 |
 |---|---|---|---|
-| 1.0 | 2026-08-19 | 架构师 | 初版。Rust 生态深度选型：① 工具链（rustc/cargo/clippy/rustfmt/cargo-audit 等）；② 异步运行时（Tokio）；③ Web 框架（actix-web / Tauri）；④ 数据库（sqlx）；⑤ 消息（rdkafka / redis-rs）；⑥ 序列化（serde / prost）；⑦ 可观测性（tracing / OpenTelemetry / metrics）；⑧ 安全（ring / jsonwebtoken / argon2）；⑨ 测试（cargo test / mockall / testcontainers / proptest）；⑩ 媒体处理（ffmpeg-next / image） |
-| 1.0+6 | 2026-08-20 | PMO | 决议更新（QA-022/024）：axum → actix-web；MSRV 1.75+ → 最新 stable |
+| 1.0 | 2026-08-19 | 架构师 | 初版。Rust 生态深度选型:① 工具链(rustc/cargo/clippy/rustfmt/cargo-audit 等);② 异步运行时(Tokio);③ Web 框架(actix-web / Tauri);④ 数据库(sqlx);⑤ 消息(rdkafka / redis-rs);⑥ 序列化(serde / prost);⑦ 可观测性(tracing / OpenTelemetry / metrics);⑧ 安全(ring / jsonwebtoken / argon2);⑨ 测试(cargo test / mockall / testcontainers / proptest);⑩ 媒体处理(ffmpeg-next / image) |
+| 1.0+6 | 2026-08-20 | PMO | 决议更新(QA-022/024):axum → actix-web;MSRV 1.75+ → 最新 stable |
+| 1.1 | 2026-08-26 | 架构师 + Rust Lead + DBA(worker 代签 per DEC-008) | **基线升级(WT-H2)**:Rust 工具链从"跟随最新 stable" → **锁定 1.98.0 (2026-08-20 release)**;ADR-R-01 同步;MSRV 表新增锁定版行;引用 `CATs_技术基线_v1.0 §1`;已知缺口补加 Actix-web / Tonic / Yrs / Tauri 对 Rust 1.98 兼容性待 M1-S0 验证 |
 
 ### 审批栏
 
@@ -134,30 +137,34 @@
 
 | 选型 | 决策 | 版本 | 理由 |
 |---|---|---|---|
-| Rust 稳定版（stable） | **采纳** | 最新 stable | 生产环境不用 nightly/beta；跟随官方 release |
-| MSRV | **跟随最新** | — | 2026-08-20 决议（QA-024）：不锁定 MSRV，跟随最新 stable；M1-S0 时锁定到具体版本；CI 用 rust-toolchain.toml 固定 |
-| Edition | **2021** | — | 2024 edition 仍部分库未支持，待生态稳定后评估 |
-| 组件（rustup） | `rustc`, `cargo`, `clippy`, `rustfmt`, `rust-src`, `rust-analyzer` | 全部 stable 组件 | — |
+| Rust 稳定版(stable) | **采纳** | **锁定 1.98.0 (2026-08-20 release)** | 见 [CATs_技术基线_v1.0 §1](./CATs_技术基线_v1.0.md);生产环境不用 nightly/beta;基线统一在 1.98.0 |
+| **MSRV(锁定版)** | **锁定 1.98.0** | 1.98.0 | 2026-08-26 决议(WT-H2 基线升级):`rust-toolchain.toml` 固定 channel=`1.98.0`;`Cargo.toml` 写 `rust-version = "1.98.0"`;季度评估,需要时再升 |
+| MSRV(原 1.75+ 软底线) | 已被锁定版覆盖 | — | 仅作历史参考;实际工程以 1.98.0 为准 |
+| Edition | **2021** | — | 2024 edition 仍部分库未支持,待生态稳定后评估 |
+| 组件(rustup) | `rustc`, `cargo`, `clippy`, `rustfmt`, `rust-src`, `rust-analyzer` | 全部 stable 组件(与 1.98.0 对齐) | — |
 
-**ADR-R-01 跟随 Rust 最新 stable（不锁定 MSRV）**
+**ADR-R-01 锁定 Rust 1.98.0(原"跟随最新 stable"已升级)**
 
-- **背景**：CATs 项目周期 16+ 月，2026-08-20 决议（QA-024）：跟随 Rust 最新 stable，不锁定 MSRV
-- **候选**：
-  1. 锁定 1.75+（保守）
-  2. 锁定 1.80（中等）
-  3. 不锁定（用最新稳定）✅
-- **决策**：跟随最新 stable（候选 3）
-- **理由**：
-  - 灵活性最大，6 周一个新 release，新特性可用
-  - 团队开发机随 rustup 升级无障碍
-  - Cargo.lock 锁定 transitive deps，CI 测试兜底
-  - 季度评估：是否需要锁定到具体 stable
-- **取舍**：
-  - 潜在 breaking change 风险 → 缓解：CI 强测试 + 季度评估
-  - M1-S0 时锁定到具体版本
-- **实施**：
-  - `rust-toolchain.toml` 固定 CI Runner 版本
-  - 项目 `Cargo.toml` 不写 `rust-version`（或写 `1.79` 作为最低支持）
+- **背景**:CATs 项目周期 16+ 月,2026-08-20 决议(QA-024)原案"跟随最新 stable",2026-08-26 决议(WT-H2)升级为**锁定 1.98.0**
+- **候选**:
+  1. 锁定 1.75+(保守)
+  2. 锁定 1.80(中等)
+  3. 跟随最新(原决议)
+  4. **锁定 1.98.0(2026-08-20 release,本版升级)** ✅
+- **决策**:**锁定 1.98.0**(候选 4,2026-08-26 生效)
+- **理由**:
+  - 项目跨度 16+ 月,需要可复现构建
+  - 1.98.0 是 2026-08-20 release,2026-08-26 时为最新稳定
+  - 团队开发机/CI/发布镜像三方一致(避免 rustup 自动漂移)
+  - 季度评估窗口:2026-11 / 2027-02 / 2027-05 决定是否升 1.99 / 1.100
+- **取舍**:
+  - 失去"自动跟随新特性"灵活性 → 缓解:明确的季度升版窗口
+  - 修复 backport 需等下个 release → 缓解:评估必要性,关键 CVE 走 patch 升级
+- **实施**:
+  - `rust-toolchain.toml` 固定 `channel = "1.98.0"`
+  - 项目 `Cargo.toml` 写 `rust-version = "1.98.0"`
+  - CI Runner 镜像:`rust:1.98.0-slim-bookworm`
+  - 详见 [CATs_技术基线_v1.0 §1](./CATs_技术基线_v1.0.md)
 
 ### 3.2 构建工具
 
@@ -1237,6 +1244,24 @@ let stream = ictx.streams().best(ffmpeg::media::Type::Video).unwrap();
 | `lazy_static` | `OnceCell` 已稳定，优先用 |
 | `dotenv` | `dotenvy` 是维护 fork |
 | `serde_derive` 自定义序列化 | `serde_with` 提供更安全的方案 |
+
+---
+
+## 19.4 已知缺口(2026-08-26 基线升级新增)
+
+> **本节按 DDD Review 规范显式列"已知缺口"——缺标比错标更安全。**
+
+| 缺口编号 | 描述 | 验证窗口 | 责任方 | 状态 |
+|---|---|---|---|---|
+| GAP-RUST-1 | Actix-web 4.9+ 对 Rust 1.98.0 的兼容性(actix-rt 与 tokio 1.40+ 桥接) | M1-S0 起步期 | Rust Lead | 待验证 |
+| GAP-RUST-2 | Tonic 0.12+ 对 Rust 1.98.0 的兼容性(prost 0.13+ 编译) | M1-S0 起步期 | Rust Lead | 待验证 |
+| GAP-RUST-3 | Yrs(Yjs Rust binding)与 1.98.0 的 wasm 编译兼容性(协作编辑场景) | M1-S0 | 前端 Lead | 待验证 |
+| GAP-RUST-4 | Tauri 2.1+ 对 Rust 1.98.0 的支持矩阵(Windows / macOS / Linux) | M1-S0 | 客户端 Lead | 待验证 |
+| GAP-RUST-5 | sqlx 0.8+ 编译时 SQL 校验与 Rust 1.98.0 的 `query!` 宏稳定性 | M1-S0 | Rust Lead | 待验证 |
+| GAP-RUST-6 | rdkafka 0.36+ (cmake-build 特性) 在 1.98.0 下的编译时长 / 缓存命中率回归 | M1-S0 | Rust Lead + SRE | 待验证 |
+| GAP-RUST-7 | edition = "2021" 是否在 1.98.0 下仍稳定;2024 edition 评估窗口 | 2026-Q4 | 架构师 | 待评估 |
+
+**应对策略**:M1-S0 第一周内做 "Hello-Cargo 冒烟"(各 crate 最小工程对 1.98.0 编译),失败则回滚到 1.97.x 并开 ADR-007-sup 复议;通过则按上述窗口逐项关闭。
 
 ---
 
