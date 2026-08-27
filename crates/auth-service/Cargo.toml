@@ -36,3 +36,5 @@ dotenvy    = "0.15"
 
 [dev-dependencies]
 actix-rt = "2"
+actix-web = { workspace = true, features = ["macros"] }
+serde_json = "1"

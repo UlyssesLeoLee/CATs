@@ -5,14 +5,14 @@
 use serde::{Deserialize, Serialize};
 
 /// 登录请求 (REST, per OpenAPI v1)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
 /// 登录响应 (REST)
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -23,13 +23,13 @@ pub struct LoginResponse {
 }
 
 /// 刷新请求
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefreshRequest {
     pub refresh_token: String,
 }
 
 /// 刷新响应
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefreshResponse {
     pub access_token: String,
     pub refresh_token: String,
@@ -38,7 +38,7 @@ pub struct RefreshResponse {
 }
 
 /// 错误响应 (统一格式 per 实施前QA §3.4)
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorBody {
     pub error: String,
     pub message: String,

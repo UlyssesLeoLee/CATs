@@ -33,7 +33,7 @@ pub async fn find_by_username(pool: &PgPool, username: &str) -> Result<Option<Us
     .bind(username)
     .fetch_optional(pool)
     .await
-    .context("find_by_username query failed")?;
+    .map_err(|e| anyhow::anyhow!("find_by_username query failed: db_err={}", e))?;
     Ok(row)
 }
 
