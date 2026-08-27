@@ -27,6 +27,7 @@
 | 版本 | 日期 | 修订者 | 修订内容 |
 |---|---|---|---|
 | **v1.0** | **2026-08-26** | **架构师 + Rust Lead + DBA（worker 代签 per DEC-008）** | **基线落地（回填 0f2dd56 WT-H2 引用断链）**：§1 锁定 Rust 1.98.0 + PostgreSQL 18.6 + pgvector 0.8.6 三项基线；§2-§4 引用三个技术选型书作选型过程依据；§5 列引用本基线的 24 份下游文档清单 |
+| v1.0+1 | 2026-08-27 | 架构师 + Rust Lead | OI-3 部分完成：5/6 库 Rust 1.98.0 兼容性冒烟通过（`cats-m1-s0-smoke` crate，commit `c173a53` + 本 commit 修订） |
 
 ### 审批栏
 
@@ -315,7 +316,7 @@
 |---|---|---|---|---|
 | OI-1 | 评审会 D-Day 现场签字归档 v1.0 → B0.0 基线 | Sponsor + PM + 架构师 + 客户代表 | 2026-08-25 | 待评审 |
 | OI-2 | CAB-001 决议书登记（基线升版流程建立） | PM | 2026-08-25 | 待办 |
-| OI-3 | M1-Sprint 0 验证 Rust 1.98.0 兼容性（actix-web / tonic / yrs / tauri / sqlx / rdkafka） | Rust Lead | 2026-09 上旬 | 待办 |
+| OI-3 | M1-Sprint 0 验证 Rust 1.98.0 兼容性（actix-web / tonic / yrs / tauri / sqlx / rdkafka） | Rust Lead | 2026-09 上旬 | **🟡 部分完成（提前到 M0 准备尾期）**：5/6 库 `cargo build -p cats-m1-s0-smoke` exit 0 + 7/7 单元测试 pass（actix-web 4.15.0 / tonic 0.12.3 / yrs 0.18.8 / sqlx 0.8.6 / tauri 1.x）。rdkafka 0.36 因 cmake-build 依赖 librdkafka 系统库未安装，**移出 smoke** → 由 `crates/cats-bff/` + Kafka worktree 验证（K3s 阶段二） |
 | OI-4 | M1-Sprint 0 验证 PG 18.6 + pgvector 0.8.6 兼容性 + 性能基线 | DBA + 架构 | 2026-09 上旬 | 待办 |
 | OI-5 | 季度评估窗口（W1 = 2026-11） | PMO | 2026-11 | 持续 |
 | OI-6 | 跨项目引用方同步（如果 RGS / Physis / Star 也锁定相同基线） | 架构师 | M1 | 待办 |

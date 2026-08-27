@@ -32,6 +32,7 @@ members = [
     "crates/render-writer-service",
     # BFF（客户端 → 后端的桥接层）
     "crates/cats-bff",
+"crates/m1-s0-smoke",
 ]
 
 # workspace 共享包元信息
