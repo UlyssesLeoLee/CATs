@@ -1,0 +1,13 @@
+apiVersion: v2
+name: cats-common
+description: CATs 公共 Helm chart 模板（被所有 17 个 service chart 引用）
+type: library
+version: 0.1.0
+appVersion: 0.1.0
+keywords:
+  - cats
+  - common
+  - helm-library
+maintainers:
+  - name: CATs Architecture Team
+    email: arch@cats.internal

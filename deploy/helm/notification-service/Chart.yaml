@@ -1,0 +1,19 @@
+apiVersion: v2
+name: notification-service
+description: CATs 通知推送服务 Helm chart
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+keywords:
+  - cats
+  - microservice
+  - notification-service
+maintainers:
+  - name: CATs Architecture Team
+    email: arch@cats.internal
+
+# 引用公共 chart
+dependencies:
+  - name: cats-common
+    version: 0.1.0
+    repository: file://../cats-common

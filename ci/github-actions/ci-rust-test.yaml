@@ -1,0 +1,69 @@
+# CATs M0 Rust Test CI
+# 引用: 完成判据 4（cargo test --workspace --all-features）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §3.4（测试工具）
+
+name: ci-rust-test
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  # llvm-cov 默认输出格式
+  LLVM_PROFILE_FILE: "target/coverage/%p-%m.profraw"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain 1.98.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-cache
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        run: cargo test --workspace --all-features --locked -- --nocapture
+
+      - name: Coverage (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo install cargo-llvm-cov --quiet || true
+          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

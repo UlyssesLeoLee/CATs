@@ -1,0 +1,127 @@
+# CATs M0 Docker Build CI
+# 引用: deploy/docker/Dockerfile.rust
+# 引用: 完成判据（distroless/cc-debian12 基础镜像）
+#
+# Matrix: 17 service + 1 bff = 18 个独立构建 target
+# 推送目标: harbor.cats.internal/cats/<service>:<tag>
+
+name: ci-docker-build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: harbor.cats.internal
+  IMAGE_PREFIX: cats
+
+jobs:
+  build:
+    name: docker build (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: auth-service
+            crate: auth-service
+            port: 8081
+          - service: user-service
+            crate: user-service
+            port: 8082
+          - service: project-service
+            crate: project-service
+            port: 8083
+          - service: task-service
+            crate: task-service
+            port: 8084
+          - service: file-service
+            crate: file-service
+            port: 8085
+          - service: notification-service
+            crate: notification-service
+            port: 8086
+          - service: report-service
+            crate: report-service
+            port: 8087
+          - service: audit-service
+            crate: audit-service
+            port: 8088
+          - service: worker-service
+            crate: worker-service
+            port: 8089
+          - service: translation-core
+            crate: translation-core
+            port: 8090
+          - service: ingestion-service
+            crate: ingestion-service
+            port: 8091
+          - service: asr-service
+            crate: asr-service
+            port: 8092
+          - service: ocr-service
+            crate: ocr-service
+            port: 8093
+          - service: subtitle-service
+            crate: subtitle-service
+            port: 8094
+          - service: office-converter-service
+            crate: office-converter-service
+            port: 8095
+          - service: render-writer-service
+            crate: render-writer-service
+            port: 8096
+          - service: cats-bff
+            crate: cats-bff
+            port: 8097
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Harbor
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=0.1.0,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.rust
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CRATE_NAME=${{ matrix.crate }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true

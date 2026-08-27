@@ -1,0 +1,58 @@
+# CATs M0 Rust 多阶段 Dockerfile 模板
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1（基础镜像：distroless/cc-debian12）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §14.2（容器化）
+#
+# 用法:
+#   docker build -f deploy/docker/Dockerfile.rust \
+#     --build-arg CRATE_NAME=auth-service \
+#     --build-arg BIND_ADDR=0.0.0.0:8080 \
+#     -t harbor.cats.internal/cats/auth-service:0.1.0 .
+#
+# 环境变量注入（数据库连接、Secret 等）由 K8s manifest 完成，不在 Dockerfile 硬编码。
+
+# === Stage 1: builder ===
+FROM rust:1.98.0-slim-bookworm AS builder
+
+# CI 缓存优化：单独 COPY 依赖描述文件
+WORKDIR /build
+
+# 安装 protoc（tonic-build 编译期需要）
+# Debian bookworm 仓库的 protobuf-compiler 默认 3.21+，满足 cats-proto 的所有 .proto
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        protobuf-compiler \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 先复制 workspace 元数据，让依赖编译独立缓存层
+COPY Cargo.toml Cargo.lock ./
+COPY .cargo ./.cargo
+COPY rust-toolchain.toml ./
+
+# 复制所有 crate 源码（注意：tonic-build 在 cats-proto/build.rs 中调用）
+COPY crates ./crates
+
+# 构建：仅目标 crate（避免链接整个 workspace）
+# 注：tonic-build 需要所有 crate 可见以解析 crate 间依赖，因此这里 build 整个 workspace
+# 但只把目标 crate 的二进制 COPY 到 runtime
+ARG CRATE_NAME
+ENV CRATE_NAME=${CRATE_NAME}
+
+RUN cargo build --release --bin ${CRATE_NAME} \
+    && strip target/release/${CRATE_NAME}
+
+# === Stage 2: runtime ===
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+
+# 复制编译产物
+ARG CRATE_NAME
+COPY --from=builder /build/target/release/${CRATE_NAME} /usr/local/bin/${CRATE_NAME}
+
+# distroless/cc-debian12:nonroot 镜像默认 UID 65532
+# 不再显式 USER，由镜像默认 nonroot 账户承担
+
+# 端口（业务实际端口由 Helm deployment.yaml 配 containerPort 决定）
+EXPOSE 8080
+
+# 入口点：仅传二进制，env 由 K8s 注入
+ENTRYPOINT ["/usr/local/bin/${CRATE_NAME}"]

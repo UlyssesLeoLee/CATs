@@ -1,0 +1,88 @@
+# CATs M0 Rust Build CI
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1（rust:1.98.0-slim-bookworm 镜像）
+# 引用: ci/scripts/proto-gen.ps1（编译 proto）
+#
+# Matrix: 3 OS × 多 target，覆盖 Linux（K3s 实际部署目标）+ macOS / Windows（开发者本地）
+# M0 阶段仅 Linux 是 release target，mac/win 走 cache + 编译验证（不全 link）
+
+name: ci-rust-build
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# 取消同一 ref 上正在跑的旧 run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.os }} / ${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # M0 release 目标：仅 Linux GNU
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: cats-linux-x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: cats-linux-arm64
+          # 开发者本地目标：编译验证（不全 link 发布）
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: cats-macos-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: cats-windows-x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain 1.98.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-cache
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Install Linux cross-compile deps
+        if: runner.os == 'Linux' && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --target ${{ matrix.target }} --locked
+
+      - name: Upload binaries
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: target/${{ matrix.target }}/release/cats-*
+          retention-days: 7

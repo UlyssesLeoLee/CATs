@@ -1,0 +1,2 @@
+# 占位 — Kustomize 模板未实施（per 任务："kustomize/ 可选（不实施，仅 .gitkeep）"）
+# M1 阶段视情况补充：env 差异化（dev/staging/prod）通过 kustomize 叠加。

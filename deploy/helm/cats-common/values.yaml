@@ -1,0 +1,80 @@
+# cats-common 默认 values（被所有 service chart 继承）
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §14.2/§15（K8s 集成）
+
+# 副本数（per 任务要求: replicaCount: 2）
+replicaCount: 2
+
+image:
+  # service chart 必须覆盖
+  repository: harbor.cats.internal/cats/placeholder
+  tag: 0.1.0
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: cats-harbor
+
+# 业务端口
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+# 资源：保守起步，M1 阶段基于 profiling 调优
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+# 健康探针：所有 service 都有 /healthz（M0 阶段唯一端点）
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+# 业务环境变量占位：各 service 自行覆盖
+env: {}
+
+# 注解：用于 Prometheus / Istio / K8s HPA 决策
+podAnnotations: {}
+
+# 标签选择器与 pod identity
+podLabels: {}
+
+# Service Account（默认由 chart 创建）
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# 安全上下文：与 distroless:nonroot 对齐
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL

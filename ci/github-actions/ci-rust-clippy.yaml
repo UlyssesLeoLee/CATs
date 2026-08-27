@@ -1,0 +1,54 @@
+# CATs M0 Rust Clippy CI
+# 引用: 完成判据 3（RUSTFLAGS='-D warnings' cargo clippy --workspace --all-features --all-targets）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §3.3（静态分析）
+
+name: ci-rust-clippy
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  clippy:
+    name: clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain 1.98.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cargo-cache
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+            ${{ runner.os }}-cargo-
+
+      # -D warnings：任何 warning 视为错误（per 完成判据 3）
+      - name: Run clippy
+        run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings

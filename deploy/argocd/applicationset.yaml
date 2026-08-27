@@ -1,0 +1,136 @@
+# CATs ArgoCD ApplicationSet 占位
+# 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §10（GitOps）
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
+#
+# M0 阶段：占位骨架，**不实装**（per 任务强约束：M0 阶段不引入外部工具链）。
+# M1-S0 阶段：根据 helm chart 列表 + Git 仓库结构调整 generator 表达式，部署到 K3s 集群。
+#
+# 实施计划：
+#   1. helm chart 全部落地后，由 generator.list 列出 17 service + 1 bff
+#   2. syncPolicy.automated.prune = true 启用自动清理
+#   3. syncPolicy.automated.selfHeal = true 启用自愈
+#   4. revisionHistoryLimit = 10 保留 10 个回滚版本
+
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cats-services
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: cats
+    app.kubernetes.io/managed-by: argocd
+spec:
+  goTemplate: true
+  generators:
+    # M0 占位：使用 list generator，列全 17 service
+    # M1 阶段可换为 git generator（per-directory）或 matrix generator（多 cluster）
+    - list:
+        elements:
+          # === MVP 核心 8 服务 ===
+          - cluster: in-cluster
+            namespace: cats
+            name: auth-service
+            path: deploy/helm/auth-service
+          - cluster: in-cluster
+            namespace: cats
+            name: user-service
+            path: deploy/helm/user-service
+          - cluster: in-cluster
+            namespace: cats
+            name: project-service
+            path: deploy/helm/project-service
+          - cluster: in-cluster
+            namespace: cats
+            name: task-service
+            path: deploy/helm/task-service
+          - cluster: in-cluster
+            namespace: cats
+            name: file-service
+            path: deploy/helm/file-service
+          - cluster: in-cluster
+            namespace: cats
+            name: notification-service
+            path: deploy/helm/notification-service
+          - cluster: in-cluster
+            namespace: cats
+            name: report-service
+            path: deploy/helm/report-service
+          - cluster: in-cluster
+            namespace: cats
+            name: audit-service
+            path: deploy/helm/audit-service
+          - cluster: in-cluster
+            namespace: cats
+            name: worker-service
+            path: deploy/helm/worker-service
+          # === 翻译核心 ===
+          - cluster: in-cluster
+            namespace: cats
+            name: translation-core
+            path: deploy/helm/translation-core
+          # === 阶段二 媒体处理 6 服务 ===
+          - cluster: in-cluster
+            namespace: cats
+            name: ingestion-service
+            path: deploy/helm/ingestion-service
+          - cluster: in-cluster
+            namespace: cats
+            name: asr-service
+            path: deploy/helm/asr-service
+          - cluster: in-cluster
+            namespace: cats
+            name: ocr-service
+            path: deploy/helm/ocr-service
+          - cluster: in-cluster
+            namespace: cats
+            name: subtitle-service
+            path: deploy/helm/subtitle-service
+          - cluster: in-cluster
+            namespace: cats
+            name: office-converter-service
+            path: deploy/helm/office-converter-service
+          - cluster: in-cluster
+            namespace: cats
+            name: render-writer-service
+            path: deploy/helm/render-writer-service
+          # === BFF 聚合层 ===
+          - cluster: in-cluster
+            namespace: cats
+            name: cats-bff
+            path: deploy/helm/cats-bff
+  template:
+    metadata:
+      name: 'cats-{{.name}}'
+      labels:
+        app.kubernetes.io/name: '{{.name}}'
+        app.kubernetes.io/part-of: cats
+    spec:
+      project: cats
+      source:
+        repoURL: https://harbor.cats.internal/git/cats/monorepo.git
+        targetRevision: main
+        path: '{{.path}}'
+        helm:
+          # 每 chart 引用 cats-common 公共模板
+          valueFiles:
+            - values.yaml
+      destination:
+        server: '{{.cluster}}'
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          allowEmpty: false
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - PruneLast=true
+          - ApplyOutOfSyncOnly=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+      revisionHistoryLimit: 10

@@ -1,0 +1,30 @@
+# CATs M0 共享 cargo 配置
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §3.2/§3.3
+
+# --- 构建配置 ---
+[build]
+# Windows MSVC 与 Linux GNU 链接器差异巨大；这里不强制指定，让 rust-toolchain.toml + 目标平台自动选择
+# 仅对所有 target 启用增量编译
+incremental = true
+
+# --- 目标目录 ---
+# monorepo 共享 target/，减少重复编译
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "rust-lld"
+
+[target.aarch64-unknown-linux-gnu]
+linker = "rust-lld"
+
+# --- 文档注释警告 ---
+[doc]
+# 公共 API 文档缺失时视为错误（CI clippy 进一步 -D warnings）
+# 这里只做基础提示，CI 层做严格
+warnings = true
+
+# --- 注册表（per Rust 选型书 §3.7：默认 crates.io，CI 可走内部 mirror） ---
+# [registries.cats-internal]
+# index = "sparse+https://harbor.cats.internal/cargo-index/"
+# token = "***"  # 不入仓

@@ -1,0 +1,114 @@
+# CATs M0 Monorepo Workspace Root
+# 系统: CATs — 全媒体 AI 辅助翻译 SaaS 平台
+# 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §4（16 服务清单 + 数据边界）
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1（锁定基线）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §4-§11（库选型）
+# 布局: 1 workspace + 18 crate (16 服务 + 1 BFF + 1 cats-common 共享 + 1 cats-proto)
+
+[workspace]
+resolver = "2"
+members = [
+    # 共享层
+    "crates/common",
+    "crates/proto",
+    # MVP 8 核心服务 (per 架构书 §4.1)
+    "crates/auth-service",
+    "crates/user-service",
+    "crates/project-service",
+    "crates/task-service",
+    "crates/file-service",
+    "crates/notification-service",
+    "crates/report-service",
+    "crates/audit-service",
+    "crates/worker-service",
+    # MVP 翻译核心
+    "crates/translation-core",
+    # 阶段二 媒体处理服务
+    "crates/ingestion-service",
+    "crates/asr-service",
+    "crates/ocr-service",
+    "crates/subtitle-service",
+    "crates/office-converter-service",
+    "crates/render-writer-service",
+    # BFF（客户端 → 后端的桥接层）
+    "crates/cats-bff",
+]
+
+# workspace 共享包元信息
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.98.0"
+license      = "Apache-2.0"
+authors      = ["CATs Architecture Team"]
+repository   = "https://harbor.cats.internal/cats/monorepo"
+readme       = "README.md"
+
+# workspace 共享依赖（per Rust 选型书 §4-§11 + 技术基线 §1）
+# 各 crate 通过 `dep.workspace = true` 引用
+[workspace.dependencies]
+# 异步运行时（QA-021 / 选型书 §4.1）
+tokio = { version = "1", features = ["full"] }
+# Web 框架（QA-022 / 选型书 §5.1，替代 axum）
+actix-web = "4"
+# 错误处理（选型书 §4.3）
+anyhow = "1"
+thiserror = "2"
+# 日志 / 可观测性（选型书 §9.1）
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# 序列化（选型书 §8.1）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# PostgreSQL 驱动（选型书 §6.1，运行时为 Tokio + rustls）
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+] }
+# gRPC + Protobuf（选型书 §5.3 / §8.2）
+tonic = "0.13"
+tonic-build = "0.13"
+prost = "0.13"
+prost-types = "0.13"
+# 共享库（workspace 内部）
+cats-proto  = { path = "crates/proto" }
+cats-common = { path = "crates/common" }
+
+# workspace 共享元数据：编译 profile 与 lint
+[profile.release]
+opt-level = 3
+lto       = "thin"
+codegen-units = 1
+strip     = "symbols"
+debug     = false
+
+[profile.dev]
+opt-level = 0
+debug     = true
+incremental = true
+
+# workspace 共享的 clippy 与 rustfmt 配置
+[workspace.lints.rust]
+unsafe_code = "forbid"  # 强约束：禁止 unsafe（per 任务要求）
+# missing_docs 设为 warn（CI 进一步 -D warnings 升级为 error 强制公共 API 文档）
+
+[workspace.lints.clippy]
+# M0 阶段不强制 pedantic（业务实现 M1 阶段，彼时再决定是否打开）
+# 仅强制 correctness / perf / nursery（明确问题项）
+correctness = { level = "warn", priority = -1 }
+perf        = { level = "warn", priority = -1 }
+# 一些常见噪声项允许
+module_name_repetitions = "allow"
+must_use_candidate       = "allow"
+missing_errors_doc       = "allow"
+missing_panics_doc       = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss           = "allow"
+cast_lossless            = "allow"
+# cargo-deny + clippy 冗余
+cargo_common_metadata    = "allow"

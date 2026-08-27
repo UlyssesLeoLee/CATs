@@ -1,0 +1,82 @@
+# CATs M0 Rust cargo-deny CI
+# 引用: 完成判据 5（cargo deny check licenses 必须 exit 0）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §3.6（安全审计）
+# 引用: cargo-deny.toml（白名单）
+#
+# 注意: advisories / bans / sources 子命令需要联网同步 advisory-db 和 crates.io 索引
+# M0 阶段：仅强制 licenses 子命令（无需网络）；其他子命令在网络可达 CI runner 上跑
+
+name: ci-rust-deny
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+  schedule:
+    # 每周一 03:00 UTC 跑完整 audit（advisories + sources + bans + licenses）
+    - cron: '0 3 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deny-licenses:
+    name: deny (licenses only, always)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain 1.98.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ubuntu-cargo-deny-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.16.2
+
+      - name: Check licenses (offline)
+        run: cargo deny check licenses
+
+  deny-full:
+    name: deny (full audit, weekly + manual)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: deny-licenses
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain 1.98.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/advisory-db
+          key: ubuntu-cargo-deny-full-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.16.2
+
+      - name: Full audit
+        run: cargo deny check

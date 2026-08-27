@@ -1,0 +1,9 @@
+# CATs M0 Rust 工具链锁定
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1（Rust 1.98.0 锁定）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §3.1
+# 决议: QA-024（MSRV 反转） + ADR-R-01
+
+[toolchain]
+channel    = "1.98.0"
+components = ["rustc", "cargo", "rustfmt", "clippy", "rust-src"]
+profile    = "minimal"

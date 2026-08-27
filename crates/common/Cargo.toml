@@ -1,0 +1,26 @@
+[package]
+name         = "cats-common"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+description = "CATs 共享库：配置/错误/日志/可观测性工具集（per Rust 选型书 §4.3/§9/§11）"
+readme      = "README.md"
+publish     = false  # 内部 crate，不发布到 crates.io
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace 共享依赖
+anyhow.workspace      = true
+thiserror.workspace   = true
+tracing.workspace     = true
+tracing-subscriber.workspace = true
+serde.workspace       = true
+serde_json.workspace  = true
+tokio.workspace       = true
+
+[dev-dependencies]
+# 预留：M1 阶段加 tokio-test / mockall / testcontainers

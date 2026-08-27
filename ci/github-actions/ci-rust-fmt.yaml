@@ -1,0 +1,47 @@
+# CATs M0 Rust Format CI
+# 引用: 完成判据 2（cargo fmt --all -- --check）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §3.3
+
+name: ci-rust-fmt
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain 1.98.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # 失败时自动修复并 commit（仅维护者手动 dispatch）
+      - name: Auto-fix (only on workflow_dispatch)
+        if: failure() && github.event_name == 'workflow_dispatch'
+        run: |
+          cargo fmt --all
+          git diff --exit-code || {
+            echo "Files reformatted. Review and commit."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "style: cargo fmt --all (auto-fix)"
+            git push
+          }

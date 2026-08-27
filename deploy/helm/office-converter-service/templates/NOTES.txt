@@ -1,0 +1,10 @@
+{{/* CATs Office 转换服务 deployment notes (M0 占位) */}}
+
+1. Get pods:
+   kubectl get pods -l app.kubernetes.io/name=office-converter-service
+
+2. Test health:
+   kubectl port-forward svc/office-converter-service 8080:8080
+   curl http://127.0.0.1:8080/healthz
+
+3. (M1 阶段) 业务 endpoint 见 api/openapi/cats-openapi-v1.yaml

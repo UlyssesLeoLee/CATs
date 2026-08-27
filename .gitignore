@@ -1,4 +1,6 @@
-# 临时/废弃
+# CATs M0 monorepo .gitignore
+
+# === 临时/废弃 ===
 _trash_*
 *.tmp
 *.bak
@@ -6,13 +8,57 @@ _trash_*
 *.swo
 __pycache__/
 *.pyc
-# IDE
+*.rs.bk
+
+# === Rust / Cargo ===
+/target
+**/target/
+**/Cargo.lock.bak
+**/*.rs.bk
+
+# === IDE ===
 .vscode/
 .idea/
-# 系统
+*.iml
+
+# === 系统 ===
 .DS_Store
 Thumbs.db
-# 临时
-*.log
 
+# === 临时/日志 ===
+*.log
+worktrees/
 .worktrees/
+
+# === 凭据/密钥（永远不要进 git） ===
+.env
+.env.local
+*.pem
+*.key
+*.crt
+
+# === 客户端构建产物 ===
+apps/cats-client/src-tauri/target/
+apps/cats-client/dist/
+apps/cats-client/node_modules/
+
+# === Tonic / protoc 生成产物（保留 Cargo.toml 入口，不忽略 .rs 以便审阅） ===
+# 实际：我们用 tonic-build 编译期生成，不写进 git 是理想，但保留也方便离线编译
+# 决定：提交 OUT_DIR 之外的手写 .rs（如 tonic-build 不需要）
+# 因此这里不忽略
+
+# === Helm / K8s 渲染产物（CI 跑 helm template，不入仓） ===
+deploy/helm/**/*.tgz
+
+# === proto / OpenAPI 编辑器缓存 ===
+**/*.pb.go
+**/*_grpc.pb.go
+
+# Worker 临时文件（不入仓）
+_worker-tmp/
+_tpl/
+_tmp_*.ps1
+_gen-*.ps1
+
+tmp_*.ps1
+gen-*.ps1

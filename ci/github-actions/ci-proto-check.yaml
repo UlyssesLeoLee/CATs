@@ -1,0 +1,66 @@
+# CATs M0 Protobuf Check CI（占位）
+# 引用: proto/cats/v1/*.proto（4 份：auth / common / media / translation_core）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §5.3/§8.2
+#
+# M0 阶段：占位骨架（per 任务："buf breaking check 占位，不实施 buf install"）
+# M1 阶段：
+#   1. 安装 buf
+#   2. 接入 buf.gen.yaml（rust / typescript / go 多语言代码生成）
+#   3. 启用 buf breaking check 对比 v0.1.0 tag
+#   4. 启用 buf lint 校验 field naming / package naming
+
+name: ci-proto-check
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  paths:
+    - 'proto/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'proto/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proto-syntax:
+    name: proto syntax (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends protobuf-compiler
+          protoc --version
+
+      - name: Verify all proto files parse
+        run: |
+          set -e
+          for f in $(find proto -name "*.proto"); do
+            echo "=== Parsing: $f ==="
+            protoc --proto_path=proto "$f" -o /dev/null || (echo "FAIL: $f" && exit 1)
+          done
+          echo "All $(find proto -name "*.proto" | wc -l) proto files parse OK"
+
+  # M1 阶段启用
+  # buf-breaking:
+  #   name: buf breaking check
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0  # 需拉所有 tag
+  #     - name: buf install
+  #       run: |
+  #         # 参见 https://docs.buf.build/installation
+  #         curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.47.0/buf-Linux-x86_64" -o /usr/local/bin/buf
+  #         chmod +x /usr/local/bin/buf
+  #     - name: buf breaking check
+  #       run: buf breaking check --against proto/.git#v0.1.0

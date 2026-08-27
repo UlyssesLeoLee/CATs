@@ -1,0 +1,27 @@
+[package]
+name         = "cats-proto"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+description = "CATs gRPC 协议契约 crate — 由 tonic-build 编译 proto/cats/v1/*.proto 生成 Rust 类型"
+readme      = "README.md"
+publish     = false  # 内部 crate，不发布
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace 共享依赖
+cats-common.workspace = true
+tonic.workspace       = true
+prost.workspace       = true
+prost-types.workspace = true
+serde.workspace       = true
+
+[build-dependencies]
+tonic-build.workspace = true
+
+# tonic-build 0.13 已经支持 prost 0.13 内置 API，不需要额外 prost-build
+# proto 文件位于 ../../proto/cats/v1/*.proto（见 build.rs）

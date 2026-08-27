@@ -1,0 +1,28 @@
+[package]
+name         = "task-service"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+description = "CATs 任务调度服务（per 微服务架构书 §4.1）"
+readme      = "README.md"
+publish     = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace 共享依赖
+cats-common.workspace = true
+tokio.workspace       = true
+actix-web.workspace   = true
+anyhow.workspace      = true
+thiserror.workspace   = true
+tracing.workspace     = true
+serde.workspace       = true
+serde_json.workspace  = true
+sqlx.workspace        = true
+# 跨服务 gRPC 契约（per common.proto）
+cats-proto.workspace = true
+tonic.workspace       = true

@@ -1,0 +1,35 @@
+# CATs 客户端 Dockerfile 占位（Tauri 2.x + Svelte 5）
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1（客户端：Tauri 2.x + Svelte 5）
+# 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §5.5（Tauri 框架）
+#
+# M0 阶段：占位骨架，不实装（per 任务强约束）。
+# M2 阶段：填充 builder + tauri-bundler 生成 .deb / .msi / .dmg。
+#
+# 实施计划：
+#   1. ui/   阶段：node:20-alpine 跑 vite build
+#   2. src-tauri/ 阶段：rust:1.98.0-slim 跑 cargo build --release
+#   3. 产物合并到 scratch 镜像 + tauri-bundler 打 .msi/.dmg/.deb
+
+# === Stage 1: Svelte UI 构建 ===
+# FROM node:20-alpine AS ui-builder
+# WORKDIR /build
+# COPY apps/cats-client/ui/package.json apps/cats-client/ui/package-lock.json ./
+# RUN npm ci
+# COPY apps/cats-client/ui/ ./
+# RUN npm run build
+
+# === Stage 2: Tauri Rust 核心构建 ===
+# FROM rust:1.98.0-slim-bookworm AS tauri-builder
+# WORKDIR /build
+# COPY . .
+# RUN cargo build --release --manifest-path apps/cats-client/src-tauri/Cargo.toml
+
+# === Stage 3: 安装包阶段 ===
+# FROM scratch AS bundle
+# COPY --from=tauri-builder /build/apps/cats-client/src-tauri/target/release/bundle/ /bundle/
+
+# M0 阶段：保留为空说明，实际 CI 不引用此文件
+# 文件存在仅为占位 + 文档化未来计划
+
+FROM scratch
+COPY README.md /README.md

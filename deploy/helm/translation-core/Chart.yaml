@@ -1,0 +1,19 @@
+apiVersion: v2
+name: translation-core
+description: CATs 翻译核心编排服务 Helm chart
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+keywords:
+  - cats
+  - microservice
+  - translation-core
+maintainers:
+  - name: CATs Architecture Team
+    email: arch@cats.internal
+
+# 引用公共 chart
+dependencies:
+  - name: cats-common
+    version: 0.1.0
+    repository: file://../cats-common
