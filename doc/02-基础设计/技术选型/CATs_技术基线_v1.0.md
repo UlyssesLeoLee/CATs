@@ -29,6 +29,7 @@
 | **v1.0** | **2026-08-26** | **架构师 + Rust Lead + DBA（worker 代签 per DEC-008）** | **基线落地（回填 0f2dd56 WT-H2 引用断链）**：§1 锁定 Rust 1.98.0 + PostgreSQL 18.6 + pgvector 0.8.6 三项基线；§2-§4 引用三个技术选型书作选型过程依据；§5 列引用本基线的 24 份下游文档清单 |
 | v1.0+1 | 2026-08-27 | 架构师 + Rust Lead | OI-3 部分完成：5/6 库 Rust 1.98.0 兼容性冒烟通过（`cats-m1-s0-smoke` crate，commit `c173a53` + 本 commit 修订） |
 | **v1.0 → B0.0** | **2026-08-27** | **评审会 D-Day 6 角色现场签字（per 2026-08-27 16:33 JST Ulysses 授权代签）** | **v1.0 升 B0.0 基线（生效日 2026-08-27）**：OI-1 关闭；M1-S0 前置 OI-3 + OI-4 已完成；评审会通过 v1.0 = 锁定基线，6 角色共识 (起草 3 + 评审 6 + 批准 3 = 11 个代签 + 1 个本人签) |
+| v1.0+2 | 2026-08-27 | 架构师 + Rust Lead（Mavis 接手 agent per DEC-008） | OI-3 收尾：auth-service 5/5 e2e 端到端测试通过（actix-web + sqlx + 真实 PG 18.6 @ WSL 172.28.176.169:5432，commit `12bcbdb`）+ §8 OI-3 🟡 → 🟢 + §10 文档结尾标识同步 |
 
 ### 审批栏 (D-Day 现场签字, 2026-08-27 16:33 JST)
 
@@ -338,11 +339,11 @@
 |---|---|---|---|---|
 | OI-1 | 评审会 D-Day 现场签字归档 v1.0 → B0.0 基线 | Sponsor + PM + 架构师 + 客户代表 | 2026-08-27 | **🟢 完成（D-Day 现场签字归档 per 2026-08-27 16:33 JST Ulysses 授权代签）**：6 角色现场签字 + v1.0 升 B0.0；M1-S0 前置 OI-3 + OI-4 已完成（commit `c304d22` + `6d7775b`） |
 | OI-2 | CAB-001 决议书登记（基线升版流程建立） | PM | 2026-08-27 | **🟢 完成（per CAB-001 v1.0 决议书 + Baseline一览 §3.3/§4/§7 同步生效 2026-08-27 16:33 JST）**：6 角色 CAB 共识 + 决议书落地 |
-| OI-3 | M1-Sprint 0 验证 Rust 1.98.0 兼容性（actix-web / tonic / yrs / tauri / sqlx / rdkafka） | Rust Lead | 2026-09 上旬 | **🟡 部分完成（提前到 M0 准备尾期）**：5/6 库 `cargo build -p cats-m1-s0-smoke` exit 0 + 7/7 单元测试 pass（actix-web 4.15.0 / tonic 0.12.3 / yrs 0.18.8 / sqlx 0.8.6 / tauri 1.x）。rdkafka 0.36 因 cmake-build 依赖 librdkafka 系统库未安装，**移出 smoke** → 由 `crates/cats-bff/` + Kafka worktree 验证（K3s 阶段二） |
+| OI-3 | M1-Sprint 0 验证 Rust 1.98.0 兼容性（actix-web / tonic / yrs / tauri / sqlx / rdkafka） | Rust Lead | 2026-08-27 | **🟢 完成（per commit `12bcbdb` 2026-08-27）**：① 5/6 库 `cargo build -p cats-m1-s0-smoke` exit 0（actix-web 4.15.0 / tonic 0.12.3 / yrs 0.18.8 / sqlx 0.8.6 / tauri 1.x；rdkafka 0.36 移 K3s 阶段二）；② auth-service 端到端集成（actix-web + sqlx + 真实 PG 18.6 @ WSL 172.28.176.169:5432）5/5 e2e 测试 pass（login 成功 / 错密码 / refresh 成功 / 错 token / healthz） |
 | OI-4 | M1-Sprint 0 验证 PG 18.6 + pgvector 0.8.6 兼容性 + 性能基线 | DBA + 架构 | 2026-09 上旬 | **🟢 完成（per INC-002 v1.0）**：8 逻辑库 + 8 user + HNSW smoke pass。300 万行性能 baseline 留 M1 实战（QA-041） |
 | OI-5 | 季度评估窗口（W1 = 2026-11） | PMO | 2026-11 | 持续 |
 | OI-6 | 跨项目引用方同步（如果 RGS / Physis / Star 也锁定相同基线） | 架构师 | M1 | 待办 |
 
 ---
 
-**文档结束（v1.0，2026-08-26 基线锁定，评审会签字待 D-Day）**
+**文档结束（v1.0 = B0.0，2026-08-27 D-Day 6 角色现场签字归档 + CAB-001 决议书落地 + OI-3 收尾 e2e 通过）**
