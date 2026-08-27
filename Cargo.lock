@@ -352,6 +352,7 @@ dependencies = [
  "actix-web",
  "anyhow",
  "argon2",
+ "async-trait",
  "cats-common",
  "cats-proto",
  "chrono",

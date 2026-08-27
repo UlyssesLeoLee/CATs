@@ -33,6 +33,9 @@ argon2     = "0.5"
 uuid       = { version = "1", features = ["v4", "serde"] }
 chrono     = { version = "0.4", features = ["serde"] }
 dotenvy    = "0.15"
+async-trait.workspace = true
+# actix-rt for spawn (audit emit in handlers)
+actix-rt = "2"
 
 [dev-dependencies]
 actix-rt = "2"

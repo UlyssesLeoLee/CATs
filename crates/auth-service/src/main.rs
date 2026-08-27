@@ -55,10 +55,11 @@ async fn main() -> std::io::Result<()> {
 
     info!(bind_addr = %bind_addr, "starting auth-service");
 
-    let pool_data = web::Data::new(pool);
+    let state = auth_service::handlers::AppState::new(pool);
+    let state_data = web::Data::new(state);
     HttpServer::new(move || {
         App::new()
-            .app_data(pool_data.clone())
+            .app_data(state_data.clone())
             .route("/healthz", web::get().to(auth_service::handlers::healthz))
             .route(
                 "/v1/auth/login",
@@ -67,6 +68,10 @@ async fn main() -> std::io::Result<()> {
             .route(
                 "/v1/auth/refresh",
                 web::post().to(auth_service::handlers::refresh),
+            )
+            .route(
+                "/v1/auth/logout",
+                web::post().to(auth_service::handlers::logout),
             )
             .route("/v1/auth/me", web::get().to(auth_service::handlers::me))
     })

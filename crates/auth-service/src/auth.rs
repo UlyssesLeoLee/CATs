@@ -166,4 +166,19 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.error, "invalid_token");
     }
+
+    /// 解析 Claims 中的 jti (供 refresh 撤销 / logout handler 用)
+    #[test]
+    fn jti_from_claims_parses_uuid() {
+        let claims = Claims {
+            sub: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            username: "alice".to_string(),
+            exp: 1_700_000_000,
+            iat: 1_699_999_000,
+            jti: "11111111-2222-3333-4444-555555555555".to_string(),
+            token_type: "refresh".to_string(),
+        };
+        let jti = uuid::Uuid::parse_str(&claims.jti).expect("jti valid uuid");
+        assert_eq!(jti.to_string(), "11111111-2222-3333-4444-555555555555");
+    }
 }

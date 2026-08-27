@@ -98,3 +98,80 @@ pub async fn ensure_seed_user(
     .context("seed user insert failed")?;
     Ok(true)
 }
+
+// =====================================================================
+// T-01: refresh_token 撤销 + 审计事件落库
+// 引用: doc/05-其他/管理/CATs_M1_Sprint1_任务拆解_v1.0.md §2 T-01
+// =====================================================================
+
+/// 检查 jti 是否已被撤销 (refresh 路由必须先查)
+pub async fn jti_is_revoked(pool: &PgPool, jti: uuid::Uuid) -> Result<bool> {
+    let row: Option<(uuid::Uuid,)> = sqlx::query_as(
+        r#"
+        SELECT jti FROM refresh_token_revoke WHERE jti = $1
+        "#,
+    )
+    .bind(jti)
+    .fetch_optional(pool)
+    .await
+    .context("jti_is_revoked query failed")?;
+    Ok(row.is_some())
+}
+
+/// 撤销一个 jti (refresh 轮换旧 token / logout 撤销)
+///
+/// reason: 'rotated' | 'logout' | 'admin_revoke' | 'expired'
+pub async fn revoke_jti(
+    pool: &PgPool,
+    jti: uuid::Uuid,
+    user_id: uuid::Uuid,
+    reason: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO refresh_token_revoke (jti, user_id, reason)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (jti) DO NOTHING
+        "#,
+    )
+    .bind(jti)
+    .bind(user_id)
+    .bind(reason)
+    .execute(pool)
+    .await
+    .context("revoke_jti insert failed")?;
+    Ok(())
+}
+
+/// 查某事件类型最近 N 条 (测试断言用) — 查 audit_log raw row
+///
+/// 返回 8-tuple 列, 业务上由调用方按需组装 AuditEvent
+pub async fn recent_audit_events(
+    pool: &PgPool,
+    event_type_filter: &str,
+    limit_n: i64,
+) -> Result<Vec<crate::models::AuditEventRow>> {
+    let rows: Vec<crate::models::AuditEventRow> = sqlx::query_as(
+        r#"
+        SELECT
+            event_id,
+            user_id,
+            event_type,
+            outcome,
+            detail,
+            source_ip::text AS source_ip,
+            user_agent,
+            occurred_at
+        FROM audit_log
+        WHERE event_type = $1
+        ORDER BY occurred_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(event_type_filter)
+    .bind(limit_n)
+    .fetch_all(pool)
+    .await
+    .context("recent_audit_events query failed")?;
+    Ok(rows)
+}

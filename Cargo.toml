@@ -76,6 +76,8 @@ tonic = "0.13"
 tonic-build = "0.13"
 prost = "0.13"
 prost-types = "0.13"
+# async-trait for AuditSink abstract (per T-01)
+async-trait = "0.1"
 # 共享库（workspace 内部）
 cats-proto  = { path = "crates/proto" }
 cats-common = { path = "crates/common" }

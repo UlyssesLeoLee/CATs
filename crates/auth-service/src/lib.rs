@@ -10,14 +10,15 @@
 //! - 8 逻辑库 auth_db (per Baseline §5.1)
 //! - JWT HS256 + argon2id 密码 hash (per 安全要件 §3)
 
+pub mod audit;
 pub mod auth;
 pub mod db;
 pub mod handlers;
 pub mod models;
 
 pub use models::{
-    Claims, ErrorBody, LoginRequest, LoginResponse, MeResponse, RefreshRequest, RefreshResponse,
-    UserCredential,
+    AuditEvent, AuditEventRow, AuditOutcome, Claims, ErrorBody, LoginRequest, LoginResponse,
+    LogoutRequest, LogoutResponse, MeResponse, RefreshRequest, RefreshResponse, UserCredential,
 };
 
 /// 当前 crate 语义版本
