@@ -314,7 +314,7 @@
 
 | # | 项 | 责任 | 期望关闭 | 状态 |
 |---|---|---|---|---|
-| OI-1 | 评审会 D-Day 现场签字归档 v1.0 → B0.0 基线 | Sponsor + PM + 架构师 + 客户代表 | 2026-08-25 | 待评审 |
+| OI-1 | 评审会 D-Day 现场签字归档 v1.0 → B0.0 基线 | Sponsor + PM + 架构师 + 客户代表 | 2026-08-25 | **🟡 待 D-Day 现场**（M1-S0 前置 OI-3 + OI-4 已完成 per INC-002） |
 | OI-2 | CAB-001 决议书登记（基线升版流程建立） | PM | 2026-08-25 | 待办 |
 | OI-3 | M1-Sprint 0 验证 Rust 1.98.0 兼容性（actix-web / tonic / yrs / tauri / sqlx / rdkafka） | Rust Lead | 2026-09 上旬 | **🟡 部分完成（提前到 M0 准备尾期）**：5/6 库 `cargo build -p cats-m1-s0-smoke` exit 0 + 7/7 单元测试 pass（actix-web 4.15.0 / tonic 0.12.3 / yrs 0.18.8 / sqlx 0.8.6 / tauri 1.x）。rdkafka 0.36 因 cmake-build 依赖 librdkafka 系统库未安装，**移出 smoke** → 由 `crates/cats-bff/` + Kafka worktree 验证（K3s 阶段二） |
 | OI-4 | M1-Sprint 0 验证 PG 18.6 + pgvector 0.8.6 兼容性 + 性能基线 | DBA + 架构 | 2026-09 上旬 | **🟢 完成（per INC-002 v1.0）**：8 逻辑库 + 8 user + HNSW smoke pass。300 万行性能 baseline 留 M1 实战（QA-041） |
