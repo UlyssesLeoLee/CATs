@@ -5,7 +5,7 @@ edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
-description = "CATs 认证授权服务（per 微服务架构书 §4.1）"
+description = "CATs 认证授权服务 - 登录/刷新 (per 微服务架构书 §4.1 + OpenAPI v1)"
 readme      = "README.md"
 publish     = false
 
@@ -13,16 +13,26 @@ publish     = false
 workspace = true
 
 [dependencies]
-# workspace 共享依赖
+# workspace 公共（per Cargo.toml [workspace.dependencies]）
 cats-common.workspace = true
 tokio.workspace       = true
 actix-web.workspace   = true
 anyhow.workspace      = true
 thiserror.workspace   = true
 tracing.workspace     = true
+tracing-subscriber.workspace = true
 serde.workspace       = true
 serde_json.workspace  = true
 sqlx.workspace        = true
-# 跨服务 gRPC 契约（per auth.proto）
+# gRPC 契约（per auth.proto）
 cats-proto.workspace = true
 tonic.workspace       = true
+# 业务级
+jsonwebtoken = "9"
+argon2     = "0.5"
+uuid       = { version = "1", features = ["v4", "serde"] }
+chrono     = { version = "0.4", features = ["serde"] }
+dotenvy    = "0.15"
+
+[dev-dependencies]
+actix-rt = "2"
