@@ -38,7 +38,15 @@ async fn main() -> std::io::Result<()> {
     // 启动时尝试检测并创建种子用户 (per 任务规范)
     // 仅在 SEED_USER 和 SEED_PASSWORD env var 都设置时
     if let (Ok(seed_user), Ok(seed_pass)) = (env::var("SEED_USER"), env::var("SEED_PASSWORD")) {
-        match auth_service::db::ensure_seed_user(&pool, &seed_user, &seed_pass).await {
+        let seed_email = env::var("SEED_EMAIL").ok();
+        match auth_service::db::ensure_seed_user(
+            &pool,
+            &seed_user,
+            &seed_pass,
+            seed_email.as_deref(),
+        )
+        .await
+        {
             Ok(true) => info!(user = %seed_user, "seed user created"),
             Ok(false) => info!(user = %seed_user, "seed user already exists"),
             Err(e) => eprintln!("ERROR: seed user create failed: {e}"),
@@ -60,6 +68,7 @@ async fn main() -> std::io::Result<()> {
                 "/v1/auth/refresh",
                 web::post().to(auth_service::handlers::refresh),
             )
+            .route("/v1/auth/me", web::get().to(auth_service::handlers::me))
     })
     .bind(&bind_addr)?
     .run()

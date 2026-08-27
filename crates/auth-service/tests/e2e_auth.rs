@@ -23,12 +23,13 @@ use actix_web::{test as actix_test, web, App};
 use auth_service::db;
 use auth_service::handlers;
 use auth_service::models::{
-    ErrorBody, LoginRequest, LoginResponse, RefreshRequest, RefreshResponse,
+    ErrorBody, LoginRequest, LoginResponse, MeResponse, RefreshRequest, RefreshResponse,
 };
 use serde_json::json;
 use sqlx::PgPool;
 use std::env;
 use std::sync::Once;
+use uuid::Uuid;
 
 /// 集成测试环境 (env var 一次性检查)
 fn setup_env() {
@@ -50,12 +51,24 @@ async fn make_pool() -> PgPool {
         .expect("build_pool failed (check DATABASE_URL)")
 }
 
-/// 创建测试用种子用户 (用 TEST_PASSWORD env var)
-async fn ensure_test_user(pool: &PgPool) -> String {
+/// 测试用 email 域 (per /v1/auth/me 端点要求)
+const TEST_USER_EMAIL_DOMAIN: &str = "cats.example";
+
+/// 生成唯一测试用户名 (避免并发测试间 username 共享导致 race)
+fn unique_test_username() -> String {
+    format!("e2e_test_user_{}", Uuid::new_v4().simple())
+}
+
+/// 创建测试用种子用户 (用 TEST_PASSWORD env var), 同时设置 email
+/// 返回 (username, email)
+///
+/// username 唯一 (per 调用) → 多个测试并发不撞车
+async fn ensure_test_user(pool: &PgPool) -> (String, String) {
     let password = env::var("TEST_PASSWORD")
         .expect("TEST_PASSWORD must be set (per 2026-08-27 11:06 JST 安全约束)");
-    let username = "e2e_test_user";
-    let created = db::ensure_seed_user(pool, username, &password)
+    let username = unique_test_username();
+    let email = format!("{}@{}", username, TEST_USER_EMAIL_DOMAIN);
+    let created = db::ensure_seed_user(pool, &username, &password, Some(&email))
         .await
         .expect("ensure_seed_user failed");
     if created {
@@ -63,7 +76,7 @@ async fn ensure_test_user(pool: &PgPool) -> String {
     } else {
         eprintln!("[e2e setup] seed user already exists");
     }
-    username.to_string()
+    (username, email)
 }
 
 /// 删除测试用种子用户 (清理)
@@ -93,6 +106,7 @@ fn make_app(
         .route("/healthz", web::get().to(handlers::healthz))
         .route("/v1/auth/login", web::post().to(handlers::login))
         .route("/v1/auth/refresh", web::post().to(handlers::refresh))
+        .route("/v1/auth/me", web::get().to(handlers::me))
 }
 
 // === (a) POST /v1/auth/login 成功 → 200 + JWT ===
@@ -100,7 +114,7 @@ fn make_app(
 async fn e2e_login_success_returns_200_with_jwt() {
     setup_env();
     let pool = make_pool().await;
-    let username = ensure_test_user(&pool).await;
+    let (username, _email) = ensure_test_user(&pool).await;
 
     let app = actix_test::init_service(make_app(pool.clone())).await;
     let password = env::var("TEST_PASSWORD").expect("TEST_PASSWORD");
@@ -132,7 +146,7 @@ async fn e2e_login_success_returns_200_with_jwt() {
 async fn e2e_login_wrong_password_returns_401() {
     setup_env();
     let pool = make_pool().await;
-    let username = ensure_test_user(&pool).await;
+    let (username, _email) = ensure_test_user(&pool).await;
 
     let app = actix_test::init_service(make_app(pool.clone())).await;
     let req = actix_test::TestRequest::post()
@@ -159,7 +173,7 @@ async fn e2e_login_wrong_password_returns_401() {
 async fn e2e_refresh_success_returns_new_access_token() {
     setup_env();
     let pool = make_pool().await;
-    let username = ensure_test_user(&pool).await;
+    let (username, _email) = ensure_test_user(&pool).await;
     let password = env::var("TEST_PASSWORD").expect("TEST_PASSWORD");
 
     // 先 login 拿 refresh_token
@@ -236,4 +250,89 @@ async fn e2e_healthz_returns_200() {
     let body: serde_json::Value = actix_test::read_body_json(resp).await;
     assert_eq!(body["status"], json!("ok"));
     assert_eq!(body["service"], json!("auth-service"));
+}
+
+// === (e) GET /v1/auth/me 成功 → 200 + user_id/username/email ===
+#[actix_web::test]
+async fn e2e_me_success_returns_user_info() {
+    setup_env();
+    let pool = make_pool().await;
+    let (username, email) = ensure_test_user(&pool).await;
+    let password = env::var("TEST_PASSWORD").expect("TEST_PASSWORD");
+
+    let app = actix_test::init_service(make_app(pool.clone())).await;
+
+    // 先 login 拿 access_token
+    let login_req = actix_test::TestRequest::post()
+        .uri("/v1/auth/login")
+        .set_json(LoginRequest {
+            username: username.clone(),
+            password: password.clone(),
+        })
+        .to_request();
+    let login_resp = actix_test::call_service(&app, login_req).await;
+    assert_eq!(login_resp.status().as_u16(), 200, "login should succeed");
+    let login_body: LoginResponse = actix_test::read_body_json(login_resp).await;
+
+    // GET /v1/auth/me 带 Bearer token
+    let me_req = actix_test::TestRequest::get()
+        .uri("/v1/auth/me")
+        .insert_header((
+            "Authorization",
+            format!("Bearer {}", login_body.access_token),
+        ))
+        .to_request();
+    let me_resp = actix_test::call_service(&app, me_req).await;
+    assert_eq!(
+        me_resp.status().as_u16(),
+        200,
+        "me should succeed with valid access token"
+    );
+    let me_body: MeResponse = actix_test::read_body_json(me_resp).await;
+    assert_eq!(me_body.user_id, login_body.user_id);
+    assert_eq!(me_body.username, username);
+    assert_eq!(me_body.email, email);
+
+    cleanup_test_user(&pool, &username).await;
+}
+
+// === (f) GET /v1/auth/me 缺 Authorization → 401 ===
+#[actix_web::test]
+async fn e2e_me_missing_token_returns_401() {
+    setup_env();
+    let pool = make_pool().await;
+
+    let app = actix_test::init_service(make_app(pool.clone())).await;
+    let req = actix_test::TestRequest::get()
+        .uri("/v1/auth/me")
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "me without Authorization header should be 401"
+    );
+    let body: ErrorBody = actix_test::read_body_json(resp).await;
+    assert_eq!(body.error, "invalid_token");
+}
+
+// === (g) GET /v1/auth/me 错 token → 401 ===
+#[actix_web::test]
+async fn e2e_me_invalid_token_returns_401() {
+    setup_env();
+    let pool = make_pool().await;
+
+    let app = actix_test::init_service(make_app(pool.clone())).await;
+    let req = actix_test::TestRequest::get()
+        .uri("/v1/auth/me")
+        .insert_header(("Authorization", "Bearer not-a-jwt"))
+        .to_request();
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "me with invalid token should be 401"
+    );
+    let body: ErrorBody = actix_test::read_body_json(resp).await;
+    assert_eq!(body.error, "invalid_token");
 }

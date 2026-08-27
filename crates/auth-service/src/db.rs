@@ -25,7 +25,7 @@ pub async fn build_pool() -> Result<PgPool> {
 pub async fn find_by_username(pool: &PgPool, username: &str) -> Result<Option<UserCredential>> {
     let row: Option<UserCredential> = sqlx::query_as::<_, UserCredential>(
         r#"
-        SELECT id, username, password_hash, is_active, created_at, updated_at
+        SELECT id, username, email, password_hash, is_active, created_at, updated_at
         FROM users_credential
         WHERE username = $1
         "#,
@@ -37,11 +37,11 @@ pub async fn find_by_username(pool: &PgPool, username: &str) -> Result<Option<Us
     Ok(row)
 }
 
-/// 按 user_id 查 UserCredential (供 refresh token 用)
+/// 按 user_id 查 UserCredential (供 refresh token / me 端点用)
 pub async fn find_by_id(pool: &PgPool, id: uuid::Uuid) -> Result<Option<UserCredential>> {
     let row: Option<UserCredential> = sqlx::query_as::<_, UserCredential>(
         r#"
-        SELECT id, username, password_hash, is_active, created_at, updated_at
+        SELECT id, username, email, password_hash, is_active, created_at, updated_at
         FROM users_credential
         WHERE id = $1
         "#,
@@ -54,21 +54,44 @@ pub async fn find_by_id(pool: &PgPool, id: uuid::Uuid) -> Result<Option<UserCred
 }
 
 /// 启动时检测种子用户 (per 任务规范: 不存明文 hash, 启动时检测并自动创建)
-pub async fn ensure_seed_user(pool: &PgPool, username: &str, plain_password: &str) -> Result<bool> {
+///
+/// `email` 可选: None 表示不设置 (适合不关心 email 的本地开发场景)
+pub async fn ensure_seed_user(
+    pool: &PgPool,
+    username: &str,
+    plain_password: &str,
+    email: Option<&str>,
+) -> Result<bool> {
     use crate::auth::hash_password;
     let existing = find_by_username(pool, username).await?;
     if existing.is_some() {
+        // 已存在则补 email (允许 None 不覆盖)
+        if let Some(em) = email {
+            sqlx::query(
+                r#"
+                UPDATE users_credential
+                SET email = COALESCE(email, $1)
+                WHERE username = $2
+                "#,
+            )
+            .bind(em)
+            .bind(username)
+            .execute(pool)
+            .await
+            .context("seed user email update failed")?;
+        }
         return Ok(false);
     }
     let hash = hash_password(plain_password)?;
     sqlx::query(
         r#"
-        INSERT INTO users_credential (username, password_hash)
-        VALUES ($1, $2)
+        INSERT INTO users_credential (username, email, password_hash)
+        VALUES ($1, $2, $3)
         ON CONFLICT (username) DO NOTHING
         "#,
     )
     .bind(username)
+    .bind(email)
     .bind(&hash)
     .execute(pool)
     .await

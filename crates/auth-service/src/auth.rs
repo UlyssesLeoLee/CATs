@@ -123,4 +123,47 @@ mod tests {
     fn verify_password_returns_false_for_invalid_hash() {
         assert!(!verify_password("any", "not-a-valid-hash"));
     }
+
+    /// decode_token_invalid_claims_returns_error
+    ///
+    /// 手动构造一个 HS256 token (用错的 secret 签发), 验证 `verify_jwt` (per OpenAPI §3.2 用 `decode_token` 语义)
+    /// 在 secret 不匹配时返回 Err。
+    #[test]
+    fn decode_token_invalid_claims_returns_error() {
+        // 1. 准备正确的 secret (verify_jwt 会从这里读)
+        env::set_var(
+            "JWT_SECRET",
+            "correct_secret_at_least_32_bytes_long_for_hs256_xx",
+        );
+        env::set_var("JWT_EXPIRY_SECS", "3600");
+        env::set_var("JWT_REFRESH_EXPIRY_SECS", "86400");
+
+        // 2. 用错的 secret 签发一个合法 HS256 JWT
+        let wrong_secret = b"WRONG_secret_at_least_32_bytes_long_for_hs256_yy";
+        let user_id = uuid::Uuid::new_v4();
+        let now = Utc::now().timestamp();
+        let claims = Claims {
+            sub: user_id.to_string(),
+            username: "alice".to_string(),
+            exp: now + 3600,
+            iat: now,
+            jti: uuid::Uuid::new_v4().to_string(),
+            token_type: "access".to_string(),
+        };
+        let tampered_token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(wrong_secret),
+        )
+        .expect("encode with wrong secret should still produce a structurally valid token");
+
+        // 3. verify_jwt 用正确 secret 验证 → 必须失败
+        let result = verify_jwt(&tampered_token);
+        assert!(
+            result.is_err(),
+            "verify_jwt should reject a token signed with wrong secret"
+        );
+        let err = result.unwrap_err();
+        assert_eq!(err.error, "invalid_token");
+    }
 }

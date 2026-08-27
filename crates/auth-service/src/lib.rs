@@ -15,7 +15,10 @@ pub mod db;
 pub mod handlers;
 pub mod models;
 
-pub use models::{ErrorBody, LoginRequest, LoginResponse, RefreshRequest, RefreshResponse};
+pub use models::{
+    Claims, ErrorBody, LoginRequest, LoginResponse, MeResponse, RefreshRequest, RefreshResponse,
+    UserCredential,
+};
 
 /// 当前 crate 语义版本
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

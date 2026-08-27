@@ -46,6 +46,14 @@ pub struct ErrorBody {
     pub detail: Option<String>,
 }
 
+/// GET /v1/auth/me 响应 (per OpenAPI v1 §3.2)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeResponse {
+    pub user_id: String,
+    pub username: String,
+    pub email: String,
+}
+
 /// JWT Claims
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -62,6 +70,7 @@ pub struct Claims {
 pub struct UserCredential {
     pub id: uuid::Uuid,
     pub username: String,
+    pub email: Option<String>,
     pub password_hash: String,
     pub is_active: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
