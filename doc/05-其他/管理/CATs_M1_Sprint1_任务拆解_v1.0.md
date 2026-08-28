@@ -30,6 +30,7 @@
 | 版本 | 日期 | 修订者 | 修订内容 |
 |------|------|--------|----------|
 | v1.0 | 2026-08-27 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 初版：M1-Sprint 1 任务拆解 7 任务 + RACI + 依赖图 + 风险 + 已知缺口 |
+| v1.0+1 | 2026-08-28 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 已知缺口闭环：§0.1 commit hash 实证 3 份 + §6.1/§6.9 诚实标"v2.0 整份不存在" + §6.2 M1-S0 实际收尾补 2026-08-27 + §6.10 T-01 Kafka 推 K3s 阶段二 + §6.11 错误码表引用闭环（OpenAPI/proto/alertmanager 未在 T-01 范围，待 T-07 启动） |
 
 ---
 
@@ -55,13 +56,19 @@
 | CATs_工作流文档 v1.0 | `doc/05-其他/CATs_工作流文档_v1.0.md` | `d1b10fe5f71a75a4f2744f0de59b852981b4587f`（"docs(pmo): 完整 PMO 文档集…"） | 150 任务 ID 映射（#33/#44/#48/#53–#58/#59–#65/#66–#75/#148） |
 | CATs_Baseline一览 v1.0 | `doc/05-其他/管理/CATs_Baseline一览_v1.0.md` | `4f96f9527a54bf7165ff3da24a1296d5016a8b02`（"docs(cab): CAB-001 v1.0 B0.0…"） | §5 接口契约 v1.0.0 / §6 待基线化清单（权限矩阵 / SQL一览 / 类图） |
 | CATs_技术基线 v1.0 | `doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md` | `047dc9ce84f027fa1f4ad197c8b4c90d8e6a4048`（"docs(基线): OI-3 收尾 v1.0+2…"） | §8 OI 状态：OI-1 🟢 / OI-2 🟢 / OI-3 🟢 / OI-4 🟢；§1 锁定 Rust 1.98.0 + PG 18.6 + pgvector 0.8.6 |
-| CATs_微服务架构设计书 v1.1（v1.0 基线升） | `doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md` | `2910f3d169b372a315927ec446df4f3352519289`（"docs(基线): WT-H4 架构+README+杂项升级…"） | §4.1 核心服务一览（auth/user/project/task 等 8 MVP 服务 + 阶段二媒体服务） |
-| CATs_项目管理计划书 v1.0 | `doc/05-其他/管理/CATs_项目管理计划书_v1.0.md` | （git log 待 §0.2 实证） | §里程碑表 M1-S0 = 2026-09-10 / M1-S3 = 2026-12-15 |
+| CATs_微服务架构设计书 v1.0 | `doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md` | `2910f3d169b372a315927ec446df4f3352519289`（"docs(基线): WT-H4 架构+README+杂项升级…"） | §4.1 核心服务一览（auth/user/project/task 等 8 MVP 服务 + 阶段二媒体服务） |
+| CATs_项目管理计划书 v1.0 | `doc/05-其他/管理/CATs_项目管理计划书_v1.0.md` | `d1b10fe5f71a75a4f2744f0de59b852981b4587f`（同 PMO 文档集 bundle） | §里程碑表 M1-S0 = 2026-08-25 ~ 2026-09-10 / M1-S3 = 2026-10 ~ 2026-12-15（v1.0+1 实证） |
+| CATs_安全要件定义书 v1.0 | `doc/05-其他/安全/CATs_安全要件定义书_v1.0.md` | `d1b10fe5f71a75a4f2744f0de59b852981b4587f`（同 PMO 文档集 bundle） | §3 认证（JWT + argon2id）/ §6 审计（v1.0+1 实证） |
+| CATs_错误码表 v1.0 | `doc/05-其他/管理/CATs_错误码表_v1.0.md` | `2146f533f63f8aecb73d103be1f61ceb86acb91c`（"feat(auth-service): T-01 实战深化…"） | §3 错误码分类 28 条 / §4 auth-service 端点矩阵 / §5 审计事件类型映射（v1.0+1 实证） |
 | OI-3 收尾 commit | （无文档路径，git 实物） | `12bcbdb`（"verify(m1-s0): OI-3 收尾 - auth-service 端到端测试"） | M1-S0 起点：auth-service 5/5 e2e 验证通过 |
+| T-01 完成 commit | （无文档路径，git 实物） | `2146f53`（"feat(auth-service): T-01 实战深化…"） | Sprint 1 §2 T-01 关闭：refresh 轮换 + logout + 错误码表 v1.0 + 5/5 判据 |
 
-### 0.2 待补 git 实证（已知缺口 §6.1）
+### 0.2 v1.0+1 git 实证更新（2026-08-28 Mavis 补）
 
-`CATs_项目管理计划书_v1.0.md` 的精确 commit hash 在本 worktree 内未在 §0.1 引用时同步记录；本文撰写时仅通过 grep 引用其 §里程碑 表内容。**待 Sprint 1 启动会前补全**（per "缺标比错标安全"原则）。
+- **已补**：CATs_项目管理计划书 / CATs_安全要件定义书 / CATs_错误码表 三份 commit hash
+- **未补（升级为已知缺口 §6.1 / §6.9）**：
+  - **CATs_接口设计书 v2.0 整份不存在** —— 本仓内只有微服务架构书 v1.0 + ADR-001~010，需 PMO + 架构师 Lead 在 Sprint 1 启动会决议：升 v2.0 / 用微服务架构书 §4 替代 / Sprint 1 内临时草案
+  - **CATs_模块设计书 v2.0（auth-service）整份不存在** —— 同上，需 T-07 启动时决议升版路径（per §6.9 方案 A/B/C）
 
 ---
 
@@ -245,14 +252,18 @@ graph TD
 
 ### 6.1 源文档 commit hash 未完整记录
 
-- `CATs_项目管理计划书_v1.0.md` 的精确 commit hash 在 §0.1 引用时未通过 `git log -p --follow` 同步记录（仅通过 grep 引用其 §里程碑 表内容）
-- **建议**：Sprint 1 启动会前由 Mavis 补跑 `git log -1 --format='%H %s' -- doc/05-其他/管理/CATs_项目管理计划书_v1.0.md` 并 patch 本文档 §0.1
+- **v1.0+1 实证（2026-08-28 Mavis 补）**：
+  - `CATs_项目管理计划书_v1.0.md` → `d1b10fe5f71a75a4f2744f0de59b852981b4587f`（per `git log -1`）—— 仍属 2026-08-25 PMO 文档集 bundle commit，未独立升版
+  - `CATs_安全要件定义书_v1.0.md` → `d1b10fe5`（同上 bundle commit）
+  - §0.1 引用清单 v1.0 写"git log 待 §0.2 实证"已在 v1.0+1 升级为实际 commit hash
+- **遗留缺口**：接口设计书 v2.0 **整份文档不存在**（仅 `doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md` 与 ADR-001~010），Sprint 1 启动会前需 PMO + 架构师 Lead 决议：升 v2.0 还是用微服务架构书 §4 接口规范替代
 
 ### 6.2 M1-Sprint 1 窗口日期未在源文档明示
 
 - `CATs_项目管理计划书_v1.0.md` §里程碑表 仅记录 **M1-S0 = 2026-08-25 ~ 2026-09-10** 与 **M1-S3 = 2026-10 ~ 2026-12-15**，Sprint 1 / Sprint 2 的具体起止日期未细分
-- **建议**：PMO 在 M1-S0 收尾评审会（预计 2026-09-10）上明确 Sprint 1 窗口；本文暂写 "Sprint 1 4 周窗口，待 PMO 启动会确认"
-- **约束**：本文不编造具体起止日（如 "2026-09-15 ~ 2026-10-13"），per "缺标比错标安全"
+- **v1.0+1 实证（2026-08-28 Mavis 补）**：M1-S0 收尾提前到 2026-08-27（per 评审会 D-Day 6 角色现场签字 + CAB-001 决议书 + OI-3 e2e 通过），Sprint 1 起点 ≥ 2026-08-28
+- **建议**：PMO 在 Sprint 1 启动会明确窗口；本文暂写 "Sprint 1 4 周窗口，待 PMO 启动会确认"
+- **约束**：本文不编造具体起止日（如 "2026-08-28 ~ 2026-09-25"），per "缺标比错标安全"
 
 ### 6.3 user-service 接口详细契约 v1.0.0 在 Sprint 1 范围内细化
 
@@ -292,7 +303,40 @@ graph TD
 ### 6.9 auth-service 模块设计书 v2.0 §4 错误码表锚点未在源文档确认
 
 - T-01 完成判据 ④ 写"错误码表 v1.0 提交并引用至 auth-service 模块设计书 §4"，但 `CATs_模块设计书_v2.0.md` §4 实际章节名在本文撰写时**未通过 git grep 实证**（§4 可能为类图章节或模块结构章节）
-- **建议**：T-01 启动前由 Rust Lead 确认模块设计书 §4 实际章节名（"错误码表"还是"模块结构"）；如需新增章节，先升模块设计书 v2.1
+- **v1.0+1 实证（2026-08-28 Mavis 补）**：
+  - **auth-service 模块设计书 v2.0 整份不存在**（与 §6.1 接口设计书同理，本仓内只有微服务架构书 v1.0 + ADR 集）
+  - **错误码表 v1.0 已提交**（commit `2146f53`，路径 `doc/05-其他/管理/CATs_错误码表_v1.0.md`），§6.2 显式要求 auth-service 模块设计书 §4 引用本表
+- **决策**：T-07 类图 v1.0 启动时由架构师 Lead 决议：
+  - 方案 A：升模块设计书 v2.0（一次性补 §4 错误码章节 + §5 模块结构 + §6 类图）
+  - 方案 B：直接用微服务架构书 §4 接口规范 + 错误码表 v1.0 作为"模块设计 §4"的事实源
+  - 方案 C：Sprint 1 内临时 v0.1 草案 + Sprint 末基线化
+- **当前状态**：T-01 错误码表 v1.0 独立可用（per commit `2146f53`），不阻塞 T-01 关闭；T-07 启动时再决议模块设计书升版路径
+
+### 6.10 T-01 Kafka 物理发布推 K3s 阶段二（v1.0+1 新增，2026-08-28）
+
+- T-01 完成时（commit `2146f53`）实现了 `AuditSink` trait + `DbAuditSink`（写 audit_log 表兜底）+ `KafkaAuditSinkStub`（仅 tracing::info，不实发 Kafka）
+- **决策**：Kafka 物理发布 `audit.event` topic 推到 **K3s 阶段二** 实做，理由：
+  1. OI-3 已记录 rdkafka 0.36 需 cmake-build 依赖 librdkafka 系统库（K3s 集群镜像已包含）
+  2. T-01 范围聚焦业务逻辑，Kafka 物理落地属基础设施层（K3s + Harbor 范畴）
+  3. 当前 `DbAuditSink` 写 audit_log 表已实现"事件永不丢"兜底，DB 写比 Kafka 更稳
+- **K3s 阶段二启动时要做的事**：
+  1. 加 `rdkafka` feature flag（cfg `kafka` 启用）
+  2. `KafkaAuditSink` 实做：producer → topic `audit.event`，key = user_id，value = AuditEvent JSON
+  3. 端到端验证：从 auth-service login → K3s Kafka topic 拉取 1 条事件
+  4. 错误码表 v1.0 §5.2 增加"每 event_type 对应 Kafka topic 名 + partition key"映射
+- **当前状态**：DbAuditSink 已落 `audit_log` 表（e2e `e2e_t01_audit_log_captures_*` 3/3 验证），Kafka 物理发布留 K3s
+
+### 6.11 错误码表 v1.0 引用闭环（v1.0+1 新增，2026-08-28）
+
+- 错误码表 v1.0（commit `2146f53`）已提交，但**反向引用未闭环**：
+  - 错误码表 §6.2 要求 auth-service 模块设计书 §4 引用本表 — 但模块设计书 v2.0 不存在（见 §6.9）
+  - 错误码表 §6.3 要求 `api/openapi/cats-openapi-v1.yaml` + `proto/cats/v1/*.proto` 的 ErrorBody.error 字段枚举本表 §3 全部值 — **未在 T-01 范围**
+  - 错误码表 §6.4 要求 `alertmanager` rules 按 error 字段聚合 — **未在 T-01 范围**
+- **建议**：T-07 启动时由架构师 Lead 同步处理引用闭环：
+  - OpenAPI / proto 文件 ErrorBody.error 枚举升 v1.0.1 对齐错误码表 §3（≈ 30K tokens）
+  - alertmanager rules draft 落 `doc/05-其他/可观测性/`（≈ 50K tokens）
+  - auth-service 模块设计书 v2.0 升版一次性补 §4（见 §6.9 方案 A）
+- **当前状态**：错误码表 v1.0 本身已基线化（commit `2146f53`），下游引用链路待 T-07 / Sprint 1 末统一闭环
 
 ---
 
@@ -318,7 +362,8 @@ graph TD
 | 版本 | 日期 | 修订者 | 修订内容 |
 |------|------|--------|----------|
 | v1.0 | 2026-08-27 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 初版：M1-Sprint 1 任务拆解 7 任务 + RACI + 依赖图 + 风险 + 已知缺口 |
+| v1.0+1 | 2026-08-28 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 已知缺口闭环：§0.1 commit hash 实证 3 份 + §6.1/§6.9 诚实标"v2.0 整份不存在" + §6.2 M1-S0 实际收尾补 2026-08-27 + §6.10 T-01 Kafka 推 K3s 阶段二 + §6.11 错误码表引用闭环（OpenAPI/proto/alertmanager 未在 T-01 范围，待 T-07 启动） |
 
 ---
 
-**文档结束（v1.0 评审前草稿，待 Sprint 1 启动会确认窗口 + RACI SLA + token-OLU 系数正式立项）**
+**文档结束（v1.0+1，T-01 已关闭 per commit `2146f53`，T-02~T-07 仍待启动会窗口 + RACI SLA + 接口/模块设计书升版决议）**
