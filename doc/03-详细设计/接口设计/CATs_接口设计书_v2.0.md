@@ -501,6 +501,106 @@ message TranslatedSegment { string segment_id = 1; string target_text = 2; strin
 
 ---
 
+## 3.5 错误响应格式（v2.0 新增 per 启动会决议 1 + 错误码表 v1.0 §3）
+
+> **v1.0 升 v2.0 patch 章节**（per 启动会决议 1，9/6 截止；架构师 Lead 主责 + Rust Lead 共同）
+>
+> 错误码表 v1.0（commit `2146f53`）已基线化 28 条错误枚举（§3 错误码分类 / §4 auth-service 端点矩阵 / §5 审计事件类型映射），本节定义**统一的 HTTP + gRPC 错误响应 schema** 引用错误码表。
+
+### 3.5.1 HTTP REST 错误响应格式
+
+所有 REST 端点 4xx/5xx 响应必须使用统一 `ErrorBody` schema：
+
+```yaml
+# 引用 api/openapi/cats-openapi-v1.yaml（决议 10 升 v1.0.1 对齐错误码表 §3）
+ErrorBody:
+  type: object
+  required: [error, code, message]
+  properties:
+    error:
+      type: string
+      enum: [参见错误码表 v1.0 §3 全部 28 条枚举]
+      description: 业务错误码（per 错误码表 v1.0 §3）
+    code:
+      type: integer
+      description: HTTP 状态码（400/401/403/404/409/422/429/500/503）
+    message:
+      type: string
+      description: 人类可读错误信息（i18n key，非本地化文本）
+    request_id:
+      type: string
+      format: uuid
+      description: 请求追踪 ID（per OTel trace context）
+    details:
+      type: object
+      additionalProperties: true
+      description: 错误详情（如 validation 错误字段 / 速率限制剩余 / 文档引用）
+```
+
+### 3.5.2 gRPC Status Code 映射
+
+gRPC 状态码与 HTTP 状态码 + 业务错误码的映射（per 决议 1 + 决议 10）：
+
+| gRPC Status | HTTP 等价 | 业务错误码范围（per 错误码表 §3） | 典型场景 |
+|------------|----------|--------------------------------|----------|
+| OK | 200 | — | 成功 |
+| INVALID_ARGUMENT | 400 | `VALIDATION_*` / `INVALID_*` | 参数校验失败 |
+| UNAUTHENTICATED | 401 | `AUTH_*` | JWT 缺失 / 过期 / 无效 |
+| PERMISSION_DENIED | 403 | `FORBIDDEN_*` / `RBAC_*` | RBAC 拒绝 |
+| NOT_FOUND | 404 | `NOT_FOUND_*` | 资源不存在 |
+| ALREADY_EXISTS | 409 | `CONFLICT_*` / `DUPLICATE_*` | 资源冲突 |
+| FAILED_PRECONDITION | 412 | `PRECONDITION_*` | 前置条件不满足 |
+| RESOURCE_EXHAUSTED | 429 | `RATE_LIMIT_*` / `QUOTA_*` | 速率限制 / 配额耗尽 |
+| CANCELLED | 499 | `CLIENT_CANCELLED` | 客户端取消 |
+| INTERNAL | 500 | `INTERNAL_*` | 服务内部错误 |
+| UNAVAILABLE | 503 | `UNAVAILABLE_*` / `DEPENDENCY_DOWN` | 依赖不可用 |
+| DEADLINE_EXCEEDED | 504 | `TIMEOUT_*` | 截止时间超出 |
+
+### 3.5.3 错误响应示例
+
+```json
+// HTTP 401
+{
+  "error": "AUTH_TOKEN_EXPIRED",
+  "code": 401,
+  "message": "auth.error.token_expired",
+  "request_id": "7f8a9b0c-1d2e-3f4g-5h6i-7j8k9l0m1n2o",
+  "details": {
+    "expired_at": "2026-09-01T18:00:00Z",
+    "refresh_url": "/v1/auth/refresh"
+  }
+}
+```
+
+```json
+// gRPC PERMISSION_DENIED
+{
+  "code": "PERMISSION_DENIED",
+  "message": "auth.error.rbac_denied",
+  "details": {
+    "error": "RBAC_ROLE_INSUFFICIENT",
+    "required_role": "admin",
+    "actual_role": "user",
+    "resource": "/v1/users/{id}",
+    "request_id": "..."
+  }
+}
+```
+
+### 3.5.4 错误码表 v1.0 反向引用
+
+- **§3 错误码分类 28 条**：本节 §3.5.1 `ErrorBody.error` enum 必须枚举全部 28 条
+- **§4 auth-service 端点矩阵**：见 §6.1 auth-service 详细 schema（本节下方）
+- **§5 审计事件类型映射**：所有 4xx/5xx 必须产生 `audit.event` Kafka topic（per 错误码表 v1.0 §5.2 + 决议 10 K3s 阶段二）
+
+### 3.5.5 不在 §3.5 范围
+
+- 业务成功响应 schema（200/201/204）：见各服务 §3.x / §4.x 章节
+- 异步事件错误处理：见 §5 Kafka Topics + 错误码表 v1.0 §5.2
+- 客户端 SDK 错误处理：见 §4 接口规范（决议 1 实施范围）
+
+---
+
 ## 4. 媒体处理服务 API 详细契约
 
 > 以下 6 个服务统一约定：**无独立数据库**，无对外 REST（不经 Envoy Gateway 暴露），仅作为 Kafka 消费者+file-service/task-service 内部 API 调用方运行（架构设计书 §4.1 说明）。下表中的"REST"均为**内部管理端点**，供健康检查/排障使用，不代表业务主链路。
@@ -687,3 +787,432 @@ proto/
 | 25 | Tauri 客户端 → task-service | 同步 REST/SSE | `GET /v1/tasks/{id}` 或已建立的 `GET /v1/tasks/{id}/events` SSE 连接，实时看到状态变为 `completed`，随后 `GET /v1/files/{output_file_id}/download` 下载成品 | — |
 
 **关键点**：第 5、7、9、12(经12写Outbox)、17、21 步是"业务写 + Outbox 写"同事务发生的节点，Debezium 只负责**转发**（第 6/8/10/13/18/22 步），任何一步 Kafka 短暂不可用都不会丢事件（业务数据已落 PostgreSQL，恢复后 Debezium 补齐转发，架构设计书 §7.1）。第 15 步是全链路中唯一的"服务间同步 gRPC 长耗时调用"，因涉及流式翻译需要实时反馈，其余跨服务协同均走异步 Kafka + REST 状态上报的组合，避免长链路同步阻塞。
+
+---
+
+## 6.1 auth-service 详细 schema（v2.0 新增 per 启动会决议 1 + T-01 实战深化）
+
+> **v1.0 升 v2.0 patch 章节**（per 启动会决议 1，9/6 截止）
+>
+> 引用 `services/auth-service/` 已实做代码（commit `b905f52` + `abb6f79` + `2146f53` + `12bcbdb`），不重新设计结构
+
+### 6.1.1 端点清单（per 错误码表 v1.0 §4 端点矩阵）
+
+| Method | Path | 用途 | 鉴权 | 错误码范围 |
+|--------|------|------|------|------------|
+| POST | `/v1/auth/login` | 邮箱+密码登录，返回 access + refresh token | 无（公开）| `AUTH_*` / `VALIDATION_*` / `RATE_LIMIT_*` |
+| POST | `/v1/auth/refresh` | 刷新 access token（旧 token 撤销）| refresh token | `AUTH_TOKEN_EXPIRED` / `AUTH_TOKEN_REVOKED` / `AUTH_TOKEN_INVALID` |
+| POST | `/v1/auth/logout` | 注销当前 refresh token（审计事件 `auth.logout`）| access token | `AUTH_*` |
+| GET | `/v1/auth/me` | 获取当前用户信息（id/email/role/created_at）| access token | `AUTH_TOKEN_INVALID` / `USER_NOT_FOUND` |
+| GET | `/healthz` | 健康检查（无鉴权，返回 200）| 无 | — |
+
+### 6.1.2 Request / Response 详细 schema
+
+#### POST /v1/auth/login
+
+```json
+// Request
+{
+  "email": "user@example.com",
+  "password": "P@ssw0rd!2026"
+}
+
+// Response 200
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "refresh_token": "rt_01HZX...",
+  "token_type": "Bearer",
+  "expires_in": 900,  // 15 min (access)
+  "refresh_expires_in": 2592000,  // 30 天
+  "user": {
+    "id": "usr_01HZX...",
+    "email": "user@example.com",
+    "role": "user",
+    "created_at": "2026-08-25T10:00:00Z"
+  }
+}
+```
+
+#### POST /v1/auth/refresh
+
+```json
+// Request
+{
+  "refresh_token": "rt_01HZX..."
+}
+
+// Response 200（per T-01 实战深化：旧 token 撤销 + 新 token 发放）
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "refresh_token": "rt_02ABC...",  // 新 token（旧的已撤销）
+  "token_type": "Bearer",
+  "expires_in": 900
+}
+
+// Response 401（旧 token 二次使用，per e2e `e2e_t01_refresh_revokes_old_token`）
+{
+  "error": "AUTH_TOKEN_REVOKED",
+  "code": 401,
+  "message": "auth.error.token_revoked",
+  "request_id": "...",
+  "details": {
+    "revoked_at": "2026-08-30T12:34:56Z"
+  }
+}
+```
+
+#### GET /v1/auth/me
+
+```json
+// Response 200
+{
+  "id": "usr_01HZX...",
+  "email": "user@example.com",
+  "role": "user",
+  "created_at": "2026-08-25T10:00:00Z",
+  "last_login_at": "2026-08-30T12:00:00Z"
+}
+```
+
+### 6.1.3 gRPC 定义（per §5 Protobuf 版本化组织）
+
+```protobuf
+// proto/cats/v1/auth.proto
+syntax = "proto3";
+package cats.v1;
+
+service AuthService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc GetMe(GetMeRequest) returns (UserInfo);
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  int32 expires_in = 3;
+  int32 refresh_expires_in = 4;
+  UserInfo user = 5;
+}
+
+// ...（其他 message 略，per services/auth-service/proto/ 实物）
+```
+
+### 6.1.4 错误响应（引用 §3.5 + 错误码表 v1.0 §4）
+
+| 错误码 | HTTP | 触发场景 | 端点 |
+|--------|------|----------|------|
+| `AUTH_INVALID_CREDENTIALS` | 401 | 邮箱或密码错误 | POST /v1/auth/login |
+| `AUTH_TOKEN_EXPIRED` | 401 | access token 过期 | 任意鉴权端点 |
+| `AUTH_TOKEN_REVOKED` | 401 | refresh token 二次使用 | POST /v1/auth/refresh |
+| `AUTH_TOKEN_INVALID` | 401 | token 格式错误 / 签名错误 | 任意鉴权端点 |
+| `USER_NOT_FOUND` | 404 | /me 时 user_id 不存在 | GET /v1/auth/me |
+| `VALIDATION_INVALID_EMAIL` | 400 | email 格式错误 | POST /v1/auth/login |
+| `VALIDATION_WEAK_PASSWORD` | 400 | 密码强度不足（< 8 字符 / 无数字 / 无特殊字符）| POST /v1/auth/login |
+| `RATE_LIMIT_LOGIN_EXCEEDED` | 429 | 1 分钟内登录失败 ≥ 5 次 | POST /v1/auth/login |
+
+### 6.1.5 审计事件（per 错误码表 v1.0 §5 + T-01 实战深化）
+
+| event_type | 触发端点 | Kafka topic | partition key | 兜底机制 |
+|------------|----------|-------------|---------------|----------|
+| `auth.login.success` | POST /v1/auth/login | `audit.event`（K3s 阶段二）| user_id | DbAuditSink 写 `audit_log` 表 |
+| `auth.login.failed` | POST /v1/auth/login | `audit.event` | source_ip | DbAuditSink 写 `audit_log` 表 |
+| `auth.refresh.success` | POST /v1/auth/refresh | `audit.event` | user_id | DbAuditSink 写 `audit_log` 表 |
+| `auth.logout.success` | POST /v1/auth/logout | `audit.event` | user_id | DbAuditSink 写 `audit_log` 表 |
+
+> **当前状态**：DbAuditSink 已落 `audit_log` 表（e2e 3/3 验证 per commit `2146f53`）；Kafka 物理发布留 K3s 阶段二（per §6.10 已知缺口 + 决议 10）
+
+---
+
+## 6.2 user-service 详细 schema（v2.0 新增 per 启动会决议 7 + T-02 脚手架）
+
+> **v1.0 升 v2.0 patch 章节**（per 启动会决议 7，9/6 截止；架构师 Lead 主责 + Rust Lead + DBA Lead 共同）
+>
+> 引用 `services/user-service/` 已实做代码（commit `89f72cd` T-02 脚手架 5/5 判据全绿），`crates/user-service/src/models.rs` 已定义 request/response struct
+
+### 6.2.1 端点清单
+
+| Method | Path | 用途 | 鉴权 | 错误码范围 |
+|--------|------|------|------|------------|
+| GET | `/healthz` | 健康检查 | 无 | — |
+| GET | `/v1/users/{id}` | 按 ID 查询用户（admin/自己可访问）| access token | `USER_NOT_FOUND` / `FORBIDDEN_*` |
+| POST | `/v1/users` | 创建用户（admin only，Sprint 1 仅 stub）| access token (admin) | `VALIDATION_*` / `CONFLICT_*` |
+| PUT | `/v1/users/{id}` | 更新用户（admin/自己可访问）| access token | `USER_NOT_FOUND` / `FORBIDDEN_*` / `VALIDATION_*` |
+| GET | `/v1/users/me` | 获取当前用户（等价 auth-service /v1/auth/me）| access token | `USER_NOT_FOUND` |
+
+### 6.2.2 Request / Response 详细 schema
+
+#### GET /v1/users/{id}
+
+```json
+// Response 200
+{
+  "id": "usr_01HZX...",
+  "email": "user@example.com",
+  "display_name": "张三",
+  "role": "user",
+  "locale": "zh-CN",
+  "timezone": "Asia/Tokyo",
+  "created_at": "2026-08-25T10:00:00Z",
+  "updated_at": "2026-08-30T12:00:00Z"
+}
+```
+
+#### POST /v1/users
+
+```json
+// Request
+{
+  "email": "newuser@example.com",
+  "display_name": "新用户",
+  "password": "P@ssw0rd!2026",
+  "role": "user",
+  "locale": "ja-JP",
+  "timezone": "Asia/Tokyo"
+}
+
+// Response 201
+{
+  "id": "usr_02ABC...",
+  "email": "newuser@example.com",
+  "display_name": "新用户",
+  "role": "user",
+  "created_at": "2026-09-01T21:00:00Z"
+}
+```
+
+#### PUT /v1/users/{id}
+
+```json
+// Request（部分更新）
+{
+  "display_name": "新名字",
+  "locale": "en-US"
+}
+
+// Response 200
+{
+  "id": "usr_01HZX...",
+  "email": "user@example.com",
+  "display_name": "新名字",
+  "role": "user",
+  "locale": "en-US",
+  "updated_at": "2026-09-01T21:30:00Z"
+}
+```
+
+### 6.2.3 gRPC 定义
+
+```protobuf
+// proto/cats/v1/user.proto
+syntax = "proto3";
+package cats.v1;
+
+service UserService {
+  rpc GetUser(GetUserRequest) returns (UserInfo);
+  rpc CreateUser(CreateUserRequest) returns (UserInfo);
+  rpc UpdateUser(UpdateUserRequest) returns (UserInfo);
+  rpc GetMe(GetMeRequest) returns (UserInfo);
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message CreateUserRequest {
+  string email = 1;
+  string display_name = 2;
+  string password = 3;
+  string role = 4;
+  optional string locale = 5;
+  optional string timezone = 6;
+}
+
+message UpdateUserRequest {
+  string id = 1;
+  optional string display_name = 2;
+  optional string locale = 3;
+  optional string timezone = 4;
+  optional string avatar_url = 5;
+}
+
+message UserInfo {
+  string id = 1;
+  string email = 2;
+  string display_name = 3;
+  string role = 4;
+  optional string locale = 5;
+  optional string timezone = 6;
+  optional string avatar_url = 7;
+  string created_at = 8;
+  string updated_at = 9;
+}
+```
+
+### 6.2.4 错误响应（引用 §3.5）
+
+| 错误码 | HTTP | 触发场景 |
+|--------|------|----------|
+| `USER_NOT_FOUND` | 404 | GET/PUT /v1/users/{id} 不存在 |
+| `USER_EMAIL_DUPLICATE` | 409 | POST /v1/users email 重复 |
+| `FORBIDDEN_NOT_SELF` | 403 | GET/PUT /v1/users/{id} 非 admin 且非自己 |
+| `FORBIDDEN_NOT_ADMIN` | 403 | POST /v1/users 非 admin |
+| `VALIDATION_INVALID_EMAIL` | 400 | email 格式错误 |
+| `VALIDATION_WEAK_PASSWORD` | 400 | 密码强度不足 |
+
+### 6.2.5 数据库 schema（per 数据库设计书 v2.0 §4 user_db + T-04 SQL 设计一览）
+
+```sql
+-- user_db.users（per Sprint 1 T-04 完成判据）
+CREATE TABLE users (
+  id            TEXT PRIMARY KEY,        -- usr_<ULID>
+  email         TEXT UNIQUE NOT NULL,    -- user_db.users.email 唯一索引
+  password_hash TEXT NOT NULL,           -- argon2id（per 安全要件定义书 §3）
+  display_name  TEXT,
+  role          TEXT NOT NULL DEFAULT 'user',
+  locale        TEXT DEFAULT 'zh-CN',
+  timezone      TEXT DEFAULT 'Asia/Shanghai',
+  avatar_url    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_role ON users(role);
+```
+
+### 6.2.6 Sprint 1 实施范围（per T-02 完成判据）
+
+- ✅ healthz 端点
+- ✅ users CRUD stub（GET / POST / PUT + DB 落库）
+- ✅ `cats-common` crate 抽取自 auth-service 公共模块
+- 🟡 鉴权中间件（仅占位，Sprint 2 接入完整 JWT 校验）
+- 🟡 /me 端点（已有 auth-service 版本，user-service 复用待 Sprint 2）
+
+---
+
+## 7. 接口版本控制（v2.0 新增 per 启动会决议 1）
+
+### 7.1 版本策略
+
+| 维度 | 策略 | 触发 |
+|------|------|------|
+| **API URL 路径** | `/v1/...` 主版本号（per 当前）| 重大破坏性变更升 `/v2/...` |
+| **proto package** | `cats.v1.*` 主版本号 | proto schema 破坏性变更升 `cats.v2.*` |
+| **向后兼容** | 新增字段 / 新增端点 = 兼容 | 不升版本 |
+| **不向后兼容** | 删字段 / 改字段类型 / 改端点语义 = 破坏 | 升主版本号 |
+
+### 7.2 弃用流程
+
+1. **Deprecation 标记**：endpoint / proto field 加 `deprecated = true` annotation
+2. **6 个月弃用期**：新旧版本并行运行
+3. **CAB 决议**：升主版本号需 CAB 批准
+4. **文档同步**：错误码表 v1.0 §4 + Baseline 一览 §5.1 同步更新
+
+### 7.3 当前版本状态
+
+| 组件 | 当前版本 | 下一版本预期 |
+|------|----------|-------------|
+| `api/openapi/cats-openapi-v1.yaml` | v1.0.0 | v1.0.1（9/27 错误码枚举对齐 per 决议 10）|
+| `proto/cats/v1/*.proto` | v1 | v1.0.1（9/27 gRPC status 映射 per 决议 10）|
+| REST 路径 | `/v1/...` | v2 暂无计划 |
+
+---
+
+## 8. 已知缺口（DDD Review 必查 per AI 协作文档治理 2026-08-26）
+
+> 缺标比错标安全：本节信息源未在本 worktree 实证 / 跨项目引用未在 CATs 仓落地 / 升版 v2.0 后未实测，统一标记"待 PMO 确认"
+
+### 8.1 §3.5 ErrorBody.error 枚举对齐未实测
+
+- v1.0+1 §6.11 + 决议 10 显式要求 `api/openapi/cats-openapi-v1.yaml` ErrorBody.error 枚举对齐错误码表 v1.0 §3 全部 28 条
+- 本文档 §3.5 仅定义 schema 结构 + 引用错误码表，**实际 enum diff 校验在决议 10 T-07 实施时做（9/27 截止）**
+- **当前状态**：v2.0 文档基线化 v0.1 草案；enum 实际对齐待 T-07
+
+### 8.2 user-service 详细 schema 仅 Sprint 1 范围
+
+- §6.2 涵盖 T-02 已实做的 GET / POST / PUT /me 端点
+- Sprint 2+ 计划：DELETE /v1/users/{id}（admin）+ 用户头像上传 + 多租户隔离
+- **当前状态**：v2.0 范围限定 Sprint 1；Sprint 2+ 升 v2.1
+
+### 8.3 auth-service 业务端点 v2.0 + 错误码表 v1.0 引用待 7 角色评审
+
+- §6.1.4 错误码表引用 per 错误码表 v1.0 §4 端点矩阵
+- 错误码表 v1.0 本身（commit `2146f53`）已 5/5 判据全绿，但 §6.1 端点 ↔ 错误码映射需 DDD Review 6 角色（per 决议 1 9/6 截止前）
+- **当前状态**：v2.0 文档结构升版；映射实际验证待 DDD Review
+
+### 8.4 gRPC status code 映射待 Rust Lead 共同责任确认
+
+- §3.5.2 映射表由架构师 Lead 起草，Rust Lead 共同责任（per 决议 1）
+- Rust Lead 需从实现角度验证（actix-web → tonic 0.12 实际 status code 行为）
+- **当前状态**：v2.0 文档结构升版；Rust Lead 验证待 9/6 DDD Review
+
+### 8.5 §3.5 错误响应 schema 与 OpenAPI v1 文件同步未完成
+
+- §3.5 YAML schema 是本文档内 draft
+- `api/openapi/cats-openapi-v1.yaml` 实际文件 ErrorBody schema 仍为 v1.0 旧版（不含错误码表 §3 enum 引用）
+- 决议 10 明确 OpenAPI v1.0.1 升级 9/27 截止
+- **当前状态**：本文档 v2.0 升版；OpenAPI 文件 v1.0.1 升级待 T-07 决议 10 实施
+
+### 8.6 §3.5 错误响应 schema 与 proto v1 文件同步未完成
+
+- §3.5.2 gRPC status 映射是本文档内 draft
+- `proto/cats/v1/*.proto` 实际文件 status code 注释仍为 v1 旧版
+- 决议 10 明确 proto v1.0.1 升级 9/27 截止
+- **当前状态**：本文档 v2.0 升版；proto 文件 v1.0.1 升级待 T-07 决议 10 实施
+
+### 8.7 alertmanager rules 草稿未在本章
+
+- 错误码表 v1.0 §6.4 要求 alertmanager rules 按 error 字段聚合
+- 决议 10 明确 `doc/05-其他/可观测性/CATs_告警规则_v1.0.md` 草稿 9/27 截止
+- 本章 v2.0 范围不含可观测性配置
+- **当前状态**：决议 10 同步入 T-07；本文档 v2.0 范围限定接口设计
+
+### 8.8 §7 版本控制策略待 CAB 决议
+
+- §7.2 弃用流程需 CAB 决议（per Baseline 一览 §7 CAB 决议记录）
+- 一人公司 = Ulysses 兼任 CAB 召集人，决议流程不阻塞
+- **当前状态**：v2.0 文档结构升版；CAB 决议留 Sprint 1 末 v0.2 调整
+
+### 8.9 §6.1/§6.2 端点 Sprint 1 完成判据复核
+
+- §6.1.5 审计事件：DbAuditSink 已落 `audit_log` 表 3/3 e2e 验证（per commit `2146f53`）
+- §6.2.5 user_db schema：T-02 commit `89f72cd` 落地；T-04 SQL 设计一览 v1.0 9/13 截止时复核 EXPLAIN
+- **当前状态**：T-01/T-02 已闭环；T-04 9/13 截止时复核
+
+---
+
+## 9. 关联文档
+
+| 文档 | 路径 | 用途 |
+|------|------|------|
+| 启动会决议纪要 v1.0 | `doc/05-其他/会议记录/CATs_M1_Sprint1_启动会决议纪要_v1.0.md` | 决议 1 通过方案 A + 决议 7 user-service schema 纳入 + 决议 10 错误码引用闭环 |
+| Sprint 1 任务拆解 v1.0+2 | `doc/05-其他/管理/CATs_M1_Sprint1_任务拆解_v1.0.md` | §6.1/§6.9 已知缺口闭环 + §0.1 引用清单 |
+| 错误码表 v1.0 | `doc/05-其他/管理/CATs_错误码表_v1.0.md` | §3 错误码分类 28 条 / §4 auth-service 端点矩阵 / §5 审计事件类型映射 |
+| 微服务架构设计书 v1.0 | `doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md` | §4.1 核心 8 MVP 服务 / §4.2 异步事件 |
+| 数据库设计书 v2.0 | `doc/03-详细设计/数据库设计/CATs_数据库设计书_v2.0.md` | §4 auth_db / user_db schema |
+| 模块设计书 v2.0（决议 2）| `doc/03-详细设计/模块设计/CATs_模块设计书_v2.0.md` | §4 错误码引用终端 |
+| Baseline 一览 v1.0 | `doc/05-其他/管理/CATs_Baseline一览_v1.0.md` | §5.1 接口契约基线 / §6 待基线化 |
+| 工作流文档 v1.0 | `doc/05-其他/CATs_工作流文档_v1.0.md` | 150 任务 ID 映射 |
+| 安全要件定义书 v1.0 | `doc/05-其他/安全/CATs_安全要件定义书_v1.0.md` | §3 认证（JWT + argon2id）|
+
+---
+
+## 10. 修订履历
+
+| 版本 | 日期 | 修订者 | 修订内容 |
+|------|------|--------|----------|
+| **v1.0** | **2026-07-15** | **架构师** | **初版（OFCAT 时代）**：15 服务全部端点 + 媒体处理 §4 + gRPC §5 + 端到端示例 §6 |
+| **v2.0** | **2026-08-10** | **架构师** | **微服务化适配**：CATs 15 服务 baseline + 8 库 + Outbox + 5/7/9/12/17/21 Debezium 链路 |
+| **v2.0+1** | **2026-09-01** | **架构师 Lead**（Mavis 接手 agent per DEC-008） | **启动会决议 1 升版 patch**：§3.5 错误响应格式（HTTP + gRPC status 映射 + 错误码表 v1.0 §3 引用）+ §6.1 auth-service 详细 schema（端点 + Request/Response + proto + 错误码映射 + 审计事件）+ §6.2 user-service 详细 schema（端点 + Request/Response + proto + 错误码映射 + DB schema + Sprint 1 范围）+ §7 接口版本控制（策略 + 弃用流程 + 当前状态）+ §8 已知缺口（9 项）+ §9 关联文档扩展 |
+
+---
+
+**文档结束（v2.0+1，启动会决议 1+7 落地，§3.5/§6.1/§6.2/§7 已升版；DDD Review 6 角色 7 天内 2026-09-08 截止；决议 10 错误码引用闭环留 T-07 9/27 同步实施）**
+
