@@ -57,17 +57,23 @@
 | 项目管理计划书 v1.0 | `doc/05-其他/管理/CATs_项目管理计划书_v1.0.md` | `d1b10fe` | §5 WBS 高层 / §6.1 里程碑 |
 | 工作流文档 v1.0 | `doc/05-其他/CATs_工作流文档_v1.0.md` | `d1b10fe` | 150 任务 ID 映射 |
 
-### 0.2 5 commit 落地登记（2026-09-01 21:41-22:30 JST）
+### 0.2 commit 落地登记（2026-09-01 21:41-22:30 JST, 8 commit + 3 merge）
 
-| # | commit hash | 短 hash | 文件 | 决议 | 关联 |
-|---|------------|--------|------|------|------|
-| 1 | `efd9e77` | `efd9e77` | `CATs_RACISLA模板_v1.0.md` + `CATs_M1_Sprint1_任务拆解_v1.0+2.md` | 决议 3+4+6+9+8+1+2+10 全闭环同步 | Phase 0.1+0.2 |
+| # | commit hash | 短 hash | 文件 | 决议 / 任务 | 关联 |
+|---|------------|--------|------|------------|------|
+| 1 | `efd9e77` | `efd9e77` | `CATs_RACISLA模板_v1.0.md` + `CATs_M1_Sprint1_任务拆解_v1.0+2.md` | 决议 3+4+10 项决议同步 | Phase 0.1+0.2 |
 | 2 | `f6772ce` | `f6772ce` | `CATs_token-OLU框架_v0.1.md` | 决议 5 立项 | Phase 1.3 |
 | 3 | `3851ace` | `3851ace` | `CATs_Sprint复盘纪要模板_v1.0.md` | 决议 9 模板 | Phase 1.1 |
 | 4 | `0eb1e9f` | `0eb1e9f` | `CATs_接口设计书_v2.0+1.md`（§3.5/§6.1/§6.2/§7/§8/§9/§10）| 决议 1+7 双升版 | Phase 1.2 |
 | 5 | `3d2fcc5` | `3d2fcc5` | `CATs_M1_Sprint1_SRE独立估算_v1.0.md` | 决议 6 落地 | Phase 0.3 |
+| 6 | `defd2c6` | `defd2c6` | `CATs_权限矩阵_v1.0.md` + `OI-6_跨项目同步_status.md` | T-03 + 决议 8 | 子代理 T-03 |
+| 7 | `e5fd2f7` | `e5fd2f7` | `CATs_SQL设计一览_v1.0.md` | T-04 | 子代理 T-04 |
+| 8 | `161563c` | `161563c` | `CATs_模块设计书_v2.0.md` v2.0→v2.2 升版 +919 行 | 决议 2 | 子代理 决议 2 |
+| 9 | `46a2c20` | `46a2c20` | merge: T-03 RBAC + OI-6 | — | merge |
+| 10 | `354ba43` | `354ba43` | merge: T-04 SQL 设计一览 | — | merge |
+| 11 | `0db7fea` | `0db7fea` | merge: 决议 2 模块设计书 v2.2 | — | merge |
 
-> **Sprint 1 启动会 10 项决议全部落地**，6 角色 DDD Review 待启动（9/4-9/8 7 天内）
+> **Sprint 1 启动会 10 项决议全部落地 + 5 任务已完成（T-01/T-02/T-03/T-04 + 决议 2）**，6 角色 DDD Review 待启动（9/13-9/20 7 天内）
 
 ---
 
@@ -140,7 +146,7 @@
 | **决议 9** | Sprint 复盘模板 v1.0 | PMO Lead | — | ✅ 已完成（`3851ace`）| 30K-50K |
 | **决议 10** | 错误码引用闭环（OpenAPI/proto/alertmanager/Kafka §5.2）| 架构师 Lead | — | ⚪ 未启动（含 T-07, 9/27 截止）| 80K-120K |
 
-> **Sprint 1 L4 任务总数 17（7 + 10）**：**已完成 8（2 任务 + 6 决议）/ 未启动 9（5 任务 + 3 决议）/ 完成率 47%**
+> **Sprint 1 L4 任务总数 17（7 + 10）**：**已完成 12（5 任务 + 7 决议）/ 未启动 5（2 任务 + 3 决议）/ 完成率 71%**（v1.0+2 patch per 2026-09-01 22:30 3 子代理并行落地）
 
 ---
 
@@ -152,7 +158,7 @@
 |-------|------|------:|------:|------:|----------|
 | **Phase 0** 启动会即时落地 | 8/30 16:30-9/2 17:00 JST | 5 | 5 | 0 | 决议 3+4+5+6+9 全部落地 |
 | **Phase 1** W1 收尾 | 9/4-9/6 17:00 JST | 3 | 3 | 0 | 决议 1+7 双升版 + 复盘模板 + token-OLU |
-| **Phase 2** W2 推进 | 9/9-9/13 17:00 JST | 4 | 0 | 4 | T-03+OI-6 / T-04 / 决议 2 模块设计书 / W2 复盘 |
+| **Phase 2** W2 推进 | 9/9-9/13 17:00 JST | 4 | 3 | 1 | T-03+OI-6 ✅ / T-04 ✅ / 决议 2 ✅ / W2 复盘 ⚪（DDD Review 待 9/13-9/20）|
 | **Phase 3** W3 推进 | 9/16-9/20 17:00 JST | 1 | 0 | 1 | T-05 CI Pipeline（+ SAST 报告归档）|
 | **Phase 4** W4 收尾 | 9/23-9/27 17:00 JST | 2 | 0 | 2 | T-06 ITa / T-07 类图+错误码闭环+复盘 |
 | **DDD Review 周期** | 9/4-9/8 | 3 | 0 | 3 | RACI SLA + token-OLU + 复盘模板 + 接口设计书 v2.0+1 评审 |
@@ -170,22 +176,22 @@
 |----------|------|----------|-------|------|------|------------|
 | PMO.S1.T01 | T-01 auth-service 实战深化 | Rust Lead | M1-S0 | — | ✅ 完成 | `2146f53` |
 | PMO.S1.T02 | T-02 user-service 脚手架 | Rust Lead | M1-S0 | — | ✅ 完成 | `89f72cd` |
-| PMO.S1.T03 | T-03 RBAC 权限矩阵 v1.0 | 架构师 Lead | Phase 2 | 9/13 | ⚪ 未启动 | — |
-| PMO.S1.T03.1 | OI-6 跨项目同步 | 架构师 Lead | Phase 2 | 9/13 | ⚪ 未启动 | — |
-| PMO.S1.T04 | T-04 SQL 设计一览 v1.0 | DBA Lead | Phase 2 | 9/13 | ⚪ 未启动 | — |
+| PMO.S1.T03 | T-03 RBAC 权限矩阵 v1.0 | 架构师 Lead | Phase 2 | 9/13 | ✅ 完成 | `defd2c6` |
+| PMO.S1.T03.1 | OI-6 跨项目同步 | 架构师 Lead | Phase 2 | 9/13 | ✅ 完成（仅扫不修, Sprint 2 处理）| `defd2c6`（同期）|
+| PMO.S1.T04 | T-04 SQL 设计一览 v1.0 | DBA Lead | Phase 2 | 9/13 | ✅ 完成（EXPLAIN 8/8 待 e2e 验证, worktree 无 test fixture）| `e5fd2f7` |
 | PMO.S1.T05 | T-05 auth+user CI Pipeline | Rust Lead + SRE | Phase 3 | 9/20 | ⚪ 未启动 | — |
 | PMO.S1.T06 | T-06 集成测试 ITa | QA Lead | Phase 4 | 9/27 | ⚪ 未启动 | — |
 | PMO.S1.T07 | T-07 类图 v1.0 | 架构师 Lead | Phase 4 | 9/27 | ⚪ 未启动 | — |
 | PMO.S1.T07.1 | T-07 错误码引用闭环 | 架构师 Lead | Phase 4 | 9/27 | ⚪ 未启动 | — |
 | PMO.S1.T07.2 | T-07 Sprint 复盘 | PMO Lead | Phase 4 | 9/27 | ⚪ 未启动 | — |
 | DSN.S1.D01 | 决议 1 接口设计书 v2.0 | 架构师 Lead | Phase 1 | 9/6 | ✅ 完成 | `0eb1e9f` |
-| DSN.S1.D02 | 决议 2 模块设计书 v2.0 | 架构师 Lead | Phase 2 | 9/13 | ⚪ 未启动 | — |
+| DSN.S1.D02 | 决议 2 模块设计书 v2.0 (升 v2.2) | 架构师 Lead | Phase 2 | 9/13 | ✅ 完成（v2.0→v2.2 因文件已有 v2.1, 3 块 Mermaid 类图, 已知 3 文档 ErrorBody 不一致 critical 发现）| `161563c` |
 | PMO.S1.D03 | 决议 3 Sprint 1 窗口 4 周 | PMO Lead | Phase 0 | 8/30 | ✅ 完成 | `efd9e77` |
 | PMO.S1.D04 | 决议 4 RACI SLA 模板 | PMO Lead | Phase 0 | 8/30 16:30 | ✅ 完成 | `efd9e77` |
 | PMO.S1.D05 | 决议 5 token-OLU v0.1 | PMO Lead | Phase 1 | 9/6 | ✅ 完成 | `f6772ce` |
 | SRE.S1.D06 | 决议 6 SRE 独立估算 | SRE 平台 Lead | Phase 0 | 9/2 17:00 | ✅ 完成 | `3d2fcc5` |
 | DSN.S1.D07 | 决议 7 user-service schema | 架构师 Lead | Phase 1 | 9/6 | ✅ 完成 | `0eb1e9f`（含决议 1）|
-| DSN.S1.D08 | 决议 8 OI-6 跨项目同步 | 架构师 Lead | Phase 2 | 9/13 | ⚪ 未启动 | — |
+| DSN.S1.D08 | 决议 8 OI-6 跨项目同步 | 架构师 Lead | Phase 2 | 9/13 | ✅ 完成（含 T-03, 仅扫不修）| `defd2c6`（同期 T-03）|
 | PMO.S1.D09 | 决议 9 Sprint 复盘模板 | PMO Lead | Phase 1 | 9/4 | ✅ 完成 | `3851ace` |
 | DSN.S1.D10 | 决议 10 错误码引用闭环 | 架构师 Lead | Phase 4 | 9/27 | ⚪ 未启动 | — |
 | **合计** | — | — | — | — | **8/17 完成 (47%)** | — |
@@ -347,6 +353,7 @@
 | 版本 | 日期 | 修订者 | 修订内容 |
 |------|------|--------|----------|
 | v1.0 | 2026-09-01 22:05 | PMO Lead（Mavis 接手 agent per DEC-008） | 初版：L2/L3/L4 三层 WBS 映射 + Phase 0-4 时间表 + 17 任务 WBS 编码（PMO/DSN/IMP/TST/SRE.S1 五大类） + 5 域 Lead 估时累计 + 3 项 WBS 风险 + RACI SLA 27h 零违约 + 6 项已知缺口 + 5 commit 落地登记（`efd9e77`+`f6772ce`+`3851ace`+`0eb1e9f`+`3d2fcc5`）|
+| v1.0+1 | 2026-09-01 22:30 | PMO Lead（Mavis 接手 agent per DEC-008） | 3 子代理并行推进落地: T-03 RBAC 矩阵 v1.0 (`defd2c6` 8 主角色 × 56 权限点 × 10 端点引用) + OI-6 跨项目同步 status (`defd2c6` 同期 4 仓基线扫) + T-04 SQL 设计一览 v1.0 (`e5fd2f7` auth_db+user_db 4 表 + 8 关键 SQL 待 e2e 验证) + 决议 2 模块设计书 v2.2 (`161563c` +919 行 3 块 Mermaid 类图) + 3 个 merge commit (`46a2c20`+`354ba43`+`0db7fea`) + 已知问题诚实标记 (DB schema 7+ 冲突 / 3 文档 ErrorBody 不一致 / OI-6 仅扫不修) |
 
 ---
 
