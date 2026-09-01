@@ -31,6 +31,7 @@
 |------|------|--------|----------|
 | v1.0 | 2026-08-27 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 初版：M1-Sprint 1 任务拆解 7 任务 + RACI + 依赖图 + 风险 + 已知缺口 |
 | v1.0+1 | 2026-08-28 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 已知缺口闭环：§0.1 commit hash 实证 3 份 + §6.1/§6.9 诚实标"v2.0 整份不存在" + §6.2 M1-S0 实际收尾补 2026-08-27 + §6.10 T-01 Kafka 推 K3s 阶段二 + §6.11 错误码表引用闭环（OpenAPI/proto/alertmanager 未在 T-01 范围，待 T-07 启动） |
+| v1.0+2 | 2026-09-01 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 启动会 10 项决议落地同步：§0.1 源文档清单加启动会纪要 `1b27b2b` + RACI SLA 模板 v1.0（同期 commit）+ §0.2 v1.0+2 patch 章节 + §1.2 OI-6 状态调整为 🟡（待 T-03 借机推进 per 决议 8）+ §2 估时表中决议 4/5/9 PMO Lead token 加总 + §4 RACI 表加 SLA 引用 + §6.2 Sprint 1 窗口明确 8/31-9/27 + §6.4 RACI SLA 引用闭环 per 决议 4 + §6.5 token-OLU v0.1 立项 per 决议 5 + §6.6 SRE 平台独立估算 per 决议 6 + §6.9 接口+模块设计书 v2.0 双升版 per 决议 1+2 + §6.11 错误码引用闭环明确入 T-07 per 决议 10 + 新增 §6.12 启动会纪要 commit 同步 + §6.13 复盘模板 v1.0 立项 per 决议 9 |
 
 ---
 
@@ -62,6 +63,10 @@
 | CATs_错误码表 v1.0 | `doc/05-其他/管理/CATs_错误码表_v1.0.md` | `2146f533f63f8aecb73d103be1f61ceb86acb91c`（"feat(auth-service): T-01 实战深化…"） | §3 错误码分类 28 条 / §4 auth-service 端点矩阵 / §5 审计事件类型映射（v1.0+1 实证） |
 | OI-3 收尾 commit | （无文档路径，git 实物） | `12bcbdb`（"verify(m1-s0): OI-3 收尾 - auth-service 端到端测试"） | M1-S0 起点：auth-service 5/5 e2e 验证通过 |
 | T-01 完成 commit | （无文档路径，git 实物） | `2146f53`（"feat(auth-service): T-01 实战深化…"） | Sprint 1 §2 T-01 关闭：refresh 轮换 + logout + 错误码表 v1.0 + 5/5 判据 |
+| CATs_M1_Sprint1_启动会决议纪要 v1.0 | `doc/05-其他/会议记录/CATs_M1_Sprint1_启动会决议纪要_v1.0.md` | `1b27b2b`（"docs(m1-sprint1): 启动会决议纪要 v1.0…"） | §2 10 项决议基线 + §4 实施动作清单 + §3.1 5 域 Lead 估时（v1.0+2 实证）|
+| CATs_RACISLA 模板 v1.0 | `doc/05-其他/管理/模板/CATs_RACISLA模板_v1.0.md` | （v1.0+2 同期 commit）| 决议 4 落地：3 档 SLA（24h 默认 / 8h 紧急 / ≤1h 升级）+ §4 违约处理（v1.0+2 实证）|
+| T-02 完成 commit | （无文档路径，git 实物） | `89f72cd`（"feat(user-service): T-02 脚手架落地…"） | Sprint 1 §2 T-02 关闭：user-service 脚手架 + cats-common + healthz + CRUD stub + 5/5 判据（v1.0+2 实证）|
+| 启动会议程 v1.0 | `doc/05-其他/管理/CATs_M1_Sprint1_启动会议程_v1.0.md` | `00e025a`（"docs(m1-sprint1): 启动会议程 v1.0…"） | 10 项议程基线（v1.0+2 实证）|
 
 ### 0.2 v1.0+1 git 实证更新（2026-08-28 Mavis 补）
 
@@ -69,6 +74,20 @@
 - **未补（升级为已知缺口 §6.1 / §6.9）**：
   - **CATs_接口设计书 v2.0 整份不存在** —— 本仓内只有微服务架构书 v1.0 + ADR-001~010，需 PMO + 架构师 Lead 在 Sprint 1 启动会决议：升 v2.0 / 用微服务架构书 §4 替代 / Sprint 1 内临时草案
   - **CATs_模块设计书 v2.0（auth-service）整份不存在** —— 同上，需 T-07 启动时决议升版路径（per §6.9 方案 A/B/C）
+
+### 0.3 v1.0+2 启动会决议落地更新（2026-09-01 Mavis 补 per 启动会 commit `1b27b2b`）
+
+- **触发**：M1-Sprint 1 启动会 2026-08-30 14:00-15:30 JST（90 min）通过 10 项决议，全部落到本文 v1.0+2
+- **决议 1+2 双升版**：CATs_接口设计书 v2.0（200K-400K tokens, 9/6 截止）+ CATs_模块设计书 v2.0（200K-400K tokens, 9/13 截止）= 架构师 Lead 累计 400K-800K tokens
+- **决议 3 窗口**：Sprint 1 明确 4 周窗口 = **2026-08-31 ~ 2026-09-27**（原 v1.0+1 写"待 PMO 启动会确认"，现已确认）
+- **决议 4 RACI SLA**：CATs_RACISLA 模板 v1.0 已落地（同期 commit, 3 档 SLA：24h 默认 / 8h 紧急 / ≤1h PMO 升级）
+- **决议 5 token-OLU v0.1**：PMO Lead 9/6 前立项（50K-100K tokens），纳入 5 域 Lead 系数确认
+- **决议 6 SRE 独立估算**：SRE 平台 Lead 9/2 17:00 JST 前 commit（≤200K tokens）
+- **决议 7 user-service schema**：纳入决议 1 实施范围（架构师 Lead 在 v2.0 §6 补详细 schema）
+- **决议 8 OI-6 跨项目同步**：T-03 借机扫 RGS-TS-001 / Physis-Engine / Star-Renderer 三仓基线，输出 `OI-6_跨项目同步_status.md`（30K-50K tokens, 9/13 截止）
+- **决议 9 Sprint 复盘模板 v1.0**：PMO Lead 9/4 17:00 JST 前 commit（30K-50K tokens）
+- **决议 10 错误码引用闭环**：统一入 T-07 实施（架构师 Lead, 80K-120K tokens, 9/27 截止）
+- **T-02 关闭**：per commit `89f72cd`，原 v1.0+1 §2 标记"未启动"已升级为"5/5 判据全绿"
 
 ---
 
@@ -91,7 +110,7 @@
 |----|---------------|---------------|----------------|
 | OI-3 | 🟢（auth-service 5/5 e2e） | 持续验证（user-service 端到端） | 🟢 维持（扩 1 服务） |
 | OI-4 | 🟢（8 逻辑库 + HNSW smoke） | 持续验证（user_db SQL EXPLAIN） | 🟢 维持（DB 扩 1 库） |
-| OI-6 | 待办（跨项目引用方同步） | 借 Sprint 1 验证 RGS/Physis 同步路径 | 🟡 → 🟢（若 Sprint 1 内确认） |
+| OI-6 | 待办（跨项目引用方同步） | 借 Sprint 1 验证 RGS/Physis/Star 同步路径 per 决议 8（T-03 借机）| 🟡 → 🟢（T-03 9/13 截止，输出 `OI-6_跨项目同步_status.md`）|
 
 ### 1.3 非目标（Sprint 1 不做）
 
@@ -136,9 +155,9 @@
 | 架构师 Lead | T-03 + T-07（类图部分）| 300K–600K |
 | DBA Lead | T-04 | 200K–350K |
 | QA Lead | T-06 | 200K–400K |
-| PMO Lead | T-07（复盘部分）| 100K–200K |
-| SRE 平台（Consulted） | T-05 平台支持 | 50K–100K（待 Sprint 1 启动会确认独立估算） |
-| **合计** | 7 任务 | **1.75M–3.2M tokens** |
+| PMO Lead | T-07（复盘部分）+ 决议 4（RACI SLA 模板 20K-30K）+ 决议 5（token-OLU v0.1 50K-100K）+ 决议 9（复盘模板 30K-50K）| 200K–380K |
+| SRE 平台（Consulted） | T-05 平台支持 + 决议 6（SRE 独立估算文档 ≤200K tokens, 9/2 17:00 JST 截止）| 50K–100K（T-05 Consulted）+ ≤200K（决议 6 独立估算） |
+| **合计** | 7 任务 + 启动会 10 项决议 | **1.85M–3.5M tokens**（v1.0+2 同步）|
 
 > 5 域独立 Lead 严格不兼任 per 2026-08-21 决议：Rust Lead（领 T-01/T-02/T-05 累计 900K–1.55M tokens，瓶颈 Lead）/ 架构师 / DBA / QA / PMO 各领独立 token 预算，SRE 平台不领 Sprint 1 主预算（仅 Consulted）。
 
@@ -228,7 +247,7 @@ graph TD
 ### 4.2 RACI 决议与约束
 
 1. **5 域独立 Lead 严格不兼任**（per 2026-08-21 决议）：本表中 Rust Lead / 架构师 Lead / DBA Lead / QA Lead / PMO Lead / SRE 平台共 6 个独立 Lead 槽位，互相不兼任。
-2. **Consulted 响应 SLA 未定义**（已知缺口 §6.4）：本文撰写时无 RACI SLA 模板，C 角的响应时效依赖 Sprint 1 启动会共识。
+2. **Consulted 响应 SLA 已闭环（v1.0+2 patch per 决议 4）**：本文撰写时 §6.4 已知缺口已于 2026-09-01 落地 `doc/05-其他/管理/模板/CATs_RACISLA模板_v1.0.md`，3 档 SLA：24h 默认 / 8h 紧急 / ≤1h PMO 升级。C 角响应时效统一引用本模板。
 3. **Mavis 代签依据**（per 2026-08-27 19:39 JST "允许你代签" 强化 + 2026-08-26 08:40 JST 反转）：除 Sponsor + Ulysses 本人签以外，其余 Lead 签字由 Mavis 以 Ulysses 名义代签。
 
 ---
@@ -258,12 +277,12 @@ graph TD
   - §0.1 引用清单 v1.0 写"git log 待 §0.2 实证"已在 v1.0+1 升级为实际 commit hash
 - **遗留缺口**：接口设计书 v2.0 **整份文档不存在**（仅 `doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md` 与 ADR-001~010），Sprint 1 启动会前需 PMO + 架构师 Lead 决议：升 v2.0 还是用微服务架构书 §4 接口规范替代
 
-### 6.2 M1-Sprint 1 窗口日期未在源文档明示
+### 6.2 M1-Sprint 1 窗口日期已在启动会明确（v1.0+2 闭环 per 决议 3）
 
 - `CATs_项目管理计划书_v1.0.md` §里程碑表 仅记录 **M1-S0 = 2026-08-25 ~ 2026-09-10** 与 **M1-S3 = 2026-10 ~ 2026-12-15**，Sprint 1 / Sprint 2 的具体起止日期未细分
 - **v1.0+1 实证（2026-08-28 Mavis 补）**：M1-S0 收尾提前到 2026-08-27（per 评审会 D-Day 6 角色现场签字 + CAB-001 决议书 + OI-3 e2e 通过），Sprint 1 起点 ≥ 2026-08-28
-- **建议**：PMO 在 Sprint 1 启动会明确窗口；本文暂写 "Sprint 1 4 周窗口，待 PMO 启动会确认"
-- **约束**：本文不编造具体起止日（如 "2026-08-28 ~ 2026-09-25"），per "缺标比错标安全"
+- **v1.0+2 闭环（2026-09-01 Mavis 补 per 启动会决议 3）**：Sprint 1 窗口明确 = **2026-08-31 ~ 2026-09-27**（4 周，PMO 启动会通过方案 A）
+- **当前状态**：窗口日期已实证 commit `1b27b2b` 启动会纪要 §决议 3
 
 ### 6.3 user-service 接口详细契约 v1.0.0 在 Sprint 1 范围内细化
 
@@ -273,44 +292,49 @@ graph TD
 
 ### 6.4 RACI 中 Consulted 角响应 SLA 未定义
 
-- 本文 §4 RACI 表内 C 角（Consulted）含 DBA Lead / QA Lead / SRE 平台 / Rust Lead 等多角色，但**响应时效 SLA（如"工作时间内 24h 内必须回复"）未在源文档模板中定义**
-- **建议**：PMO 引入 RACI SLA 模板（与 Sprint 复盘模板 v1.0 同步落地），或 Sprint 1 启动会达成口头共识
-- **当前状态**：依赖 C 角主动性，可能导致 T-05 / T-06 等 Consulted 密集任务延迟
+- **v1.0+1 状态**：本文撰写时无 RACI SLA 模板，C 角的响应时效依赖 Sprint 1 启动会共识
+- **v1.0+2 闭环（2026-09-01 Mavis 补 per 启动会决议 4）**：
+  - RACI SLA 模板已落地：`doc/05-其他/管理/模板/CATs_RACISLA模板_v1.0.md`（v1.0+2 同期 commit）
+  - 3 档 SLA：24h 默认（工作时间） / 8h 紧急（阻塞主线时 R+A 联合签发） / ≤1h PMO 升级档
+  - 5 域 Lead + SRE 平台共 6 角全部覆盖
+  - §4 RACI 表 C 角统一引用本模板，违约处理走 §4（PMO 提醒 → Sponsor 升级 → 换 C 角 / 拆任务 / 改 RACI）
+- **当前状态**：已闭环；后续 Sprint 复用本模板 v1.0
 
-### 6.5 token-OLU 系数跨项目引用未在 CATs 仓立项
+### 6.5 token-OLU 系数跨项目引用未在 CATs 仓立项（v1.0+2 决议 5 立项中）
 
 - 本文 §2 估时基准 "1 人·天 ≈ 100K–300K tokens" 来自**跨项目 RGS-TS-001 §6.2 草案**（per user profile 中 Ulysses 2026-08-21 JST 指令确立），该草案**不在本 worktree 内**
-- **建议**：PMO 在 Sprint 1 启动会同步立项"CATs token-OLU 框架 v0.1"，将 RGS-TS-001 草案的系数区间正式纳入 CATs 仓
-- **当前状态**：本文估时为草案系数应用，**仅供预算参考**，非正式 OLU 上限；如需正式立项后调整，按 PMO 决议 patch 本文档 §2
+- **v1.0+2 决议 5（2026-09-01 Mavis 补 per 启动会）**：PMO Lead 9/6 前立项 `doc/05-其他/管理/CATs_token-OLU框架_v0.1.md`（50K-100K tokens），含 5 域 Lead 系数确认（Rust 250K-450K / 架构 200K-300K / DBA 200K-350K / QA 200K-400K / PMO 100K-200K）+ SRE 平台 50K-100K
+- **当前状态**：决议 5 已通过方案 A；v0.1 落地后本文 §2 估时由"草案系数"升级为"正式 OLU 系数"
 
-### 6.6 SRE 平台在 Sprint 1 内的实际工作量未独立列项
+### 6.6 SRE 平台在 Sprint 1 内的实际工作量未独立列项（v1.0+2 决议 6 已闭环）
 
 - T-05 CI Pipeline 落地涉及 SRE 平台支持（Harbor 私有仓库 / 集群证书 / K3s kubeconfig 注入），但 §2.2 估时表中 SRE 平台仅 "50K–100K（待 Sprint 1 启动会确认独立估算）"
-- **建议**：Sprint 1 启动会上 SRE 平台 Lead 单独提交 token 估算，否则 R-02（CI Pipeline 在 K3s 不通）可能因 SRE 资源不足无法缓解
-- **当前状态**：SRE 平台为 Consulted，**不领 Sprint 1 主预算**；如启动会确认需主预算，PMO 决定是否扩大 Sprint 1 窗口或拆分 T-05
+- **v1.0+2 决议 6（2026-09-01 Mavis 补 per 启动会）**：SRE 平台 Lead 9/2 17:00 JST 前 commit `CATs_M1_Sprint1_SRE独立估算_v1.0.md`（≤200K tokens，K3s 集群状态 + Harbor 镜像 + kubeconfig 注入估算）
+- **当前状态**：决议 6 改为方案 B（启动会现场无 SRE 实时数据，W1 周三前补），不领 Sprint 1 主预算
 
-### 6.7 跨项目 OI-6（跨项目引用方同步）状态未在 Sprint 1 内闭合
+### 6.7 跨项目 OI-6（跨项目引用方同步）状态 v1.0+2 决议 8 闭环路径
 
 - `CATs_技术基线_v1.0.md` §8 OI-6 标记"跨项目引用方同步（如果 RGS / Physis / Star 也锁定相同基线）"，**责任 = 架构师，待办**
-- **本文 §1.2 写"Sprint 1 借机推进 OI-6"，但未在 §2 任务清单中独立列项**
-- **建议**：T-03 RBAC 矩阵 v1.0 落地时同步验证 RGS / Physis / Star 的引用方同步路径；如需独立任务，PMO 在启动会决定是否扩 §2 加 T-08
+- **v1.0+2 决议 8（2026-09-01 Mavis 补 per 启动会）**：T-03（RBAC 矩阵 v1.0 9/13 截止）借机同步扫 RGS-TS-001 / Physis-Engine / Star-Renderer 三仓基线，输出 `OI-6_跨项目同步_status.md`（30K-50K tokens，纳入 T-03 估时）
+- **当前状态**：决议 8 通过方案 A（零额外 token 投入）；OI-6 状态从"待办"调整为 🟡（T-03 9/13 截止后预期 🟢）
 
-### 6.8 Sprint 复盘模板 v1.0 基线化未在 Sprint 1 内确认
+### 6.8 Sprint 复盘模板 v1.0 基线化 v1.0+2 决议 9 立项中
 
 - `CATs_Baseline一览_v1.0.md` §6 待基线化清单中"CATs_会议报告模板 v1.0"标 M1-S0 触发，但 T-07 复盘需用的"Sprint 复盘模板"在源文档中**仅找到模板目录 `doc/05-其他/管理/模板/`** 而**未找到具体模板文件名**
-- **建议**：T-07 启动前 PMO 提交复盘模板基线化，或 Sprint 1 内用临时模板 + T-07 末再基线化
+- **v1.0+2 决议 9（2026-09-01 Mavis 补 per 启动会）**：PMO Lead 9/4 17:00 JST 前 commit `doc/05-其他/管理/模板/CATs_Sprint复盘纪要模板_v1.0.md`（30K-50K tokens），含 5 域 Lead 反馈 + 7 任务完成率 + 已知问题 + Sprint 2 建议
+- **当前状态**：决议 9 改为 W1 周五前 commit（启动会前提交时间窗口已过）；RACI SLA 模板已先落地（v1.0+2 同期）
 
-### 6.9 auth-service 模块设计书 v2.0 §4 错误码表锚点未在源文档确认
+### 6.9 接口设计书 v2.0 + auth-service 模块设计书 v2.0 双升版 v1.0+2 决议 1+2 闭环
 
 - T-01 完成判据 ④ 写"错误码表 v1.0 提交并引用至 auth-service 模块设计书 §4"，但 `CATs_模块设计书_v2.0.md` §4 实际章节名在本文撰写时**未通过 git grep 实证**（§4 可能为类图章节或模块结构章节）
 - **v1.0+1 实证（2026-08-28 Mavis 补）**：
   - **auth-service 模块设计书 v2.0 整份不存在**（与 §6.1 接口设计书同理，本仓内只有微服务架构书 v1.0 + ADR 集）
   - **错误码表 v1.0 已提交**（commit `2146f53`，路径 `doc/05-其他/管理/CATs_错误码表_v1.0.md`），§6.2 显式要求 auth-service 模块设计书 §4 引用本表
-- **决策**：T-07 类图 v1.0 启动时由架构师 Lead 决议：
-  - 方案 A：升模块设计书 v2.0（一次性补 §4 错误码章节 + §5 模块结构 + §6 类图）
-  - 方案 B：直接用微服务架构书 §4 接口规范 + 错误码表 v1.0 作为"模块设计 §4"的事实源
-  - 方案 C：Sprint 1 内临时 v0.1 草案 + Sprint 末基线化
-- **当前状态**：T-01 错误码表 v1.0 独立可用（per commit `2146f53`），不阻塞 T-01 关闭；T-07 启动时再决议模块设计书升版路径
+- **v1.0+2 决议 1+2 闭环（2026-09-01 Mavis 补 per 启动会）**：
+  - **决议 1**：架构师 Lead 升 `doc/03-详细设计/接口设计/CATs_接口设计书_v2.0.md`（§3.5 错误响应格式 + §4 接口规范 + §5 gRPC status 映射 + §6 auth/user 详细 schema），200K-400K tokens，9/6 截止，Rust Lead 共同责任（gRPC status 映射）
+  - **决议 2**：架构师 Lead 升 `doc/03-详细设计/模块设计/CATs_模块设计书_v2.0.md`（§4 错误码章节 + §5 模块结构 + §6 类图），200K-400K tokens，9/13 截止，Rust Lead 共同责任
+  - 决议 1+2 合并实施更省 token（一人公司资源约束下），与决议 7 user-service schema 同步升版
+- **当前状态**：决议 1+2 通过方案 A 双升版；T-01 错误码表 v1.0 引用链路将随 v2.0 升版自动闭环
 
 ### 6.10 T-01 Kafka 物理发布推 K3s 阶段二（v1.0+1 新增，2026-08-28）
 
@@ -326,17 +350,78 @@ graph TD
   4. 错误码表 v1.0 §5.2 增加"每 event_type 对应 Kafka topic 名 + partition key"映射
 - **当前状态**：DbAuditSink 已落 `audit_log` 表（e2e `e2e_t01_audit_log_captures_*` 3/3 验证），Kafka 物理发布留 K3s
 
-### 6.11 错误码表 v1.0 引用闭环（v1.0+1 新增，2026-08-28）
+### 6.11 错误码表 v1.0 引用闭环 v1.0+2 决议 10 明确入 T-07
 
 - 错误码表 v1.0（commit `2146f53`）已提交，但**反向引用未闭环**：
-  - 错误码表 §6.2 要求 auth-service 模块设计书 §4 引用本表 — 但模块设计书 v2.0 不存在（见 §6.9）
-  - 错误码表 §6.3 要求 `api/openapi/cats-openapi-v1.yaml` + `proto/cats/v1/*.proto` 的 ErrorBody.error 字段枚举本表 §3 全部值 — **未在 T-01 范围**
-  - 错误码表 §6.4 要求 `alertmanager` rules 按 error 字段聚合 — **未在 T-01 范围**
-- **建议**：T-07 启动时由架构师 Lead 同步处理引用闭环：
-  - OpenAPI / proto 文件 ErrorBody.error 枚举升 v1.0.1 对齐错误码表 §3（≈ 30K tokens）
-  - alertmanager rules draft 落 `doc/05-其他/可观测性/`（≈ 50K tokens）
-  - auth-service 模块设计书 v2.0 升版一次性补 §4（见 §6.9 方案 A）
-- **当前状态**：错误码表 v1.0 本身已基线化（commit `2146f53`），下游引用链路待 T-07 / Sprint 1 末统一闭环
+  - 错误码表 §6.2 要求 auth-service 模块设计书 §4 引用本表 — 模块设计书 v2.0 升版由决议 2 推进（per §6.9）
+  - 错误码表 §6.3 要求 `api/openapi/cats-openapi-v1.yaml` + `proto/cats/v1/*.proto` 的 ErrorBody.error 字段枚举本表 §3 全部值 — **v1.0+2 决议 10 明确入 T-07**
+  - 错误码表 §6.4 要求 `alertmanager` rules 按 error 字段聚合 — **v1.0+2 决议 10 明确入 T-07**
+- **v1.0+2 决议 10（2026-09-01 Mavis 补 per 启动会）**：
+  - 架构师 Lead 在 T-07（9/27 截止）实施时同步处理：
+    - `api/openapi/cats-openapi-v1.yaml` ErrorBody.error 枚举对齐错误码表 v1.0 §3
+    - `proto/cats/v1/*.proto` gRPC status code 对齐错误码表 v1.0 §2.2
+    - `alertmanager` rules draft 落 `doc/05-其他/可观测性/CATs_告警规则_v1.0.md`
+    - 错误码表 v1.0 §5.2 增加 Kafka topic 名 + partition key 映射（per K3s 阶段二准备）
+  - 80K-120K tokens（含在 T-07 估时内）
+  - DDD Review 合并到 T-07 DDD Review
+- **当前状态**：决议 10 通过方案 A（统一入 T-07）；与决议 2 模块设计书 v2.0 升版重叠部分合并实施
+
+### 6.12 启动会决议纪要 commit 同步（v1.0+2 新增，2026-09-01）
+
+- 启动会决议纪要 v1.0 已 commit（`1b27b2b`，"docs(m1-sprint1): 启动会决议纪要 v1.0 (10 项决议, 2026-08-30, 90 min)"）
+- 本文 v1.0+2 同步启动会 §2 全部 10 项决议到本文 §0.3 / §1.2 / §2.2 / §4 / §6.2-6.11
+- 实施动作清单（per 启动会 §4）按截止时间排序：
+  1. commit 启动会决议纪要 v1.0 — ✅ `1b27b2b`
+  2. commit RACI SLA 模板 v1.0 — ✅ v1.0+2 同期
+  3. commit Sprint 1 拆解 v1.0+2（本文）— ✅ 9/1 完成
+  4. commit SRE 独立估算 — ⚪ SRE 平台 Lead 9/2 17:00 JST 前
+  5. commit Sprint 复盘模板 v1.0 — ⚪ PMO Lead 9/4 17:00 JST 前
+  6. commit 接口设计书 v2.0 + 模块设计书 v2.0 — ⚪ 架构师 Lead 9/6 + 9/13
+  7. commit token-OLU v0.1 — ⚪ PMO Lead 9/6
+  8. commit T-03 RBAC 矩阵 + OI-6 跨项目同步 — ⚪ 架构师 Lead 9/13
+  9. commit T-07 类图 + 错误码引用闭环 — ⚪ 架构师 Lead 9/27
+  10. 启动会纪要 DDD Review 6 角色 — ⚪ 全员 9/6
+
+### 6.13 Sprint 复盘模板 v1.0 立项（v1.0+2 新增，2026-09-01 per 决议 9）
+
+- 启动会决议 9 通过方案 A：PMO Lead 9/4 17:00 JST 前 commit `doc/05-其他/管理/模板/CATs_Sprint复盘纪要模板_v1.0.md`（30K-50K tokens）
+- 模板章节：5 域 Lead 反馈 + 7 任务完成率表 + 已知问题 + Sprint 2 建议 + 风险登记
+- 用途：T-07（9/27 截止）复盘时直接套用
+- DDD Review 6 角色 7 天内（9/4-9/11）
+- **当前状态**：决议 9 已通过；模板起草为 Phase 1.1（9/4 截止）
+
+### 6.14 T-02 关闭（v1.0+2 新增，2026-09-01）
+
+- T-02 状态变更：原 v1.0+1 标记"未启动"已升级为"5/5 判据全绿"
+- 关闭 commit：`89f72cd`（"feat(user-service): T-02 脚手架落地 (per Sprint 1 §2 完成判据 5/5)"）
+- 完成判据复核：
+  1. `cargo build -p user-service` exit 0 — ✅
+  2. `cargo test -p user-service` 5/5 通过 — ✅
+  3. healthz e2e 1/1 通过（curl localhost:8080/healthz → 200）— ✅
+  4. 用户 CRUD 最小用例 2/2 通过（创建 → 读取 → 更新，DB 落库验证）— ✅
+  5. `cats-common` crate 抽取自 auth-service 公共模块（替代原 `cats-kit` 命名），`cargo build` 全 workspace exit 0 — ✅
+- **当前状态**：Sprint 1 §2 任务 2/7 关闭（T-01 + T-02），剩余 T-03~T-07 5 任务待启动
+
+### 6.15 启动会 10 项决议总览（v1.0+2 新增，2026-09-01）
+
+| 决议 | 内容 | 立场 | 截止 | 责任 Lead | 估时（tokens）|
+|------|------|------|------|----------|--------------|
+| 1 | 接口设计书 v2.0 升版 | 通过 A 升 v2.0 | 9/6 | 架构师 Lead | 200K-400K |
+| 2 | 模块设计书 v2.0 升版 | 通过 A 升 v2.0 | 9/13 | 架构师 Lead | 200K-400K |
+| 3 | Sprint 1 窗口 4 周 | 通过 A 8/31-9/27 | 8/30 | PMO Lead | 5K-10K（本文闭环）|
+| 4 | RACI SLA 模板 | 通过 A 24h 默认 | 8/30 16:30 | PMO Lead | 20K-30K（v1.0+2 闭环）|
+| 5 | token-OLU v0.1 立项 | 通过 A | 9/6 | PMO Lead | 50K-100K |
+| 6 | SRE 平台独立估算 | 通过 B W1 周三 | 9/2 17:00 | SRE 平台 Lead | ≤200K |
+| 7 | user-service schema | 通过 A 纳入决议 1 | 9/6 | 架构师 Lead | 含在决议 1 |
+| 8 | OI-6 跨项目同步 | 通过 A T-03 借机 | 9/13 | 架构师 Lead | 含在 T-03 |
+| 9 | Sprint 复盘模板 v1.0 | 通过 A W1 周五 | 9/4 17:00 | PMO Lead | 30K-50K |
+| 10 | Kafka + 错误码闭环 | 通过 A T-07 统一 | 9/27 | 架构师 Lead | 含在 T-07 |
+| **合计** | — | — | — | — | **505K-1,090K tokens**|
+
+- 5 域 Lead 累计：架构师 Lead 510K-970K（决议 1+2+7+8+10 估时内含 T-03 + T-07）/ PMO Lead 105K-190K / SRE 平台 Lead ≤200K / Rust + DBA + QA 共同责任不重复计
+- 5 域独立 Lead 严格不兼任（per 2026-08-21 决议）：本表 6 Lead 槽位互不兼任
+
+---
 
 ---
 
@@ -363,7 +448,8 @@ graph TD
 |------|------|--------|----------|
 | v1.0 | 2026-08-27 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 初版：M1-Sprint 1 任务拆解 7 任务 + RACI + 依赖图 + 风险 + 已知缺口 |
 | v1.0+1 | 2026-08-28 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 已知缺口闭环：§0.1 commit hash 实证 3 份 + §6.1/§6.9 诚实标"v2.0 整份不存在" + §6.2 M1-S0 实际收尾补 2026-08-27 + §6.10 T-01 Kafka 推 K3s 阶段二 + §6.11 错误码表引用闭环（OpenAPI/proto/alertmanager 未在 T-01 范围，待 T-07 启动） |
+| v1.0+2 | 2026-09-01 | 架构师 + PMO（Mavis 接手 agent per DEC-008） | 启动会 10 项决议落地同步：详见开头修订履历（决议 1+2 v2.0 双升版 / 决议 3 窗口 8/31-9/27 / 决议 4 RACI SLA / 决议 5 token-OLU v0.1 / 决议 6 SRE 独立估算 / 决议 7 user-service schema / 决议 8 OI-6 / 决议 9 复盘模板 / 决议 10 错误码闭环入 T-07） |
 
 ---
 
-**文档结束（v1.0+1，T-01 已关闭 per commit `2146f53`，T-02~T-07 仍待启动会窗口 + RACI SLA + 接口/模块设计书升版决议）**
+**文档结束（v1.0+2，T-01 + T-02 已关闭，启动会 10 项决议已落地，Phase 1-4 任务按 4 周窗口 8/31-9/27 推进中）**
