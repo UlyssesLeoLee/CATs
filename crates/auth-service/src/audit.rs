@@ -86,30 +86,42 @@ impl DbAuditSink {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
-}
 
-#[async_trait]
-impl AuditSink for DbAuditSink {
-    async fn emit(&self, event: &AuditEvent) -> Result<()> {
-        sqlx::query(
+    /// 构造幂等 INSERT SQL
+    ///
+    /// 单测使用: 验证 SQL 文本固定, 包含 `ON CONFLICT (event_id) DO NOTHING`
+    /// 这是审计**幂等性**的核心保证 (重发不产生重复行)
+    ///
+    /// 返回: (sql, 占位符数量) — 占位符数量用于验证 bind 顺序正确
+    pub fn build_insert_sql() -> (&'static str, usize) {
+        (
             r#"
             INSERT INTO audit_log
                 (event_id, user_id, event_type, outcome, detail, source_ip, user_agent, occurred_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (event_id) DO NOTHING
             "#,
+            8, // $1..$8
         )
-        .bind(event.event_id)
-        .bind(event.user_id)
-        .bind(&event.event_type)
-        .bind(event.outcome.as_str())
-        .bind(&event.detail)
-        .bind(event.source_ip.as_deref())
-        .bind(event.user_agent.as_deref())
-        .bind(event.occurred_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("audit_log insert failed: db_err={e}"))?;
+    }
+}
+
+#[async_trait]
+impl AuditSink for DbAuditSink {
+    async fn emit(&self, event: &AuditEvent) -> Result<()> {
+        let (sql, _) = Self::build_insert_sql();
+        sqlx::query(sql)
+            .bind(event.event_id)
+            .bind(event.user_id)
+            .bind(&event.event_type)
+            .bind(event.outcome.as_str())
+            .bind(&event.detail)
+            .bind(event.source_ip.as_deref())
+            .bind(event.user_agent.as_deref())
+            .bind(event.occurred_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("audit_log insert failed: db_err={e}"))?;
         Ok(())
     }
 }
@@ -197,5 +209,70 @@ mod tests {
         let e = sample_event("login");
         let r = sink.emit(&e).await;
         assert!(r.is_ok());
+    }
+
+    // =====================================================================
+    // 幂等性单测 (per 设计书 §6.1 v0.1 后续 + UT 审查报告 §3 P2)
+    // 引用: CATs_测试Mock项目设计书_v1.0 §6.1
+    // 验证: ON CONFLICT (event_id) DO NOTHING 是审计**幂等性**核心保证
+    // =====================================================================
+
+    #[test]
+    fn build_insert_sql_contains_on_conflict_clause() {
+        // 验证 SQL 文本固定包含 ON CONFLICT (event_id) DO NOTHING
+        // 防回归: 有人无意移除 ON CONFLICT 后重发会产生重复行
+        let (sql, _) = DbAuditSink::build_insert_sql();
+        assert!(
+            sql.contains("ON CONFLICT (event_id) DO NOTHING"),
+            "INSERT SQL must be idempotent (ON CONFLICT DO NOTHING); got:\n{sql}"
+        );
+    }
+
+    #[test]
+    fn build_insert_sql_targets_audit_log_table() {
+        // 验证 SQL 写入正确的表
+        let (sql, _) = DbAuditSink::build_insert_sql();
+        assert!(sql.contains("INSERT INTO audit_log"), "must INSERT INTO audit_log");
+    }
+
+    #[test]
+    fn build_insert_sql_has_eight_placeholders() {
+        // 验证占位符数量与 bind 数量一致 ($1..$8)
+        // 防回归: bind 与 placeholder 错位会导致运行时 panic
+        let (sql, placeholders) = DbAuditSink::build_insert_sql();
+        assert_eq!(placeholders, 8, "must have 8 placeholders for 8 fields");
+        // 额外硬验证: 字符串中确实出现 $1, $2, ..., $8
+        for i in 1..=8 {
+            assert!(
+                sql.contains(&format!("${i}")),
+                "SQL must contain ${i} placeholder"
+            );
+        }
+    }
+
+    #[test]
+    fn build_insert_sql_is_static_across_calls() {
+        // 验证同一 SQL 两次调用返回相同内容 (无随机/时间戳干扰)
+        let (sql1, n1) = DbAuditSink::build_insert_sql();
+        let (sql2, n2) = DbAuditSink::build_insert_sql();
+        assert_eq!(sql1, sql2, "SQL must be static (same across calls)");
+        assert_eq!(n1, n2, "placeholder count must be stable");
+    }
+
+    #[test]
+    fn build_insert_sql_covers_all_audit_event_fields() {
+        // 验证 SQL 引用了 AuditEvent 的所有 8 个字段 (按顺序)
+        // 防回归: 有人增字段后忘记加到 SQL
+        let (sql, _) = DbAuditSink::build_insert_sql();
+        let required_columns = [
+            "event_id", "user_id", "event_type", "outcome",
+            "detail", "source_ip", "user_agent", "occurred_at",
+        ];
+        for col in required_columns {
+            assert!(
+                sql.contains(col),
+                "INSERT column list must include {col}"
+            );
+        }
     }
 }

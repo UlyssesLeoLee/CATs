@@ -1,0 +1,39 @@
+[package]
+name         = "cats-mock"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+description = "CATs 测试 Mock 项目：HTTP 路由 / DB fixture / 基础设施 / 业务数据 mock 工厂 (per CATs_测试Mock项目设计书_v1.0)"
+readme      = "README.md"
+publish     = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace 公共（per Cargo.toml [workspace.dependencies]）
+cats-common.workspace = true
+tokio.workspace       = true
+actix-web.workspace   = true
+anyhow.workspace      = true
+thiserror.workspace   = true
+tracing.workspace     = true
+tracing-subscriber.workspace = true
+serde.workspace       = true
+serde_json.workspace  = true
+sqlx.workspace        = true
+async-trait.workspace = true
+chrono.workspace      = true
+# cats-mock 独占依赖
+fake.workspace        = true
+rand.workspace        = true
+reqwest.workspace     = true
+pgvector.workspace    = true
+uuid       = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+actix-web = { workspace = true, features = ["macros"] }
+serde_json = "1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

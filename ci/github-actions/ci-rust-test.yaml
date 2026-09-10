@@ -55,11 +55,18 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --locked -- --nocapture
 
-      - name: Coverage (Linux)
+      # 引用: doc/02-基础设计/测试/CATs_测试Mock项目设计书_v1.0.md §5.3
+      # 2026-09-01 改造: 16 service smoke boilerplate 替换为 cats_mock::smoke::name_matches_crate!
+      # 故 smoke.rs 行数从 ~16 → 7, 真实业务测试占比上升, 覆盖率门槛从 M0 的无门槛 → 40% 强制
+      - name: cats-mock self-test (proves macro works for 16 services)
+        run: cargo test -p cats-mock --locked -- --nocapture
+
+      - name: Coverage gate (Linux, fail-under 40%)
         if: matrix.os == 'ubuntu-latest'
         run: |
           cargo install cargo-llvm-cov --quiet || true
           cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+          cargo llvm-cov --workspace --all-features --fail-under-lines 40
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4

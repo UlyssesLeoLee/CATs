@@ -33,6 +33,8 @@ members = [
     # BFF（客户端 → 后端的桥接层）
     "crates/cats-bff",
 "crates/m1-s0-smoke",
+    # 测试基础设施 (per CATs_测试Mock项目设计书_v1.0)
+    "crates/cats-mock",
 ]
 
 # workspace 共享包元信息
@@ -81,6 +83,13 @@ async-trait = "0.1"
 # 共享库（workspace 内部）
 cats-proto  = { path = "crates/proto" }
 cats-common = { path = "crates/common" }
+# cats-mock 测试基础设施用 (per CATs_测试Mock项目设计书_v1.0 §6 依赖矩阵)
+chrono    = { version = "0.4", features = ["serde"] }
+fake      = { version = "2", features = ["derive", "chrono"] }
+rand      = "0.8"
+reqwest   = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+pgvector  = { version = "0.4", features = ["sqlx"] }
+cats-mock = { path = "crates/cats-mock" }
 
 # workspace 共享元数据：编译 profile 与 lint
 [profile.release]

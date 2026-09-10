@@ -26,3 +26,6 @@ sqlx.workspace        = true
 # 跨服务 gRPC 契约（per media.proto）
 cats-proto.workspace = true
 tonic.workspace       = true
+
+[dev-dependencies]
+cats-mock = { workspace = true }

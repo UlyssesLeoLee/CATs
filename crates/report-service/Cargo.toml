@@ -24,3 +24,6 @@ serde.workspace       = true
 serde_json.workspace  = true
 sqlx.workspace        = true
 # 暂未挂接 gRPC 契约（M1 阶段按需引入）
+
+[dev-dependencies]
+cats-mock = { workspace = true }
