@@ -1,0 +1,200 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: file.events
+  namespace: cats-data
+  labels:
+    app: cats-file-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 604800000  # 7 天
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 Kafka Topics (commit 1f3c94d)
+  # 引用: 接口设计书 v2.0+2 §6 端到端示例 步骤 5-6 (file-service Outbox + Debezium CDC → file.events topic)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.events
+  namespace: cats-data
+  labels:
+    app: cats-task-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    retention.ms: 604800000  # 7 天
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 7-8 (task-service Outbox → task.events)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.asr.requested
+  namespace: cats-data
+  labels:
+    app: cats-asr-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 86400000  # 1 天 (短期任务)
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 10-11 (ingestion → task.media.asr.requested → asr-service)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.asr.completed
+  namespace: cats-data
+  labels:
+    app: cats-asr-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 13 (asr → task.media.asr.completed)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.subtitle.requested
+  namespace: cats-data
+  labels:
+    app: cats-subtitle-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 14 (subtitle-service 消费 + 处理)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.subtitle.completed
+  namespace: cats-data
+  labels:
+    app: cats-subtitle-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 17-18 (subtitle 完成 → render 触发)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.render.requested
+  namespace: cats-data
+  labels:
+    app: cats-render-writer-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 18-19 (render-writer 消费 + 处理)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.render.completed
+  namespace: cats-data
+  labels:
+    app: cats-render-writer-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 21-22 (render 完成 → task.completed)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: audit.events
+  namespace: cats-data
+  labels:
+    app: cats-audit-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    retention.ms: 2592000000  # 30 天 (合规要求)
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 错误码表 v1.0 §5.2 (commit 2146f53) + 接口设计书 v2.0+2 §3.5.4 (commit 1f3c94d) + 告警规则 v1.0 §6.4 GAP-OPS-5
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: project.events
+  namespace: cats-data
+  labels:
+    app: cats-project-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 604800000  # 7 天
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 2
+  # 引用: 接口设计书 v2.0+2 §5 (project 事件，翻译核心缓存失效)
