@@ -10,10 +10,10 @@
 |---|---|
 | 文档编号 | CATs-DD-API-002 |
 | 文档名 | 接口设计书（详细设计 / 微服务 REST+gRPC+Kafka 契约） |
-| 版本 | 第 2.1 版 |
-| 创建日 | 2026-08-26 |
+| 版本 | **第 v2.0+2 版**（v2.0 → v2.0+1 §3.5/§6/§7/§8/§9 patch → v2.0+2 §3.5.1 schema 修正 + §8 缺口 3 项补 + OpenAPI v1.0.1 + proto v1.0.1 同步） |
+| 创建日 | 2026-09-11 |
 | 作者 | 架构师 + Rust Lead + DBA（worker 代签 per DEC-008） |
-| 状态 | 评审前草稿 |
+| 状态 | 评审前草稿（v2.0+2 patch 落地，DDD Review 6 角色 7 天内 9/8 截止已逾期 3 天 — 留 Sprint 1 末补评审） |
 | 密级 | 仅社内 |
 | 上游文档 | [CATs 微服务架构设计书 v1.0](../../02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)、[CATs 技术选型书 v2.0](../../02-基础设计/技术选型/CATs_技术选型书_v2.0.md)、[CATs 命名变更说明](../../02-基础设计/架构设计/CATs_命名变更说明.md)、[CATs_技术基线 v1.0](../../02-基础设计/技术选型/CATs_技术基线_v1.0.md)（**§1 PostgreSQL 18.6 + pgvector 0.8.6**）、[OFCAT 接口设计书 v1.0（历史/旧架构参考，格式沿用）](./OFCAT_接口设计书_v1.0.md) |
 
@@ -24,6 +24,8 @@
 | 1.0 | 2026-06-25 | 架构师 | （OFCAT）扩展↔引擎 API-01~10 完整契约、SSE 事件、错误码，见历史文档 |
 | 2.0 | 2026-08-18 | 架构师 | 全面重做：微服务化后 15 个服务的 REST/gRPC/Kafka 完整接口契约，承接《CATs 微服务架构设计书 v1.0》§4、§6、§9 |
 | **2.1** | **2026-08-26** | **架构师 + Rust Lead + DBA** | **基线升级：PostgreSQL 引用统一引用 CATs_技术基线_v1.0 §1（PostgreSQL 18.6 + pgvector 0.8.6）** |
+| **v2.0+1** | **2026-09-01** | **架构师 Lead**（Mavis 接手 agent per DEC-008） | **启动会决议 1 升版 patch**（worktree 落地，9/11 12ffd31 cherry-pick 到 main）：§3.5 错误响应格式（HTTP + gRPC status 映射 + 错误码表 v1.0 §3 引用）+ §6.1 auth-service + §6.2 user-service + §7 接口版本控制 + §8 已知缺口 9 项 + §9 关联文档扩展 |
+| **v2.0+2** | **2026-09-11** | **架构师 Lead**（Mavis 接手 agent per DEC-008） | **决议 1 §8 缺口 8.1/8.5/8.6 补 + 0eb1e9f 草稿 doc drift 修正**（per §10 完整记录） |
 
 ### 审批栏
 
@@ -509,33 +511,36 @@ message TranslatedSegment { string segment_id = 1; string target_text = 2; strin
 
 ### 3.5.1 HTTP REST 错误响应格式
 
-所有 REST 端点 4xx/5xx 响应必须使用统一 `ErrorBody` schema：
+> **v2.0+2 patch 修正**（per 2026-09-11 决议 1 §8 缺口 8.1/8.5/8.6 落地 + Rust impl 对齐）：
+>
+> v2.0+1 草稿（0eb1e9f 9/1）写 5 字段 schema（error + code + message + request_id + details），但与实际 Rust 实现 `crates/auth-service/src/models.rs:42` (3 字段: error + message + detail) 不一致，且与 错误码表 v1.0 §2.1 (3 字段) 不一致。**v2.0+2 修正为 3 字段 schema，跟代码 + 错误码表对齐**。HTTP status code 不在 body（response header 自带），trace_id 不强制进 body（由 OTel propagation 处理）。
+
+所有 REST 端点 4xx/5xx 响应必须使用统一 `ErrorBody` schema（**3 字段版本，per v2.0+2 修正**）：
 
 ```yaml
-# 引用 api/openapi/cats-openapi-v1.yaml（决议 10 升 v1.0.1 对齐错误码表 §3）
+# Single Source of Truth: api/openapi/cats-openapi-v1.0.1.yaml components.schemas.ErrorBody
+# proto: proto/cats/v1/common.proto message ErrorBody
+# Rust impl: crates/auth-service/src/models.rs:42
+# 错误码表: doc/05-其他/管理/CATs_错误码表_v1.0.md §2.1
 ErrorBody:
   type: object
-  required: [error, code, message]
+  required: [error, message]
   properties:
     error:
-      type: string
-      enum: [参见错误码表 v1.0 §3 全部 28 条枚举]
-      description: 业务错误码（per 错误码表 v1.0 §3）
-    code:
-      type: integer
-      description: HTTP 状态码（400/401/403/404/409/422/429/500/503）
+      $ref: '#/components/schemas/ErrorCode'  # 28 条 snake_case 枚举 per 错误码表 §3
     message:
       type: string
-      description: 人类可读错误信息（i18n key，非本地化文本）
-    request_id:
+      description: 人类可读错误描述（i18n 前缀，默认 en-US，per 错误码表 §2.1）
+    detail:
       type: string
-      format: uuid
-      description: 请求追踪 ID（per OTel trace context）
-    details:
-      type: object
-      additionalProperties: true
-      description: 错误详情（如 validation 错误字段 / 速率限制剩余 / 文档引用）
+      nullable: true
+      description: 可选上下文（不暴露 secret / PII，per 错误码表 §2.1）
 ```
+
+**v2.0+1 草稿 5 字段 schema 标记为已废止**：v2.0+2 升版起，5 字段 (error + code + message + request_id + details) 不再使用，统一为 3 字段。v2.0+1 草稿保留供 DDD Review 阶段做 git history 引用 (per 守门 #1 禁回溯叙事)。
+
+**OpenAPI 同步**：v1.0.1 加 `components.schemas.ErrorBody` (3 字段) + `components.schemas.ErrorCode` (28 条枚举)，文件路径 `api/openapi/cats-openapi-v1.0.1.yaml`。
+**proto 同步**：`proto/cats/v1/common.proto` 加 `message ErrorBody` (3 字段) + `enum ErrorCode` (28 条枚举)。
 
 ### 3.5.2 gRPC Status Code 映射
 
@@ -558,46 +563,81 @@ gRPC 状态码与 HTTP 状态码 + 业务错误码的映射（per 决议 1 + 决
 
 ### 3.5.3 错误响应示例
 
+> **v2.0+2 patch 修正**：示例改用 3 字段 schema (per Rust impl + 错误码表 §2.1 对齐)。HTTP 401 / 403 / 500 等 3 个典型场景。
+
 ```json
-// HTTP 401
+// HTTP 401 token_expired
 {
-  "error": "AUTH_TOKEN_EXPIRED",
-  "code": 401,
+  "error": "token_expired",
   "message": "auth.error.token_expired",
-  "request_id": "7f8a9b0c-1d2e-3f4g-5h6i-7j8k9l0m1n2o",
-  "details": {
-    "expired_at": "2026-09-01T18:00:00Z",
-    "refresh_url": "/v1/auth/refresh"
-  }
+  "detail": "expired at 2026-09-11T18:00:00Z, use /v1/auth/refresh to renew"
 }
 ```
 
 ```json
-// gRPC PERMISSION_DENIED
+// HTTP 401 invalid_credentials
 {
-  "code": "PERMISSION_DENIED",
+  "error": "invalid_credentials",
+  "message": "auth.error.invalid_credentials",
+  "detail": "user: alice, attempts: 3"
+}
+```
+
+```json
+// HTTP 500 server_error
+{
+  "error": "server_error",
+  "message": "auth.error.server_error",
+  "detail": "db_err: connection timeout"
+}
+```
+
+```protobuf
+// gRPC 错误响应 (per proto/cats/v1/common.proto ErrorCode enum + §3.5.2 映射表)
+// tonic 0.12 actix-web → tonic 0.12 status code 行为由 Rust Lead 共同验证 (per §8.4 缺口)
+{
+  "code": "PERMISSION_DENIED",  // gRPC status code
   "message": "auth.error.rbac_denied",
   "details": {
-    "error": "RBAC_ROLE_INSUFFICIENT",
+    "error": "operation_not_permitted",  // 业务错误码 (per §3 ErrorCode enum)
     "required_role": "admin",
     "actual_role": "user",
-    "resource": "/v1/users/{id}",
-    "request_id": "..."
+    "resource": "/v1/users/{id}"
   }
 }
 ```
 
 ### 3.5.4 错误码表 v1.0 反向引用
 
-- **§3 错误码分类 28 条**：本节 §3.5.1 `ErrorBody.error` enum 必须枚举全部 28 条
-- **§4 auth-service 端点矩阵**：见 §6.1 auth-service 详细 schema（本节下方）
-- **§5 审计事件类型映射**：所有 4xx/5xx 必须产生 `audit.event` Kafka topic（per 错误码表 v1.0 §5.2 + 决议 10 K3s 阶段二）
+> **v2.0+2 patch 强化**：从 v2.0+1 "占位引用" 升级为 v2.0+2 "实证反向引用" — 28 条枚举已落地到 `api/openapi/cats-openapi-v1.0.1.yaml` (lines 207-241) + `proto/cats/v1/common.proto` (lines 26-83 ErrorCode enum)。
+
+- **§3 错误码分类 27 条 unique (per v2.0+2 实际枚举)**：本节 §3.5.1 `ErrorBody.error` enum 已枚举全部 28 条 (含 1 重复 `user_inactive` 在 §3.3 + §3.7)，落地于 OpenAPI v1.0.1 `components.schemas.ErrorCode.enum` + proto `enum ErrorCode`。原始 28 条 per 错误码表 v1.0 §3 (commit `2146f53`)
+- **§4 auth-service 端点矩阵**：见 §6.1 auth-service 详细 schema（本节下方）。OpenAPI v1.0.1 已加 `/auth/login`、`/auth/refresh`、`/auth/logout`、`/auth/me` 4 端点的 4xx/5xx 响应 schema 引用 `$ref '#/components/schemas/ErrorBody'`
+- **§5 审计事件类型映射**：所有 4xx/5xx 必须产生 `audit.event` Kafka topic（per 错误码表 v1.0 §5.2 + 决议 10 K3s 阶段二）。当前 Sprint 1 用 `DbAuditSink` 兜底（per commit `2146f53`），Kafka topic 物理发布留 K3s 阶段二
+- **错误码表 v1.0 升版预期**：v1.0 → v1.1 升版触发条件 per 错误码表 §8.1 (新增业务端点 / 新增微服务 / HTTP/gRPC code 映射变更 / 业务规则变更)，DDD Review 阶段由 Mavis 补跑 `git log -1 --format='%H %s' -- <path>` 实证 commit hash (per 错误码表 §0.2 已知缺口)
 
 ### 3.5.5 不在 §3.5 范围
 
 - 业务成功响应 schema（200/201/204）：见各服务 §3.x / §4.x 章节
 - 异步事件错误处理：见 §5 Kafka Topics + 错误码表 v1.0 §5.2
 - 客户端 SDK 错误处理：见 §4 接口规范（决议 1 实施范围）
+
+### 3.5.6 §3.5 跟 §1.3 关系（v2.0+2 patch 补充）
+
+> **历史背景**：§1.3 (v2.0 大版本基线 8/18 8aed5d0) 设计了**嵌套 4 字段**错误信封 `error: { code, message, trace_id, details }` 作为"通用高层信封"；§3.5 (Sprint 1 落地) 设计了**扁平 3 字段** schema (per 错误码表 v1.0 §2.1 + Rust impl)。两 schema 在字段名 + 嵌套层级上有差异，**这是 v2.0 大版本基线设计意图 vs Sprint 1 实施落地的演进结果**，不是冲突。
+
+| 维度 | §1.3 通用高层信封 (v2.0 大版本基线) | §3.5 Sprint 1 落地 schema (v2.0+2 patch) |
+|------|----------------------------------|--------------------------------------|
+| **字段数** | 4 (嵌套) | 3 (扁平) |
+| **错误码** | `error.code` (SCREAMING_SNAKE_CASE, 11 大类 per §1.4) | `error` (snake_case, 28 条业务子类 per 错误码表 §3) |
+| **消息** | `error.message` | `message` |
+| **追踪** | `error.trace_id` | (走 OTel propagation, 不强制进 body) |
+| **详情** | `error.details` (object) | `detail` (string, 单值) |
+| **HTTP status** | (在 response header) | (在 response header) |
+| **落地** | 设计意图 | Rust impl `crates/auth-service/src/models.rs:42` + 错误码表 v1.0 §2.1 + OpenAPI v1.0.1 + proto v1.0.1 |
+| **关系** | 高层"信封外壳" 概念 | 具体 业务错误 落地 |
+
+**结论**：v2.0+2 升版以 §3.5 3 字段 schema 为 Single Source of Truth，§1.3 嵌套信封作为"通用约定"在 §1.3 单独保留 (per 守门 #1 禁回溯叙事 — 不重写 §1.3)。后续 Sprint 1 末升 v2.1+1 时，**§1.3 应整体改为 3 字段 schema**（跟 §3.5 统一），但这是 Sprint 1 末补评审范围。
 
 ---
 
@@ -1133,7 +1173,11 @@ CREATE INDEX idx_users_role ON users(role);
 
 - v1.0+1 §6.11 + 决议 10 显式要求 `api/openapi/cats-openapi-v1.yaml` ErrorBody.error 枚举对齐错误码表 v1.0 §3 全部 28 条
 - 本文档 §3.5 仅定义 schema 结构 + 引用错误码表，**实际 enum diff 校验在决议 10 T-07 实施时做（9/27 截止）**
-- **当前状态**：v2.0 文档基线化 v0.1 草案；enum 实际对齐待 T-07
+- **v2.0+2 patch 状态**（2026-09-11 09:30 JST）：**已落地** ✅
+  - `api/openapi/cats-openapi-v1.0.1.yaml` 加 `components.schemas.ErrorCode` enum 28 条（line 207-241）
+  - `proto/cats/v1/common.proto` 加 `enum ErrorCode` 28 条 (line 26-83)
+  - §3.5.1 schema 修正为 3 字段（per Rust impl + 错误码表 §2.1）
+  - 决议 10 错误码引用闭环前置工作完成（OpenAPI + proto 同步落地），留 9/27 完整 T-07 实施
 
 ### 8.2 user-service 详细 schema 仅 Sprint 1 范围
 
@@ -1145,40 +1189,48 @@ CREATE INDEX idx_users_role ON users(role);
 
 - §6.1.4 错误码表引用 per 错误码表 v1.0 §4 端点矩阵
 - 错误码表 v1.0 本身（commit `2146f53`）已 5/5 判据全绿，但 §6.1 端点 ↔ 错误码映射需 DDD Review 6 角色（per 决议 1 9/6 截止前）
-- **当前状态**：v2.0 文档结构升版；映射实际验证待 DDD Review
+- **当前状态**：v2.0 文档结构升版；映射实际验证待 DDD Review（**DDD Review 6 角色 7 天内 9/8 截止已逾期 3 天** — 留 Sprint 1 末补评审）
 
 ### 8.4 gRPC status code 映射待 Rust Lead 共同责任确认
 
 - §3.5.2 映射表由架构师 Lead 起草，Rust Lead 共同责任（per 决议 1）
 - Rust Lead 需从实现角度验证（actix-web → tonic 0.12 实际 status code 行为）
-- **当前状态**：v2.0 文档结构升版；Rust Lead 验证待 9/6 DDD Review
+- **当前状态**：v2.0 文档结构升版；Rust Lead 验证待 9/6 DDD Review（**已逾期 5 天** — 留 Sprint 1 末补评审）
 
 ### 8.5 §3.5 错误响应 schema 与 OpenAPI v1 文件同步未完成
 
 - §3.5 YAML schema 是本文档内 draft
 - `api/openapi/cats-openapi-v1.yaml` 实际文件 ErrorBody schema 仍为 v1.0 旧版（不含错误码表 §3 enum 引用）
 - 决议 10 明确 OpenAPI v1.0.1 升级 9/27 截止
-- **当前状态**：本文档 v2.0 升版；OpenAPI 文件 v1.0.1 升级待 T-07 决议 10 实施
+- **v2.0+2 patch 状态**（2026-09-11 09:30 JST）：**已落地** ✅
+  - 新增 `api/openapi/cats-openapi-v1.0.1.yaml` (升 1.0.0 → 1.0.1)
+  - 加 `components.schemas.ErrorBody` (3 字段, per Rust impl)
+  - 加 `components.schemas.ErrorCode` (28 条 snake_case 枚举, per 错误码表 §3)
+  - 加 `components.responses` (BadRequest / Unauthorized / NotFound / Conflict / RateLimited / InternalError, 6 复用响应)
+  - 决议 10 9/27 截止前 1 个工作日已落地（v2.0+2 提前 16 天）
 
 ### 8.6 §3.5 错误响应 schema 与 proto v1 文件同步未完成
 
 - §3.5.2 gRPC status 映射是本文档内 draft
 - `proto/cats/v1/*.proto` 实际文件 status code 注释仍为 v1 旧版
 - 决议 10 明确 proto v1.0.1 升级 9/27 截止
-- **当前状态**：本文档 v2.0 升版；proto 文件 v1.0.1 升级待 T-07 决议 10 实施
+- **v2.0+2 patch 状态**（2026-09-11 09:30 JST）：**已落地** ✅
+  - `proto/cats/v1/common.proto` 加 `message ErrorBody` (3 字段, per Rust impl)
+  - 加 `enum ErrorCode` (28 条 snake_case 枚举, per 错误码表 §3)
+  - 决议 10 9/27 截止前 1 个工作日已落地
 
 ### 8.7 alertmanager rules 草稿未在本章
 
 - 错误码表 v1.0 §6.4 要求 alertmanager rules 按 error 字段聚合
 - 决议 10 明确 `doc/05-其他/可观测性/CATs_告警规则_v1.0.md` 草稿 9/27 截止
 - 本章 v2.0 范围不含可观测性配置
-- **当前状态**：决议 10 同步入 T-07；本文档 v2.0 范围限定接口设计
+- **当前状态**：决议 10 同步入 T-07；本文档 v2.0 范围限定接口设计（**9/27 截止** — 留 T-07 实施）
 
 ### 8.8 §7 版本控制策略待 CAB 决议
 
 - §7.2 弃用流程需 CAB 决议（per Baseline 一览 §7 CAB 决议记录）
 - 一人公司 = Ulysses 兼任 CAB 召集人，决议流程不阻塞
-- **当前状态**：v2.0 文档结构升版；CAB 决议留 Sprint 1 末 v0.2 调整
+- **当前状态**：v2.0 文档结构升版；CAB 决议留 Sprint 1 末 v0.2 调整（**Sprint 1 末 ~9/27 截止**）
 
 ### 8.9 §6.1/§6.2 端点 Sprint 1 完成判据复核
 
@@ -1194,13 +1246,16 @@ CREATE INDEX idx_users_role ON users(role);
 |------|------|------|
 | 启动会决议纪要 v1.0 | `doc/05-其他/会议记录/CATs_M1_Sprint1_启动会决议纪要_v1.0.md` | 决议 1 通过方案 A + 决议 7 user-service schema 纳入 + 决议 10 错误码引用闭环 |
 | Sprint 1 任务拆解 v1.0+2 | `doc/05-其他/管理/CATs_M1_Sprint1_任务拆解_v1.0.md` | §6.1/§6.9 已知缺口闭环 + §0.1 引用清单 |
-| 错误码表 v1.0 | `doc/05-其他/管理/CATs_错误码表_v1.0.md` | §3 错误码分类 28 条 / §4 auth-service 端点矩阵 / §5 审计事件类型映射 |
+| 错误码表 v1.0 | `doc/05-其他/管理/CATs_错误码表_v1.0.md` | §3 错误码分类 28 条 / §4 auth-service 端点矩阵 / §5 审计事件类型映射（v2.0+2 ErrorBody schema + ErrorCode enum 引用源） |
 | 微服务架构设计书 v1.0 | `doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md` | §4.1 核心 8 MVP 服务 / §4.2 异步事件 |
 | 数据库设计书 v2.0 | `doc/03-详细设计/数据库设计/CATs_数据库设计书_v2.0.md` | §4 auth_db / user_db schema |
 | 模块设计书 v2.0（决议 2）| `doc/03-详细设计/模块设计/CATs_模块设计书_v2.0.md` | §4 错误码引用终端 |
 | Baseline 一览 v1.0 | `doc/05-其他/管理/CATs_Baseline一览_v1.0.md` | §5.1 接口契约基线 / §6 待基线化 |
 | 工作流文档 v1.0 | `doc/05-其他/CATs_工作流文档_v1.0.md` | 150 任务 ID 映射 |
 | 安全要件定义书 v1.0 | `doc/05-其他/安全/CATs_安全要件定义书_v1.0.md` | §3 认证（JWT + argon2id）|
+| **OpenAPI v1.0.1**（v2.0+2 新增）| `api/openapi/cats-openapi-v1.0.1.yaml` | §3.5 ErrorBody 3 字段 schema + §3.5 ErrorCode 28 条 enum (per §8.5 决议 10 同步落地) |
+| **OpenAPI v1.0.0**（基线）| `api/openapi/cats-openapi-v1.yaml` | Sprint 1 初版 3 端点 (auth/login + projects + tasks), 0 ErrorBody schema |
+| **proto v1.0.1**（v2.0+2 新增）| `proto/cats/v1/common.proto` | message ErrorBody 3 字段 + enum ErrorCode 28 条 (per §8.6 决议 10 同步落地) |
 
 ---
 
@@ -1210,9 +1265,10 @@ CREATE INDEX idx_users_role ON users(role);
 |------|------|--------|----------|
 | **v1.0** | **2026-07-15** | **架构师** | **初版（OFCAT 时代）**：15 服务全部端点 + 媒体处理 §4 + gRPC §5 + 端到端示例 §6 |
 | **v2.0** | **2026-08-10** | **架构师** | **微服务化适配**：CATs 15 服务 baseline + 8 库 + Outbox + 5/7/9/12/17/21 Debezium 链路 |
-| **v2.0+1** | **2026-09-01** | **架构师 Lead**（Mavis 接手 agent per DEC-008） | **启动会决议 1 升版 patch**：§3.5 错误响应格式（HTTP + gRPC status 映射 + 错误码表 v1.0 §3 引用）+ §6.1 auth-service 详细 schema（端点 + Request/Response + proto + 错误码映射 + 审计事件）+ §6.2 user-service 详细 schema（端点 + Request/Response + proto + 错误码映射 + DB schema + Sprint 1 范围）+ §7 接口版本控制（策略 + 弃用流程 + 当前状态）+ §8 已知缺口（9 项）+ §9 关联文档扩展 |
+| **v2.0+1** | **2026-09-01** | **架构师 Lead**（Mavis 接手 agent per DEC-008） | **启动会决议 1 升版 patch**（worktree feat/auto-20260901-398b0723 落地，9/11 12ffd31 cherry-pick 到 main）：§3.5 错误响应格式（HTTP + gRPC status 映射 + 错误码表 v1.0 §3 引用）+ §6.1 auth-service 详细 schema（端点 + Request/Response + proto + 错误码映射 + 审计事件）+ §6.2 user-service 详细 schema（端点 + Request/Response + proto + 错误码映射 + DB schema + Sprint 1 范围）+ §7 接口版本控制（策略 + 弃用流程 + 当前状态）+ §8 已知缺口（9 项）+ §9 关联文档扩展 |
+| **v2.0+2** | **2026-09-11** | **架构师 Lead**（Mavis 接手 agent per DEC-008） | **决议 1 §8 缺口 8.1/8.5/8.6 补 + 0eb1e9f 草稿 doc drift 修正**：(1) §3.5.1 5 字段 → 3 字段 schema（per Rust impl `crates/auth-service/src/models.rs:42` + 错误码表 v1.0 §2.1）(2) §3.5.3 错误响应示例 3 个 (HTTP 401 token_expired + 401 invalid_credentials + 500 server_error) + 1 个 gRPC 映射 (3) §3.5.4 强化反向引用 28 条 (4) §3.5.6 新增 §3.5 跟 §1.3 关系说明 (5) §8.1/8.5/8.6 标已落地 (6) 新增 `api/openapi/cats-openapi-v1.0.1.yaml` (升 1.0.0 → 1.0.1, 加 components.schemas.ErrorBody 3 字段 + ErrorCode 28 条 enum + 6 复用 responses) (7) `proto/cats/v1/common.proto` 加 message ErrorBody 3 字段 + enum ErrorCode 28 条 (8) §9 加 OpenAPI v1.0.1 + proto v1.0.1 关联 (9) header v2.1 → v2.0+2 (10) 0 改 §3.5.2 gRPC status 映射 (per §8.4 仍待 Rust Lead 验证) (11) 0 改 §6.1/§6.2 (per §8.9 仍待 Sprint 1 末复核) (12) 0 改 §1.3 嵌套信封 (per守门 #1 禁回溯叙事 + §3.5.6 关系说明已加) |
 
 ---
 
-**文档结束（v2.0+1，启动会决议 1+7 落地，§3.5/§6.1/§6.2/§7 已升版；DDD Review 6 角色 7 天内 2026-09-08 截止；决议 10 错误码引用闭环留 T-07 9/27 同步实施）**
+**文档结束（v2.0+2，启动会决议 1+7 落地，§3.5/§6.1/§6.2/§7 已升版，§3.5.1 schema 修正 + §8 缺口 8.1/8.5/8.6 补 + OpenAPI v1.0.1 + proto v1.0.1 同步落地；DDD Review 6 角色 7 天内 9/8 截止已逾期 3 天 — 留 Sprint 1 末补评审；决议 10 错误码引用闭环 8.1/8.5/8.6 前置工作完成，留 T-07 9/27 完整实施含 §8.7 alertmanager + §8.4 Rust Lead 验证）**
 
