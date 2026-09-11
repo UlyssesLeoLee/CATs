@@ -33,6 +33,7 @@ members = [
     # BFF（客户端 → 后端的桥接层）
     "crates/cats-bff",
 "crates/m1-s0-smoke",
+    "crates/cats-rbac",
     # 测试基础设施 (per CATs_测试Mock项目设计书_v1.0)
     "crates/cats-mock",
 ]
