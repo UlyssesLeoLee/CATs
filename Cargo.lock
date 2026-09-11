@@ -644,6 +644,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cats-rbac"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cats-common",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cc"
 version = "1.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
