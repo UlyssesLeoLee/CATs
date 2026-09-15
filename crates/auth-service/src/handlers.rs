@@ -48,10 +48,27 @@ impl AppState {
 
 /// 同步构造 audit 事件并 emit (失败仅 log, 不阻塞主流程)
 ///
-/// 选择 await 而非 spawn 的理由:
+/// # 强制约束 (INVIOLABLE — per ULYS-46 / Multica 2026-09-15)
+///
+/// **禁止**把 `state.audit.emit(&event).await` 替换为 `tokio::spawn(...)` 或
+/// `actix_rt::spawn(...)` 形式。理由:
+///
 /// - audit sink 都是本地操作 (DB ~ms / InMemory 立即), 不会显著增加响应时延
-/// - 同步保证 e2e 立即可见 (避免 actix_rt::spawn 在 init_service 中不被驱动)
-/// - 生产 audit 失败要 log 但不能影响主流程 → 已 try log
+/// - `actix_test::init_service` **不驱动**后台 spawn 任务, 因此 e2e 测试里
+///   改回 spawn 会让 `audit_log` 写入被 silently 跳过 → 假阳性 PASS
+/// - `actix_rt::spawn` 在 actix-web 4 + tokio 1.x 下, init_service 上下文同样
+///   不驱动 spawn future (T-01 历史评估结论, 见 commit log)
+/// - 生产 audit 失败要 log 但不能影响主流程 → 已 try log (`emit().await` 内
+///   `if let Err` 分支)
+///
+/// 未来若必须异步化 (e.g. 拆 audit 到独立微服务 → 网络调用), 必须同时:
+///   1. 改用确定性等待 (JoinHandle::await / oneshot / channel 完成信号)
+///   2. 把 e2e 测试改为 `await` 该完成信号, 而**不是**轮询 DB
+///   3. 引入新的 `actix_web::test` 配置驱动 spawn future, 或迁移到
+///      `TestServer::start()` 真实绑定端口模式
+///
+/// **当前代码** (`if let Err(err) = state.audit.emit(&event).await` 见下)
+/// 是经评审的设计决策, 任何回退都必须以 ADR 形式书面记录, 不得 in-line 修改。
 async fn build_audit(
     state: &AppState,
     user_id: Option<Uuid>,

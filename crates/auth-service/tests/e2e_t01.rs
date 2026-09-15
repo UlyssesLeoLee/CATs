@@ -391,16 +391,13 @@ async fn e2e_t01_audit_log_persisted_to_db() {
         .to_request();
     actix_test::call_service(&app, login_req).await;
 
-    // 等 tokio::spawn 完成 (best-effort, sleep 100ms)
-    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-
-    // 查 audit_log
+    // 直接查 audit_log (per ULYS-46: build_audit 用 await 同步落 DB, 无需轮询)
     let events = db::recent_audit_events(&pool, "login", 5)
         .await
         .expect("recent_audit_events failed");
     assert!(
         !events.is_empty(),
-        "login audit event should be persisted to audit_log"
+        "login audit event should be persisted to audit_log (build_audit is sync await)"
     );
     let last = &events[0];
     assert_eq!(last.event_type, "login");
@@ -426,20 +423,13 @@ async fn e2e_t01_audit_log_captures_login_failure() {
     let resp = actix_test::call_service(&app, login_req).await;
     assert_eq!(resp.status().as_u16(), 401);
 
-    // 重试循环: 等 actix_rt::spawn 落 DB, 最长 5s
-    let mut events: Vec<auth_service::models::AuditEventRow> = Vec::new();
-    for _ in 0..50 {
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        events = db::recent_audit_events(&pool, "login_failed", 5)
-            .await
-            .expect("recent_audit_events failed");
-        if !events.is_empty() {
-            break;
-        }
-    }
+    // 直接查 audit_log (per ULYS-46: build_audit 用 await 同步落 DB, 无需轮询)
+    let events = db::recent_audit_events(&pool, "login_failed", 5)
+        .await
+        .expect("recent_audit_events failed");
     assert!(
         !events.is_empty(),
-        "login_failed audit event should be persisted (waited 5s)"
+        "login_failed audit event should be persisted (build_audit is sync await)"
     );
     let last = &events[0];
     assert_eq!(last.event_type, "login_failed");
@@ -477,29 +467,104 @@ async fn e2e_t01_audit_log_captures_refresh_rotation() {
         .to_request();
     actix_test::call_service(&app, refresh_req).await;
 
-    // 重试循环: 等 actix_rt::spawn 落 DB
-    let mut refresh_events: Vec<auth_service::models::AuditEventRow> = Vec::new();
-    let mut revoked_events: Vec<auth_service::models::AuditEventRow> = Vec::new();
-    for _ in 0..50 {
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        refresh_events = db::recent_audit_events(&pool, "refresh", 5)
-            .await
-            .expect("recent refresh query");
-        revoked_events = db::recent_audit_events(&pool, "refresh_revoked", 5)
-            .await
-            .expect("recent refresh_revoked query");
-        if !refresh_events.is_empty() && !revoked_events.is_empty() {
-            break;
-        }
-    }
+    // 直接查 audit_log (per ULYS-46: build_audit 用 await 同步落 DB, 无需轮询)
+    let refresh_events = db::recent_audit_events(&pool, "refresh", 5)
+        .await
+        .expect("recent refresh query");
+    let revoked_events = db::recent_audit_events(&pool, "refresh_revoked", 5)
+        .await
+        .expect("recent refresh_revoked query");
     assert!(
         !refresh_events.is_empty(),
-        "refresh event should be logged (waited 5s)"
+        "refresh event should be logged (build_audit is sync await)"
     );
     assert!(
         !revoked_events.is_empty(),
-        "refresh_revoked event should be logged (waited 5s)"
+        "refresh_revoked event should be logged (build_audit is sync await)"
     );
 
     cleanup_test_user(&pool, &username).await;
+}
+
+// =============================================================
+// 回归测试 (per ULYS-46 验收标准 #3)
+// 防止 build_audit 被改回 spawn, 让假阳性 PASS 悄悄回归
+// =============================================================
+
+/// build_audit 源码内禁止出现 `tokio::spawn` / `actix_rt::spawn`
+///
+/// 通过 `include_str!` 静态读取 `src/handlers.rs`, 在 build-time 内联为字面量
+/// `&'static str`, 运行期做关键字检查。如有人把 `state.audit.emit(...).await`
+/// 改成 `tokio::spawn(...)` / `actix_rt::spawn(...)`, 本测试**确定性**失败,
+/// 提示该 PR 必须配套提供 ADR + 替换 e2e 等待模型。
+///
+/// 注意:
+/// - 只检查 `build_audit` 函数体内是否含 `spawn` 关键字, 不检查 import 块
+///   (auth-service 已在 [dev-dependencies] 引入 actix-rt, 不需要再次检测)
+/// - 误报防护: 只对 `build_audit` 函数切片做 substring 检测, 不会误报模块
+///   其它位置的 spawn 调用 (目前没有, 未来如有需手工维护白名单)
+#[test]
+fn e2e_t01_build_audit_must_not_use_spawn() {
+    // 静态内联 handlers.rs 源码
+    const HANDLERS_SRC: &str = include_str!("../src/handlers.rs");
+
+    // 切片: 提取 `async fn build_audit(` 之后到下一个 `\n}` 结束的函数体
+    // (build_audit 是 `async fn ... -> AuditEvent { ... }`, 闭合是顶层 `}`)
+    let fn_start = HANDLERS_SRC
+        .find("async fn build_audit(")
+        .expect("build_audit fn not found in handlers.rs (renamed?)");
+
+    // 从 fn 头向后找与 `async fn` 同缩进的 `}` 作为函数体结束
+    // build_audit 在源码中是 4 空格缩进的 fn, 函数体缩进 4 空格
+    // 我们用更简单的策略: 找 `async fn build_audit(` 之后到下一个裸 `}` 即可
+    // (build_audit 函数体里没有内嵌顶层 `}` 结构体, 所以这个简化是安全的)
+    let after_start = &HANDLERS_SRC[fn_start..];
+    let body_end_rel = after_start
+        .find("\n}")
+        .expect("build_audit body terminator not found");
+    let body = &after_start[..body_end_rel + 2];
+
+    // 显式 deny 列表
+    let forbidden = [
+        "tokio::spawn",
+        "actix_rt::spawn",
+        // 注意: `spawn_local` / `spawn_blocking` 同样会让 init_service
+        // 不驱动, 故一并列入禁止; 如确需使用须配 ADR
+        "tokio::task::spawn_local",
+        "tokio::task::spawn_blocking",
+    ];
+
+    for token in forbidden {
+        assert!(
+            !body.contains(token),
+            "build_audit body must NOT contain `{token}`. \
+             改回 spawn 会让 actix_test::init_service 不驱动 audit 写入, \
+             e2e 测试将假阳性 PASS (per ULYS-46 / INVIOLABLE 约束). \
+             若确需异步化, 必须先写 ADR + 替换等待模型 (JoinHandle / channel)."
+        );
+    }
+}
+
+/// 额外保险: 确认 build_audit 体内仍然调用 `.await` (同步路径核心保证)
+///
+/// 与上一条互为正向/反向断言: 上一条确保无 spawn, 本条确保仍 `await`.
+/// 如有人重构把整个 emit 包到 `async { ... }` 但忘了 `.await`, 上一条仍
+/// 通过, 本条会失败。
+#[test]
+fn e2e_t01_build_audit_still_awaits_emit() {
+    const HANDLERS_SRC: &str = include_str!("../src/handlers.rs");
+    let fn_start = HANDLERS_SRC
+        .find("async fn build_audit(")
+        .expect("build_audit fn not found");
+    let after_start = &HANDLERS_SRC[fn_start..];
+    let body_end_rel = after_start
+        .find("\n}")
+        .expect("build_audit body terminator not found");
+    let body = &after_start[..body_end_rel + 2];
+
+    assert!(
+        body.contains(".emit(") && body.contains(".await"),
+        "build_audit must call state.audit.emit(...).await synchronously \
+         (per ULYS-46 INVIOLABLE 约束)"
+    );
 }
