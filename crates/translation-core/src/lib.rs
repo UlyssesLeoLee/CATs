@@ -1,25 +1,27 @@
-//! `translation-core` — 翻译核心编排服务
+//! `translation-core` 业务模块导出
 //!
-//! 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §4.1
-//! 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
+//! gRPC 服务: cats.v1.TranslationCoreService (per proto/cats/v1/translation_core.proto)
+//! - MatchTM
+//! - TranslateSegment
+//! - RunQA
+//! - BatchTranslate
 //!
-//! M0 阶段：仅暴露 `version()` / `name()`。业务实现 M1 阶段落地。
+//! 数据层: project_db (TM + glossary + pgvector)
+//! AI 网关: 通过 trait `AiGateway` 注入 (MVP 阶段 = mock 实现, 留 Sprint 3 接 cats-ai-gateway)
+
+pub mod ai_gateway;
+pub mod db;
+pub mod glossary;
+pub mod qa;
+pub mod service;
+pub mod tm;
+
+pub use service::TranslationCoreServiceImpl;
 
 /// 当前 crate 语义版本
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 /// 当前 crate 名称
 pub const NAME: &str = env!("CARGO_PKG_NAME");
-
-/// 返回 crate 版本字符串
-pub fn version() -> &'static str {
-    VERSION
-}
-
-/// 返回 crate 名称
-pub fn name() -> &'static str {
-    NAME
-}
 
 #[cfg(test)]
 mod tests {
@@ -27,15 +29,12 @@ mod tests {
 
     #[test]
     fn version_is_semver_like() {
-        let v = version();
-        assert!(
-            v.starts_with("0.1."),
-            "version should start with '0.1.', got {v}"
-        );
+        let v = VERSION;
+        assert!(v.starts_with("0.1."), "version should start with '0.1.', got {v}");
     }
 
     #[test]
     fn name_is_crate_name() {
-        assert_eq!(name(), "translation-core");
+        assert_eq!(NAME, "translation-core");
     }
 }

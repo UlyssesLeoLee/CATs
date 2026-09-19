@@ -1,51 +1,29 @@
 //! `translation-core` 入口
 //!
-//! M0 阶段：actix-web 4 健康检查占位，端口与绑定地址走环境变量。
-//! 业务 endpoint 在 M1 阶段按微服务架构书 §4.1 + OpenAPI v1 落地。
+//! 启动 tonic gRPC server, 监听 GRPC_BIND_ADDR (默认 0.0.0.0:50051)
 
-use actix_web::{web, App, HttpResponse, HttpServer};
-use cats_common::AppMeta;
-use serde::Serialize;
+use cats_common::init_tracing;
+use cats_proto::cats::v1::translation_core_service_server::TranslationCoreServiceServer;
 use std::env;
+use tonic::transport::Server;
 use tracing::info;
+use translation_core::TranslationCoreServiceImpl;
 
-/// 业务配置（M0 占位：从 env 读取；M1 替换为结构化 config）
-#[derive(Debug, Clone)]
-struct Config {
-    bind_addr: String,
-}
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_tracing();
 
-impl Config {
-    fn from_env() -> Self {
-        Self {
-            bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8090".to_string()),
-        }
-    }
-}
+    let grpc_addr = env::var("GRPC_BIND_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
+        .parse()?;
+    let service = TranslationCoreServiceImpl::default();
 
-/// 健康检查响应
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    app: AppMeta,
-}
+    info!(grpc_addr = %grpc_addr, "starting translation-core gRPC server");
 
-/// `GET /healthz` — 存活探针 + 启动探针复用
-async fn healthz() -> HttpResponse {
-    HttpResponse::Ok().json(HealthResponse {
-        status: "ok",
-        app: AppMeta::current(),
-    })
-}
+    Server::builder()
+        .add_service(TranslationCoreServiceServer::new(service))
+        .serve(grpc_addr)
+        .await?;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    cats_common::init_tracing();
-    let cfg = Config::from_env();
-    info!(bind_addr = %cfg.bind_addr, "starting translation-core");
-
-    HttpServer::new(|| App::new().route("/healthz", web::get().to(healthz)))
-        .bind(&cfg.bind_addr)?
-        .run()
-        .await
+    Ok(())
 }

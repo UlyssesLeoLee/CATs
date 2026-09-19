@@ -1,83 +1,56 @@
 # translation-core
 
-> CATs 翻译核心编排服务
+> CATs 翻译核心 (gRPC server + TM/术语/QA + AI 网关抽象, per `cats.v1.TranslationCoreService` proto)
 
-| 项目 | 内容 |
-|---|---|
-| Crate 名 | `translation-core` |
-| 阶段 | MVP |
-| 默认端口 | 8090（由 env `BIND_ADDR` 覆盖） |
-| 数据边界 | `复用 project_db 内 TM/术语表` |
-| 镜像 | `harbor.cats.internal/cats/translation-core:0.1.0` |
+## 角色
 
-## 概述
+- **MatchTM**: 100% 精确 + 模糊 (pgvector 余弦) 命中
+- **TranslateSegment**: TM 命中优先 → 否则 AI 网关
+- **RunQA**: 术语强制 + 占位符/标签保护
+- **BatchTranslate**: 串行 batch
 
-编排翻译管道：TM 匹配→术语匹配注入→标签保护→模型翻译→术语校验→QA
+## 数据层
 
-引用：[CATs_微服务架构设计书_v1.0 §4.1](../../doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)（16 服务清单）
+- `project_db.translation_memory` (per DB 设计 v2.0 §4.3) — pgvector 0.8.6 嵌入列
+- `project_db.glossary_terms` — 术语表
+- **MVP 状态**: stub 模式, `match_tm` 直接 mock; Sprint 末接真实 DB
 
-## API 端点（M0 占位）
+## AI 网关抽象
 
-| Method | Path | 说明 |
-|---|---|---|
-| GET | `/healthz` | 存活/就绪探针，返回 `{status, app:{name,version}}` |
+```rust
+#[async_trait]
+pub trait AiGateway: Send + Sync {
+    async fn translate(&self, input: TranslateInput) -> Result<TranslateOutput, CatsError>;
+}
+```
 
-M1 阶段补充：参见 [api/openapi/cats-openapi-v1.yaml](../../api/openapi/cats-openapi-v1.yaml)
+- MVP: `MockAiGateway` (deterministic mock)
+- Sprint 3: `HttpAiGateway` 调 `cats-ai-gateway` REST `/v1/llm/chat`
 
-## 数据边界
+## 启动
 
-- **Schema / 逻辑库**：`复用 project_db 内 TM/术语表`
-- **不读写他人的数据库**（per 架构书 §1.2 原则 4）
-- **不持有业务真相**于 Valkey/Kafka（per §1.2 原则 2）
-
-## 上下游服务
-
-- **上游（被调用）**：客户端 / BFF
-- **下游（主动调用）**：`cats-proto`（gRPC 契约）+ 数据库（PostgreSQL 18.6，per [技术基线 §1](../../doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md)）
-
-## 跨服务 gRPC 契约
-
-本服务通过 [cats-proto](../proto) crate 引用 v1 协议：
-
-- 输入：[$proto](../../proto/cats/v1/translation_core.proto)
-- M1 阶段：实现 \cats_proto::cats::v1::xxx_service_server::XxxService\ trait
-
-
-## 本地运行
-
-```powershell
-# 编译
-cargo build -p translation-core
-
-# 运行
-$env:BIND_ADDR = "0.0.0.0:8090"
+```bash
+GRPC_BIND_ADDR=0.0.0.0:50051 \
+DATABASE_URL=postgres://svc_translation@postgres:5432/project_db \
 cargo run -p translation-core
-
-# 健康检查
-curl http://127.0.0.1:8090/healthz
 ```
 
 ## 测试
 
-```powershell
+```bash
 cargo test -p translation-core
+# 5 个单元测试 (mock + qa + placeholder)
 ```
 
-## 容器化
+## 已知缺口
 
-```bash
-docker build -f deploy/docker/Dockerfile.rust --build-arg CRATE_NAME=translation-core -t translation-core:0.1.0 .
-```
+- ❌ 项目 DB 真实连 (MVP 阶段 mock)
+- ❌ HttpAiGateway (接 cats-ai-gateway) — Sprint 3
+- ❌ 真 AI provider 接 OpenAI/Anthropic 等 — Sprint 3
 
-## Helm 部署
+## 引用
 
-```bash
-helm lint deploy/helm/translation-core
-helm template deploy/helm/translation-core
-```
-
-## 引用基线文档
-
-- [CATs_微服务架构设计书_v1.0 §4.1](../../doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)
-- [CATs_技术基线_v1.0 §1](../../doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md)
-- [CATs_Rust技术选型书_v1.0](../../doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md)
+- 接口设计 v2.0+2: `doc/03-详细设计/接口设计/CATs_接口设计书_v2.0.md` §6.5
+- 数据库 v2.0: `doc/03-详细设计/数据库设计/CATs_数据库设计书_v2.0.md` §4.3
+- proto: `proto/cats/v1/translation_core.proto`
+- ADR-010 LLM 推理策略: `doc/02-基础设计/决策/CATs_ADR-010_LLM部署与推理策略_v1.0.md`
