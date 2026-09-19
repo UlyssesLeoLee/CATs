@@ -21,6 +21,10 @@ tracing-subscriber.workspace = true
 serde.workspace       = true
 serde_json.workspace  = true
 tokio.workspace       = true
+actix-web.workspace   = true
+sqlx.workspace        = true
+# 业务
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 # 预留：M1 阶段加 tokio-test / mockall / testcontainers

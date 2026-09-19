@@ -1,22 +1,22 @@
-//! `notification-service` — 通知推送服务
+//! `notification-service` — 内部事件消费 + 推送
 //!
-//! 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §4.1
-//! 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
-//!
-//! M0 阶段：仅暴露 `version()` / `name()`。业务实现 M1 阶段落地。
+//! 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §4.2
+//! 引用: doc/03-详细设计/数据库设计/CATs_数据库设计书_v2.0.md §6.7
 
-/// 当前 crate 语义版本
+pub mod consumer;
+pub mod db;
+pub mod handlers;
+pub mod models;
+pub mod state;
+
+pub use state::AppState;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// 当前 crate 名称
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
-/// 返回 crate 版本字符串
 pub fn version() -> &'static str {
     VERSION
 }
-
-/// 返回 crate 名称
 pub fn name() -> &'static str {
     NAME
 }
@@ -27,15 +27,11 @@ mod tests {
 
     #[test]
     fn version_is_semver_like() {
-        let v = version();
-        assert!(
-            v.starts_with("0.1."),
-            "version should start with '0.1.', got {v}"
-        );
+        assert!(version().starts_with("0.1."));
     }
 
     #[test]
-    fn name_is_crate_name() {
+    fn name_is_notification_service() {
         assert_eq!(name(), "notification-service");
     }
 }

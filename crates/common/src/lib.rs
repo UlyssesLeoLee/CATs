@@ -3,8 +3,16 @@
 //! 引用: doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md §4.3/§9/§11
 //! 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
 //!
-//! M0 阶段：本 crate 仅暴露 `version()` 与基础配置读取器占位。
-//! 真正的共享类型 / 错误体系 / tracing 初始化器将在 M1 阶段按 Rust 选型书落地。
+//! M1 阶段：新增 `error` 模块（统一错误类型 + ErrorCode enum），per 接口设计 v2.0+2 §3.5。
+//! 真正的公共模块 / tracing 初始化等按 Rust 选型书 §4.3/§9/§11 落地。
+
+/// 统一错误类型 + 错误码 enum (per 接口设计 v2.0+2 §3.5 + 错误码表 v1.0 §3)
+pub mod error;
+pub use error::{cats_error_to_response, CatsError, ErrorBody, ErrorCode, Result};
+
+/// RBAC 集成 helper 在 `cats_rbac::service_helpers` 模块 (per 微服务架构 §14 + cats-rbac crate)
+/// 不在 common 重新导出 (避免 common ↔ cats-rbac 循环依赖)
+/// 每个 service crate 直接 `use cats_rbac::service_helpers::{extract_user_id_and_roles, require_roles};`
 
 /// 当前 crate 语义版本（与 workspace.package.version 同步）
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
