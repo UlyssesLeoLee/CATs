@@ -34,6 +34,8 @@ members = [
     "crates/cats-bff",
 "crates/m1-s0-smoke",
     "crates/cats-rbac",
+    # AI 网关 (per ADR-010 + Sprint 2 100%)
+    "crates/cats-ai-gateway",
     # 测试基础设施 (per CATs_测试Mock项目设计书_v1.0)
     "crates/cats-mock",
 ]
