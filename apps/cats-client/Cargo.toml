@@ -1,0 +1,61 @@
+[package]
+name         = "cats-client"
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.98.0"
+license      = "Apache-2.0"
+description  = "CATs 桌面客户端（Tauri 2.x + Svelte 5, per ADR-004 / 技术基线 §1）"
+readme       = "README.md"
+authors      = ["CATs Architecture Team"]
+publish      = false
+
+# 注: 本 crate 当前**未加入根 workspace** members（per 9/19 14:41 JST Mavis 接手 owner 边界
+#   apps/cats-client/** + crates/cats-bff/**, 不改 Cargo.toml workspace 根）。
+#   以独立 crate 构建: `cargo check --manifest-path apps/cats-client/Cargo.toml`
+#   未来如需纳入 monorepo workspace 统一编译, 需 root Cargo.toml 增量, 需
+#   root worker / 架构组拍板后由对应 owner 落地。
+
+[lib]
+name = "cats_client"
+path = "src-tauri/src/lib.rs"
+
+[[bin]]
+name = "cats-client"
+path = "src-tauri/src/main.rs"
+
+[build-dependencies]
+# Tauri 2.x build script（读取 tauri.conf.json + 生成 ICP/资源）
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 2.x runtime
+tauri = { version = "2", features = [] }
+# 异步运行时
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+# HTTP client（向 BFF 调 REST）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 错误处理
+anyhow = "1"
+thiserror = "2"
+# 追踪
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# 离线队列 / TM 缓存本地持久化（rusqlite bundled = 自带 libsqlite3, 跨平台零依赖）
+rusqlite = { version = "0.32", features = ["bundled"] }
+# JWT / 基础编码
+base64 = "0.22"
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+# 时间
+chrono = { version = "0.4", features = ["serde"] }
+# cats-common 共享元数据
+cats-common = { path = "../../crates/common" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[lints]
+workspace = true
