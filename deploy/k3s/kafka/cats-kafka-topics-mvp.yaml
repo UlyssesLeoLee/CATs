@@ -1,0 +1,241 @@
+# CATs KafkaTopic CRD - MVP 10 个 (per 任务边界命名: task.assign.v1 / task.completed.v1 / cats.audit.v1 / etc.)
+# 引用: doc/03-详细设计/接口设计/CATs_接口设计书_v2.0.md (commit 1f3c94d) §5 Kafka Topics
+# 引用: doc/02-基础设计/架构设计/CATs_可热插拔部署与运维设计_v1.0.md §6 命名规范 "cats.{domain}.{entity}.{event_type}.v{n}"
+# 引用: doc/05-其他/管理/CATs_错误码表_v1.0.1.md (commit a4d8b86) §5.2 Kafka topic 映射
+# 引用: deploy/kafka-physical-publish-design.md (commit 8b11117) §1.3 10 KafkaTopic
+# 引用: 告警规则 v1.0 (commit 1d8926d) §3 + §6.4
+#
+# 命名约定 (per 可热插拔 §6.1):
+#   - 事件 type: cats.{domain}.{entity}.{event_type}.v{n}
+#   - 简写 topic 名: {entity}.{event_type}  (per 接口设计书 §5 简写形式)
+#
+# 10 个 MVP topic (per 接口设计书 §5 + 任务边界):
+#   1. task.assign.v1 (12 partitions 7d)        - task-service 任务分配
+#   2. task.completed.v1 (12 partitions 7d)     - task-service 任务完成
+#   3. task.media.asr.requested.v1 (6 1d)      - asr-service 媒体请求
+#   4. task.media.asr.completed.v1 (6 1d)      - asr-service 媒体完成
+#   5. task.media.subtitle.requested.v1 (6 1d) - subtitle-service 请求
+#   6. task.media.subtitle.completed.v1 (6 1d) - subtitle-service 完成
+#   7. task.media.render.requested.v1 (6 1d)   - render-writer 请求
+#   8. task.media.render.completed.v1 (6 1d)   - render-writer 完成
+#   9. cats.audit.v1 (6 partitions 30d)        - audit-service 审计事件
+#   10. cats.notifications.v1 (6 partitions 7d) - notification-service 通知事件
+#
+# 部署前置: strimzi-kafka-operator 已装 (per cats-kafka-mvp.yaml 注释)
+# topic auto-create 关 (per cats-kafka-mvp.yaml server.properties), 必须显式 apply
+#
+# 守门合规: 0 env 打印 + #14 v3 代签
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.assign.v1
+  namespace: cats-data
+  labels:
+    app: cats-task-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.assign
+spec:
+  partitions: 12
+  replicas: 1  # MVP 单 broker
+  config:
+    retention.ms: 604800000  # 7 天
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+  # 引用: 接口设计书 v2.0+2 §5 + 可热插拔 §6.1 (event-type 命名)
+  # 引用: 错误码表 §5.2 task.assign → task.events
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.completed.v1
+  namespace: cats-data
+  labels:
+    app: cats-task-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.completed
+spec:
+  partitions: 12
+  replicas: 1
+  config:
+    retention.ms: 604800000  # 7 天
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+  # 引用: 接口设计书 v2.0+2 §5 + §6 步骤 22 task.completed 推送
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.asr.requested.v1
+  namespace: cats-data
+  labels:
+    app: cats-asr-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.media.asr.requested
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 86400000  # 1 天 (短期任务)
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.asr.completed.v1
+  namespace: cats-data
+  labels:
+    app: cats-asr-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.media.asr.completed
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.subtitle.requested.v1
+  namespace: cats-data
+  labels:
+    app: cats-subtitle-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.media.subtitle.requested
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.subtitle.completed.v1
+  namespace: cats-data
+  labels:
+    app: cats-subtitle-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.media.subtitle.completed
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.render.requested.v1
+  namespace: cats-data
+  labels:
+    app: cats-render-writer-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.media.render.requested
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: task.media.render.completed.v1
+  namespace: cats-data
+  labels:
+    app: cats-render-writer-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: task.media.render.completed
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 86400000
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: cats.audit.v1
+  namespace: cats-data
+  labels:
+    app: cats-audit-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: cats.audit
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 2592000000  # 30 天 (合规要求, per 错误码表 §5.2 audit 30d)
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+  # 引用: 接口设计书 §5 + 错误码表 §5.2 cats.audit.v1 → audit.events
+  # 引用: 安全要件定义书 §6 audit 30 天保留 (合规)
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: cats.notifications.v1
+  namespace: cats-data
+  labels:
+    app: cats-notification-service
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: kafka-topic
+    strimzi.io/cluster: cats-kafka-mvp
+    event-type: cats.notifications
+spec:
+  partitions: 6
+  replicas: 1
+  config:
+    retention.ms: 604800000  # 7 天
+    cleanup.policy: delete
+    compression.type: producer
+    min.insync.replicas: 1
+  # 引用: 接口设计书 §5 notification.events + 错误码表 §5.2 notification 7d
+---
+# kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cats-data
+resources:
+  - cats-kafka-mvp.yaml
+  - cats-kafka-topics-mvp.yaml
