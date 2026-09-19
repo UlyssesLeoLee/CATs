@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "CATs 桌面客户端默认 capability（开发期宽松 / 生产收紧待权限规划）",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:event:default",
+    "core:webview:default",
+    "core:app:default"
+  ]
+}
