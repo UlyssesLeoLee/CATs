@@ -1,0 +1,23 @@
+{
+  "$schema": "./provider_schema.json",
+  "provider": "deepseek",
+  "description": "DeepSeek mock provider fixture. 兜底 provider 4 of 4. M3 评估可作为主用备选 per ADR-010 §5.",
+  "default_model": "deepseek-chat",
+  "cost_per_1k_tokens_usd": 0.00014,
+  "responses": [
+    {
+      "prompt_substring": "translate",
+      "content": "[mock-deepseek] Translation via deepseek-chat (deterministic fixture)",
+      "prompt_tokens": 42,
+      "completion_tokens": 18,
+      "latency_ms": 90
+    },
+    {
+      "prompt_substring": "default",
+      "content": "[mock-deepseek] Echo from deepseek-chat (deterministic fixture)",
+      "prompt_tokens": 16,
+      "completion_tokens": 20,
+      "latency_ms": 75
+    }
+  ]
+}

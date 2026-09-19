@@ -1,0 +1,23 @@
+{
+  "$schema": "./provider_schema.json",
+  "provider": "gemini",
+  "description": "Google Gemini mock provider fixture. 兜底 provider 3 of 4 per 路由顺序 OpenAI→Anthropic→Gemini→DeepSeek.",
+  "default_model": "gemini-1.5-flash",
+  "cost_per_1k_tokens_usd": 0.000075,
+  "responses": [
+    {
+      "prompt_substring": "translate",
+      "content": "[mock-gemini] Translation via gemini-1.5-flash (deterministic fixture)",
+      "prompt_tokens": 42,
+      "completion_tokens": 18,
+      "latency_ms": 100
+    },
+    {
+      "prompt_substring": "default",
+      "content": "[mock-gemini] Echo from gemini-1.5-flash (deterministic fixture)",
+      "prompt_tokens": 16,
+      "completion_tokens": 22,
+      "latency_ms": 85
+    }
+  ]
+}
