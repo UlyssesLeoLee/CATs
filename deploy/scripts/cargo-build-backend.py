@@ -27,7 +27,7 @@ def main():
     print(f"==> starting cargo build --release ({len(PKGS)} packages)", flush=True)
     print(f"    log: {LOG}", flush=True)
 
-    cmd = ["cargo", "build", "--release"]
+    cmd = ["cargo", "build", "--release", "-j", "2"]
     for p in PKGS:
         cmd += ["-p", p]
 
