@@ -282,7 +282,12 @@ impl CatsError {
     }
 
     pub fn not_found(code: ErrorCode, detail: impl Into<String>) -> Self {
-        Self::business_with_detail(code, format!("{}: {}", code.as_str(), detail.into()), detail)
+        let detail_str: String = detail.into();
+        Self::business_with_detail(
+            code,
+            format!("{}: {}", code.as_str(), detail_str),
+            serde_json::Value::String(detail_str),
+        )
     }
 
     pub fn validation(message: impl Into<String>) -> Self {

@@ -10,6 +10,10 @@
 pub mod error;
 pub use error::{cats_error_to_response, CatsError, ErrorBody, ErrorCode, Result};
 
+/// RBAC 集成 helper 在 `cats_rbac::service_helpers` 模块 (per 微服务架构 §14 + cats-rbac crate)
+/// 不在 common 重新导出 (避免 common ↔ cats-rbac 循环依赖)
+/// 每个 service crate 直接 `use cats_rbac::service_helpers::{extract_user_id_and_roles, require_roles};`
+
 /// 当前 crate 语义版本（与 workspace.package.version 同步）
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

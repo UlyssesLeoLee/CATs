@@ -23,3 +23,6 @@ serde_json.workspace     = true
 tracing.workspace        = true
 tracing-subscriber.workspace = true
 async-trait.workspace    = true
+actix-web.workspace      = true
+# 业务
+uuid = { version = "1", features = ["v4", "serde"] }

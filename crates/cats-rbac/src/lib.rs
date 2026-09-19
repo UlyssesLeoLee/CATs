@@ -21,6 +21,19 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 // =====================================================================
+// 0. 16 域 service crate 的 RBAC 集成 helper (per 微服务架构 v1.0 §14 + Sprint 2 W3-W4 落地计划)
+// =====================================================================
+
+/// 16 域 service crate 直接调用的 handler-side helper
+///
+/// 提供 `extract_user_id_and_roles` (从 Gateway 注入的 X-Cats-* headers 解析)
+/// 和 `require_roles` (RbacChecker + 业务允许角色列表 → Ok/Err).
+///
+/// **不**实现 actix-web Transform middleware (per README §7, 留给各 service crate 自己定);
+/// 各 handler 在路由处理前调 helper 即可。
+pub mod service_helpers;
+
+// =====================================================================
 // 1. 角色定义 (per 8/21 决议 5 域 Lead 互不兼任 + Sprint 1 复盘 §3 真人到位率 0%)
 // =====================================================================
 
