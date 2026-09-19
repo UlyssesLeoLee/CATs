@@ -1,0 +1,30 @@
+{
+  "$schema": "./provider_schema.json",
+  "provider": "anthropic",
+  "description": "Anthropic mock provider fixture. 模型质量最高场景备选 per ADR-010 §3.3 选项 C.",
+  "default_model": "claude-3-5-sonnet",
+  "cost_per_1k_tokens_usd": 0.003,
+  "responses": [
+    {
+      "prompt_substring": "translate",
+      "content": "[mock-anthropic] High-quality translation via claude-3-5-sonnet (deterministic fixture)",
+      "prompt_tokens": 42,
+      "completion_tokens": 18,
+      "latency_ms": 180
+    },
+    {
+      "prompt_substring": "summarize",
+      "content": "[mock-anthropic] Concise summary (deterministic fixture, claude-3-5-sonnet)",
+      "prompt_tokens": 28,
+      "completion_tokens": 24,
+      "latency_ms": 150
+    },
+    {
+      "prompt_substring": "default",
+      "content": "[mock-anthropic] Response from claude-3-5-sonnet (deterministic fixture)",
+      "prompt_tokens": 16,
+      "completion_tokens": 26,
+      "latency_ms": 130
+    }
+  ]
+}

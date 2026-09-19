@@ -36,6 +36,8 @@ members = [
     "crates/cats-rbac",
     # 测试基础设施 (per CATs_测试Mock项目设计书_v1.0)
     "crates/cats-mock",
+    # AI 网关 MVP (per AI 网关落地任务 2026-09-19; 真实 provider 留 Sprint 3)
+    "crates/cats-ai-gateway",
 ]
 
 # workspace 共享包元信息

@@ -1,0 +1,30 @@
+{
+  "$schema": "./provider_schema.json",
+  "provider": "openai",
+  "description": "OpenAI mock provider fixture (per cats-ai-gateway MVP). 真实 provider 留 Sprint 3 接入.",
+  "default_model": "gpt-4o-mini",
+  "cost_per_1k_tokens_usd": 0.00015,
+  "responses": [
+    {
+      "prompt_substring": "translate",
+      "content": "[mock-openai] Translated to target locale (model: gpt-4o-mini, deterministic fixture)",
+      "prompt_tokens": 42,
+      "completion_tokens": 18,
+      "latency_ms": 120
+    },
+    {
+      "prompt_substring": "summarize",
+      "content": "[mock-openai] Summary: 3 bullet points (deterministic fixture, model gpt-4o-mini)",
+      "prompt_tokens": 28,
+      "completion_tokens": 22,
+      "latency_ms": 95
+    },
+    {
+      "prompt_substring": "default",
+      "content": "[mock-openai] Echo from gpt-4o-mini (deterministic fixture; 真实 OpenAI API 留 Sprint 3 接入 per ADR-010)",
+      "prompt_tokens": 16,
+      "completion_tokens": 24,
+      "latency_ms": 80
+    }
+  ]
+}
