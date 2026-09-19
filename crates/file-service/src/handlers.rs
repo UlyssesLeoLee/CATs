@@ -9,7 +9,7 @@
 //! - GET    /v1/files/{id}/content  — 返回 metadata + storage_path (实际下载字节 MVP 不实装, 留 Sprint 2)
 
 use crate::db;
-use crate::models::{FileContentResponse, FileMetadata, FileResponse};
+use crate::models::{FileContentResponse, FileResponse};
 use crate::state::AppState;
 use actix_web::http::header::{HeaderMap, HeaderValue};
 use actix_web::web::Bytes;
