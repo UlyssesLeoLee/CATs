@@ -1,50 +1,39 @@
 //! `cats-bff` 入口
 //!
-//! M0 阶段：actix-web 4 健康检查占位，端口与绑定地址走环境变量。
-//! 业务 endpoint 在 M1 阶段按微服务架构书 §4.1 + OpenAPI v1 落地。
+//! 启动流程：
+//! 1. 初始化 tracing
+//! 2. 从 env 读 [`Config`]
+//! 3. 构造 [`AppState`]（含 reqwest 透传 client + tonic gRPC channel）
+//! 4. 起 actix-web HttpServer，注册全部路由
+//!
+//! 端点清单见 [`crate::routes::configure`]。
 
-use actix_web::{web, App, HttpResponse, HttpServer};
-use cats_common::AppMeta;
-use serde::Serialize;
-use std::env;
+use actix_web::{web, App, HttpServer};
 use tracing::info;
 
-/// 业务配置（M0 占位：从 env 读取；M1 替换为结构化 config）
-#[derive(Debug, Clone)]
-struct Config {
-    bind_addr: String,
-}
-
-impl Config {
-    fn from_env() -> Self {
-        Self {
-            bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8097".to_string()),
-        }
-    }
-}
-
-/// 健康检查响应
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    app: AppMeta,
-}
-
-/// `GET /healthz` — 存活探针 + 启动探针复用
-async fn healthz() -> HttpResponse {
-    HttpResponse::Ok().json(HealthResponse {
-        status: "ok",
-        app: AppMeta::current(),
-    })
-}
+use cats_bff::{config::Config, AppState};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     cats_common::init_tracing();
-    let cfg = Config::from_env();
-    info!(bind_addr = %cfg.bind_addr, "starting cats-bff");
 
-    HttpServer::new(|| App::new().route("/healthz", web::get().to(healthz)))
+    let cfg = Config::from_env();
+    info!(
+        bind_addr = %cfg.bind_addr,
+        auth_service_base = %cfg.auth_service_base,
+        project_service_base = %cfg.project_service_base,
+        translation_core_grpc = %cfg.translation_core_grpc,
+        "starting cats-bff"
+    );
+
+    // 注意：上游 URL 仅打印，不打印任何 secret / password（per 8/27 11:06 JST 守门 #5）
+
+    let state = AppState::from_config(&cfg)
+        .await
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("app state init: {e}")))?;
+    let state_data = web::Data::new(state);
+
+    HttpServer::new(move || cats_bff::build_app(state_data.clone()))
         .bind(&cfg.bind_addr)?
         .run()
         .await
