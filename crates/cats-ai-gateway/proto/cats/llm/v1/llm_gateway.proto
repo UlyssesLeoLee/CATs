@@ -13,8 +13,8 @@ service LlmGateway {
   // 同步 chat 调用
   rpc Chat(ChatRequest) returns (ChatResponse);
 
-  // 流式 chat 调用（MVP 阶段未实现，返回 UNIMPLEMENTED）
-  rpc ChatStream(ChatRequest) returns (stream ChatResponse);
+  // 流式 chat 调用 — MVP 阶段未实现（per 2026-09-19 落地任务, 留 Sprint 3）
+  // rpc ChatStream(ChatRequest) returns (stream ChatResponse);
 }
 
 // ──────────────────────────────────────────────────────────────
