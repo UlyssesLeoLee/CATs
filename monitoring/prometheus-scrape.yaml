@@ -1,0 +1,41 @@
+# Prometheus scrape 配置 (MVP 起步)
+# 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §15 可观测性
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: cats-observe
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: cats-services
+        kubernetes_sd_configs:
+          - role: service
+            namespaces:
+              names: [cats-core, cats-edge, cats-data]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+      - job_name: kafka-exporter
+        static_configs:
+          - targets: ['cats-kafka-exporter.cats-data.svc.cluster.local:9308']
+
+      - job_name: postgres-exporter
+        static_configs:
+          - targets: ['cats-postgres-exporter.cats-data.svc.cluster.local:9187']
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['cats-alertmanager.cats-observe.svc.cluster.local:9093']
+
+    rule_files:
+      - /etc/prometheus/rules/*.yaml
