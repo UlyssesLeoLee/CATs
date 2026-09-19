@@ -1,0 +1,257 @@
+# CATs K3s Namespaces + ResourceQuotas (M1-Sprint 1 MVP SRE 落地)
+# 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md (commit 2910f3d) §10 GitOps + §15 部署
+# 引用: doc/02-基础设计/架构设计/CATs_可热插拔部署与运维设计_v1.0.md §3 部署拓扑
+# 引用: doc/05-其他/管理/CATs_M1-Sprint1_SRE平台独立估算_v1.0.md (commit be712dc) §4 K3s 阶段二
+# 引用: 9/4 17:47 JST 用户偏好 "所有开发过程中的测试脚本和测试数据都应归入 mock 项目"
+#      → cats-mock namespace 用于 MVP 验证 (本 task 范围)
+# 引用: 9/1 13:03 JST 用户偏好 "所有 nginx 都应该替换为 envoy" → cats-edge namespace 部署 envoy 独立 deployment
+#
+# 5 个 namespace (per SRE 估算 v1.0 §4 阶段二):
+# - cats-core: 业务 16 域 service crate (auth/user/project/task/file/notification/report/audit/worker/translation-core/cats-ai-gateway + 阶段二 6 media)
+# - cats-edge: 边缘层 (envoy 独立 deployment, per 9/1 13:05 JST "envoy 独立 deployment, 不是 istio sidecar")
+# - cats-data: 数据层 (PostgreSQL CloudNativePG + Kafka KRaft + Debezium)
+# - cats-observe: 观测层 (Prometheus + alertmanager + Grafana + OTel collector)
+# - cats-mock:  mock 项目验证用 (per 9/4 17:47 JST 偏好, MVP 验证用 namespace)
+#
+# 守门合规: #5 8/27 11:06 JST hard ban (0 env 打印) + #14 v3+v4 Mavis 临时代签 5 域 Lead
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cats-core
+  labels:
+    name: cats-core
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: business-services
+    purpose: 16-domain-business-services
+    sre-tier: tier-1
+  annotations:
+    description: "16 域业务 service (auth/user/project/task/file/notification/report/audit/worker/translation-core/cats-ai-gateway)"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cats-edge
+  labels:
+    name: cats-edge
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: edge-proxy
+    purpose: envoy-edge
+    sre-tier: tier-0
+  annotations:
+    description: "Envoy 边缘代理 (独立 deployment 模式, per 9/1 13:05 JST 偏好)"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cats-data
+  labels:
+    name: cats-data
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: data-infrastructure
+    purpose: postgres-kafka-debezium
+    sre-tier: tier-0
+  annotations:
+    description: "PostgreSQL 18.6 + CloudNativePG 1.30+ + Kafka 3.7.0 KRaft + Debezium Connect"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cats-observe
+  labels:
+    name: cats-observe
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: observability
+    purpose: prometheus-alertmanager-grafana
+    sre-tier: tier-1
+  annotations:
+    description: "Prometheus + alertmanager + Grafana + OTel collector (per 告警规则 v1.0 commit 1d8926d §4.1)"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cats-mock
+  labels:
+    name: cats-mock
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: mock-validation
+    purpose: mock-project-validation
+    sre-tier: tier-3
+  annotations:
+    description: "mock 项目 MVP 验证用 (per 9/4 17:47 JST 用户偏好, 本 task 范围)"
+---
+# === ResourceQuotas (MVP 默认值, Sprint 2 按真实负载调) ===
+# 计算依据: SRE 估算 v1.0 §4 阶段二 3 master + N worker (MVP 简化单节点 + 11 service 起)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cats-core-quota
+  namespace: cats-core
+spec:
+  hard:
+    pods: "50"            # 16 域 service + HPA 余量 (MVP 单实例)
+    requests.cpu: "20"    # 16 × 500m + HPA 余量
+    requests.memory: 40Gi # 16 × 1Gi + 余量
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    services: "50"
+    configmaps: "100"
+    secrets: "30"
+    persistentvolumeclaims: "10"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cats-edge-quota
+  namespace: cats-edge
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "4"     # envoy 1 × 1 + rate-limit 1 × 500m
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    services: "20"
+    configmaps: "30"
+    secrets: "10"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cats-data-quota
+  namespace: cats-data
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "8"     # postgres 1 + kafka 1 + debezium 1 + exporters 2
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    services: "30"
+    configmaps: "50"
+    secrets: "20"
+    persistentvolumeclaims: "10"  # PG + Kafka + Debezium 持久化
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cats-observe-quota
+  namespace: cats-observe
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "4"     # prometheus + alertmanager + grafana + otel-collector
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    services: "20"
+    configmaps: "50"
+    secrets: "10"
+    persistentvolumeclaims: "5"  # prometheus TSDB + grafana
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cats-mock-quota
+  namespace: cats-mock
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    services: "10"
+    configmaps: "20"
+    secrets: "5"
+---
+# === LimitRange (默认 per-pod 资源约束) ===
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cats-core-defaults
+  namespace: cats-core
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      max:
+        cpu: "2"
+        memory: "4Gi"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cats-edge-defaults
+  namespace: cats-edge
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: "1Gi"
+      defaultRequest:
+        cpu: "200m"
+        memory: "256Mi"
+      max:
+        cpu: "4"
+        memory: "4Gi"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cats-data-defaults
+  namespace: cats-data
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "1Gi"
+      defaultRequest:
+        cpu: "200m"
+        memory: "256Mi"
+      max:
+        cpu: "4"
+        memory: "8Gi"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cats-observe-defaults
+  namespace: cats-observe
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "200m"
+        memory: "256Mi"
+      defaultRequest:
+        cpu: "50m"
+        memory: "64Mi"
+      max:
+        cpu: "2"
+        memory: "4Gi"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cats-mock-defaults
+  namespace: cats-mock
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "200m"
+        memory: "256Mi"
+      defaultRequest:
+        cpu: "50m"
+        memory: "64Mi"
+      max:
+        cpu: "1"
+        memory: "1Gi"

@@ -1,0 +1,36 @@
+# CATs pgvector ConfigMap (per CloudNativePG managed extensions)
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md (commit 047dc9c) §1 pgvector 0.8.6
+# 引用: doc/03-详细设计/数据库设计/CATs_数据库设计书_v2.0.md pgvector 16 域 db schemas (TM embeddings)
+#
+# CloudNativePG managed.extensions 启动时自动 CREATE EXTENSION vector;
+# 这里配置 shared_preload_libraries + pgvector HNSW 索引创建 SQL (per 数据库设计书 §6.3)
+# 由 initdb 后 initwal SQL 触发 (cnpg user-facing 文档: postInitTemplateSQL / postInitSQL)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cats-pgvector-init
+  namespace: cats-data
+  labels:
+    app: cats-postgres
+    app.kubernetes.io/part-of: cats-platform
+data:
+  # pgvector 0.8.6 初始化 SQL
+  # per 数据库设计书 v2.0 §6.3 HNSW 索引 + §9 备份恢复
+  pgvector-init.sql: |
+    -- pgvector 0.8.6 extension (per 技术基线 v1.0 §1)
+    CREATE EXTENSION IF NOT EXISTS vector;
+    
+    -- pgvector HNSW 索引参数 (per 数据库设计书 v2.0 §6.3)
+    -- m: 每节点最大连接数 (默认 16)
+    -- ef_construction: 构建时动态列表大小 (默认 64)
+    ALTER DATABASE cats SET hnsw.ef_construction = 64;
+    ALTER DATABASE cats SET hnsw.m = 16;
+    
+    -- pgvector 备份优化
+    ALTER SYSTEM SET maintenance_work_mem = '256MB';
+    SELECT pg_reload_conf();
+    
+    -- 已知缺口: 16 域 schema CREATE TABLE / CREATE INDEX 由各 service crate
+    -- migration tool (sqlx-cli / refinery) 实施, 不在本 ConfigMap 范围
+    -- per 数据库设计书 v2.0 §3.1 schema 三分类 (Work/Transaction/Master)
