@@ -1,0 +1,7 @@
+# kustomization for postgres namespace
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cats-data
+resources:
+  - cloudnative-pg-cluster.yaml
+  - pgvector-config.yaml
