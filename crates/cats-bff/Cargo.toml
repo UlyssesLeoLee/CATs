@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 # workspace 共享依赖
 cats-common.workspace = true
+cats-rbac = { workspace = true }
 tokio.workspace       = true
 actix-web.workspace   = true
 anyhow.workspace      = true
@@ -22,6 +23,9 @@ thiserror.workspace   = true
 tracing.workspace     = true
 serde.workspace       = true
 serde_json.workspace  = true
+reqwest.workspace     = true
+chrono.workspace      = true
+base64.workspace      = true
 # BFF 聚合层不直连 PG（透传到下游 service）
 # 暂未挂接 gRPC 契约（M1 阶段按需引入）
 

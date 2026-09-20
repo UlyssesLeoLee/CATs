@@ -590,8 +590,12 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "anyhow",
+ "base64",
  "cats-common",
  "cats-mock",
+ "cats-rbac",
+ "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
