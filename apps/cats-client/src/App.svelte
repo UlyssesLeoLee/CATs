@@ -8,22 +8,29 @@
 
   let { children } = $props();
 
-  onMount(() => {
-    // hash 变化监听: 自写 hash router
-    const handler = () => {
-      route.current = parseHash(location.hash);
-    };
-    window.addEventListener("hashchange", handler);
-    handler(); // 初始化
-    return () => window.removeEventListener("hashchange", handler);
-  });
+  // 本地 $state + $effect: hashchange → 写入 routeName, 模板读 routeName.
+  // 备用保险: navVersion 计数, 每次 hashchange ++ 用于 {#key} 强制重渲,
+  // 兜底 Svelte 5 production build 下 $state→{#if} reactive 漂移的极端情况.
+  let routeName = $state<string>("login");
+  let navVersion = $state(0);
 
-  function parseHash(hash: string): { name: string; params: URLSearchParams } {
-    const cleaned = hash.startsWith("#") ? hash.slice(1) : hash;
-    const [path, query] = cleaned.split("?");
-    const name = path || "login";
-    return { name, params: new URLSearchParams(query ?? "") };
-  }
+  onMount(() => {
+    const update = () => {
+      const cleaned = location.hash.startsWith("#")
+        ? location.hash.slice(1)
+        : location.hash;
+      const [path] = cleaned.split("?");
+      routeName = path || "login";
+      navVersion += 1;
+      route.current = {
+        name: routeName,
+        params: new URLSearchParams(),
+      };
+    };
+    window.addEventListener("hashchange", update);
+    update(); // 初始化
+    return () => window.removeEventListener("hashchange", update);
+  });
 </script>
 
 <div class="cats-shell">
@@ -42,13 +49,15 @@
   </header>
 
   <main>
-    {#if route.current.name === "translate"}
-      <TranslatePage />
-    {:else if route.current.name === "projects"}
-      <ProjectsPage />
-    {:else}
-      <LoginPage />
-    {/if}
+    {#key navVersion}
+      {#if routeName === "translate"}
+        <TranslatePage />
+      {:else if routeName === "projects"}
+        <ProjectsPage />
+      {:else}
+        <LoginPage />
+      {/if}
+    {/key}
   </main>
 </div>
 
