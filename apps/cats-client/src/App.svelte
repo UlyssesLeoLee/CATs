@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { route } from "./lib/router.svelte";
+  import { runtimeMode } from "./lib/api";
   import LoginPage from "./routes/LoginPage.svelte";
   import TranslatePage from "./routes/TranslatePage.svelte";
   import ProjectsPage from "./routes/ProjectsPage.svelte";
@@ -33,6 +34,11 @@
       <a href="#/translate">翻译</a>
       <a href="#/login">登录</a>
     </nav>
+    {#if !runtimeMode.isTauri()}
+      <span class="badge-web" title="静态预览 — 无 Tauri runtime, 命令走 mock">
+        web preview
+      </span>
+    {/if}
   </header>
 
   <main>
@@ -76,6 +82,16 @@
   }
   nav a:hover {
     color: #fff;
+  }
+  .badge-web {
+    margin-left: auto;
+    background: #f59e0b;
+    color: #0f172a;
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
   }
   main {
     flex: 1;

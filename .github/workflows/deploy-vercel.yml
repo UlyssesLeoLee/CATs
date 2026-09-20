@@ -1,0 +1,77 @@
+name: Deploy cats-client to Vercel
+
+# 触发: main / dev 分支 push, 或 workflow_dispatch 手动触发.
+# 范围: 只构建 apps/cats-client (Svelte 5 + Vite), 部署到 Vercel 项目 cats-client-web-preview.
+# 依赖: GitHub repo 必须安装 Vercel GitHub App (自动 push 触发)
+#       或者本 workflow 用 VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID secret.
+#
+# 当前 PR 状态 (per ULYS-110):
+#   - Vercel 项目尚未在 Vercel 后台创建 — 用户手动创建 1 次后填入 secret 即可全自动化.
+#   - vercel CLI 已写好 installCommand + buildCommand + outputDirectory, 不需要本地 vercel CLI.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'apps/cats-client/**'
+      - 'vercel.json'
+      - '.vercelignore'
+      - '.github/workflows/deploy-vercel.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Vercel target environment'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - production
+
+concurrency:
+  group: deploy-vercel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/cats-client/package-lock.json
+
+      - name: Install cats-client deps
+        working-directory: apps/cats-client
+        run: npm ci --no-audit --no-fund
+
+      - name: Build cats-client
+        working-directory: apps/cats-client
+        run: npm run build
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel project info (idempotent)
+        working-directory: apps/cats-client
+        run: vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+        continue-on-error: true
+
+      - name: Deploy to Vercel (preview)
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        working-directory: apps/cats-client
+        run: vercel deploy --yes --token=$VERCEL_TOKEN
+
+      - name: Deploy to Vercel (production)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: apps/cats-client
+        run: vercel deploy --yes --prod --token=$VERCEL_TOKEN
