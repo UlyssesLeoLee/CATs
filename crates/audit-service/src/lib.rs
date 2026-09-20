@@ -2,8 +2,18 @@
 //!
 //! 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §4.1
 //! 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
+//! 引用: ULYS-153 切片 C-2 — 真实 Kafka consumer
 //!
-//! M0 阶段：仅暴露 `version()` / `name()`。业务实现 M1 阶段落地。
+//! M0 阶段：仅暴露 `version()` / `name()` + `consumer` 模块 (Kafka REST proxy)。
+//! `consumer::run_consumer_loop` 在 main.rs spawn, 订阅 `cats.audit.v1` topic,
+//! 处理逻辑见 `consumer::process_event`.
+//!
+//! 业务 handler/db/model 模块保持孤儿 (仅在 worktree 主分支存在但不在 lib 导出)
+//! 待后续切片 (audit 业务 endpoint) 引入 cats-rbac + uuid + chrono deps 后挂接。
+
+pub mod consumer;
+
+pub use consumer::{process_event, run_consumer_loop};
 
 /// 当前 crate 语义版本
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

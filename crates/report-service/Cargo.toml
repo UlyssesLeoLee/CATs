@@ -23,6 +23,9 @@ tracing.workspace     = true
 serde.workspace       = true
 serde_json.workspace  = true
 sqlx.workspace        = true
+# ULYS-153 切片 C-1 — 报表 endpoint
+chrono     = { workspace = true }
+uuid       = { version = "1", features = ["v4", "serde"] }
 # 暂未挂接 gRPC 契约（M1 阶段按需引入）
 
 [dev-dependencies]
