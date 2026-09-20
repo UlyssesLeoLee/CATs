@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CATs 多模态预处理管道 (Media Pipeline Mock)</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="console-shell">
+      <header class="topbar">
+        <div>
+          <h1>CATs 多模态预处理管道 <span class="badge-mock">MOCK</span></h1>
+          <p class="subtitle">MMDPGE 网关 · VAD 静音切除 · Whisper 转写 · 关键帧提取 · 单页静态 mock</p>
+        </div>
+        <div class="topbar-meta">
+          <span>event_id: <code>mmdpge-2026-09-20-001</code></span>
+          <span>total_process: <code>1.2s</code></span>
+          <span>idempotency: <code>落 Valkey</code></span>
+        </div>
+      </header>
+
+      <main>
+        <!-- 上传输入 + MediaKind 切换 -->
+        <section class="panel upload">
+          <header><h2>输入 / Input</h2></header>
+          <div class="upload-zone">
+            <div class="upload-icon">📁</div>
+            <p>选择要预处理的多模态文件</p>
+            <p class="hint">本 mock 仅显示路由, 无真实上传</p>
+          </div>
+          <div class="kind-chips">
+            <button class="chip active" data-kind="video">🎬 视频 (mp4 / mov)</button>
+            <button class="chip" data-kind="audio">🎵 音频 (wav / mp3)</button>
+            <button class="chip" data-kind="image">🖼️ 图片 (png / jpg)</button>
+            <button class="chip" data-kind="document">📄 PDF / Office</button>
+            <button class="chip" data-kind="subtitle">💬 字幕 (srt / vtt)</button>
+          </div>
+          <div class="source-meta">
+            <span>source: <code>demo.mp4</code></span>
+            <span>duration: <code>60s</code></span>
+            <span>size: <code>8.4 MB</code></span>
+            <span>fps: <code>24</code></span>
+          </div>
+        </section>
+
+        <!-- MMDPGE 路由 + 下游 service 卡片 -->
+        <section class="panel routing">
+          <header><h2>MMDPGE 网关路由</h2><span class="hint">MediaKind → Pipeline steps → Downstream services</span></header>
+          <div class="pipeline-flow">
+            <div class="step-box mmdpge">
+              <div class="step-name">MMDPGE</div>
+              <div class="step-port">:8099</div>
+              <div class="step-tag">gateway</div>
+            </div>
+            <div class="arrow">→</div>
+            <div class="step-box down active">
+              <div class="step-name">asr-service</div>
+              <div class="step-port">:8090</div>
+              <div class="step-tag">VAD + Whisper</div>
+            </div>
+            <div class="arrow">→</div>
+            <div class="step-box down active">
+              <div class="step-name">ingestion-service</div>
+              <div class="step-port">:8091</div>
+              <div class="step-tag">keyframes</div>
+            </div>
+            <div class="arrow">→</div>
+            <div class="step-box down active">
+              <div class="step-name">ocr-service</div>
+              <div class="step-port">:8092</div>
+              <div class="step-tag">frame OCR</div>
+            </div>
+            <div class="arrow">→</div>
+            <div class="step-box down active">
+              <div class="step-name">file-service</div>
+              <div class="step-port">:8085</div>
+              <div class="step-tag">持久化</div>
+            </div>
+          </div>
+          <ol class="pipeline-steps">
+            <li><span class="seq">1</span> MMDPGE 接收 <code>PreprocessMediaRequest</code> <span class="ok">ack</span></li>
+            <li><span class="seq">2</span> 路由: <code>video</code> → [VadFilter, WhisperTranscribe, KeyframeExtract, OcrExtract, SubtitleBurn]</li>
+            <li><span class="seq">3</span> 调度 asr (VAD + whisper) 异步任务</li>
+            <li><span class="seq">4</span> 调度 ingestion (ffmpeg scene detect → 关键帧) 异步任务</li>
+            <li><span class="seq">5</span> 等待两者完成事件 (Kafka: <code>task.media.asr.completed</code> + <code>task.media.ingestion.completed</code>)</li>
+            <li><span class="seq">6</span> OCR 跑关键帧 → 落 file-service</li>
+            <li><span class="seq">7</span> 产出 <code>PreprocessMediaResponse</code> (audio_file_id, keyframes_archive_id, transcript_file_id)</li>
+            <li><span class="seq">8</span> 写 Kafka <code>mmdpge.preprocess.completed</code> (idempotency-key = event_id)</li>
+          </ol>
+        </section>
+
+        <!-- VAD 静音切除效果 -->
+        <section class="panel vad">
+          <header><h2>VAD 静音切除 (asr-service / vad.rs)</h2><span class="hint">energy-based VAD · RMS dB 阈值 -40dB · min_silence 300ms</span></header>
+          <div class="waveform">
+            <!-- 60 个 10ms frame 块, 红=静音 绿=语音, 模拟 30s 静音 + 30s 语音交替 -->
+            <div class="frame silence" style="height: 8%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 7%"></div>
+            <div class="frame silence" style="height: 4%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 4%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 7%"></div>
+            <div class="frame silence" style="height: 4%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 7%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 4%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 7%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 4%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame speech" style="height: 35%"></div>
+            <div class="frame speech" style="height: 52%"></div>
+            <div class="frame speech" style="height: 68%"></div>
+            <div class="frame speech" style="height: 74%"></div>
+            <div class="frame speech" style="height: 82%"></div>
+            <div class="frame speech" style="height: 78%"></div>
+            <div class="frame speech" style="height: 90%"></div>
+            <div class="frame speech" style="height: 95%"></div>
+            <div class="frame speech" style="height: 88%"></div>
+            <div class="frame speech" style="height: 72%"></div>
+            <div class="frame speech" style="height: 64%"></div>
+            <div class="frame speech" style="height: 58%"></div>
+            <div class="frame speech" style="height: 70%"></div>
+            <div class="frame speech" style="height: 76%"></div>
+            <div class="frame speech" style="height: 80%"></div>
+            <div class="frame speech" style="height: 85%"></div>
+            <div class="frame speech" style="height: 78%"></div>
+            <div class="frame speech" style="height: 72%"></div>
+            <div class="frame speech" style="height: 68%"></div>
+            <div class="frame speech" style="height: 60%"></div>
+            <div class="frame speech" style="height: 54%"></div>
+            <div class="frame speech" style="height: 48%"></div>
+            <div class="frame speech" style="height: 42%"></div>
+            <div class="frame speech" style="height: 38%"></div>
+            <div class="frame silence" style="height: 6%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+            <div class="frame silence" style="height: 4%"></div>
+            <div class="frame silence" style="height: 5%"></div>
+          </div>
+          <div class="vad-stats">
+            <div class="stat"><span class="num">50%</span><span class="lbl">speech ratio</span></div>
+            <div class="stat"><span class="num">60s → 30s</span><span class="lbl">剪掉 30s 静音</span></div>
+            <div class="stat"><span class="num">~33%</span><span class="lbl">whisper 算力节省</span></div>
+            <div class="stat"><span class="num">6s → 4s</span><span class="lbl">faster-whisper-medium</span></div>
+          </div>
+        </section>
+
+        <!-- Whisper 转写结果 -->
+        <section class="panel whisper">
+          <header><h2>Whisper 转写结果 (faster-whisper-medium)</h2><span class="hint">输出带词级时间戳 · 4s 处理时间 · 段置信度 0.92</span></header>
+          <ul class="transcript">
+            <li><span class="ts">00:00:31.200 → 00:00:33.800</span><span class="text">大家好, 欢迎来到 CATs 全媒体翻译平台</span></li>
+            <li><span class="ts">00:00:34.100 → 00:00:37.500</span><span class="text">今天我们将演示如何把一段视频快速翻译成多语言版本</span></li>
+            <li><span class="ts">00:00:38.000 → 00:00:42.300</span><span class="text">首先上传视频文件, 系统会自动识别音轨并提取关键帧</span></li>
+            <li><span class="ts">00:00:42.800 → 00:00:46.900</span><span class="text">然后调用 Whisper 模型转录音频, 同时 OCR 提取画面文字</span></li>
+            <li><span class="ts">00:00:47.200 → 00:00:50.100</span><span class="text">最后翻译引擎综合两个来源生成多语言字幕</span></li>
+            <li><span class="ts">00:00:50.500 → 00:00:53.700</span><span class="text">整个过程不到两秒, 大幅提升译员工作效率</span></li>
+            <li><span class="ts">00:00:54.200 → 00:00:57.000</span><span class="text">感谢观看, 下期再见</span></li>
+          </ul>
+          <div class="lang-tags">
+            <span class="lang">zh → en</span>
+            <span class="lang">zh → ja</span>
+            <span class="lang">zh → ko</span>
+            <span class="lang">zh → fr</span>
+          </div>
+        </section>
+
+        <!-- 关键帧提取 -->
+        <section class="panel keyframes">
+          <header><h2>关键帧提取 (ingestion-service / keyframes.rs)</h2><span class="hint">ffmpeg scene detect · threshold 0.4 · 等距采样 fallback</span></header>
+          <div class="kf-grid">
+            <div class="kf-card">
+              <div class="kf-thumb kf-thumb-1">
+                <span class="kf-num">#1</span>
+                <span class="kf-time">00:00:02.500</span>
+              </div>
+              <div class="kf-meta">
+                <span>scene_score: 0.78</span>
+                <span>size: 1920×1080</span>
+              </div>
+            </div>
+            <div class="kf-card">
+              <div class="kf-thumb kf-thumb-2">
+                <span class="kf-num">#2</span>
+                <span class="kf-time">00:00:18.200</span>
+              </div>
+              <div class="kf-meta">
+                <span>scene_score: 0.62</span>
+                <span>size: 1920×1080</span>
+              </div>
+            </div>
+            <div class="kf-card">
+              <div class="kf-thumb kf-thumb-3">
+                <span class="kf-num">#3</span>
+                <span class="kf-time">00:00:34.800</span>
+              </div>
+              <div class="kf-meta">
+                <span>scene_score: 0.85</span>
+                <span>size: 1920×1080</span>
+              </div>
+            </div>
+            <div class="kf-card">
+              <div class="kf-thumb kf-thumb-4">
+                <span class="kf-num">#4</span>
+                <span class="kf-time">00:00:51.300</span>
+              </div>
+              <div class="kf-meta">
+                <span>scene_score: 0.71</span>
+                <span>size: 1920×1080</span>
+              </div>
+            </div>
+          </div>
+          <div class="kf-stats">
+            <div class="stat"><span class="num">1440 帧</span><span class="lbl">原 24fps × 60s</span></div>
+            <div class="stat"><span class="num">→ 4 帧</span><span class="lbl">关键帧</span></div>
+            <div class="stat"><span class="num">~99%</span><span class="lbl">OCR 算力节省</span></div>
+            <div class="stat"><span class="num">1440 次 → 4 次</span><span class="lbl">PaddleOCR 调用</span></div>
+          </div>
+        </section>
+
+        <!-- 统计 footer -->
+        <footer class="foot">
+          <div class="foot-stat">
+            <span class="lbl">总处理时间</span>
+            <span class="val">1.2s</span>
+          </div>
+          <div class="foot-stat">
+            <span class="lbl">Kafka 事件</span>
+            <span class="val">mmdpge.preprocess.requested → completed</span>
+          </div>
+          <div class="foot-stat">
+            <span class="lbl">Idempotency-Key</span>
+            <span class="val">event_id = mmdpge-2026-09-20-001</span>
+          </div>
+          <div class="foot-stat">
+            <span class="lbl">下游写入</span>
+            <span class="val">file-service (4 files) + task_db (1 row)</span>
+          </div>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
