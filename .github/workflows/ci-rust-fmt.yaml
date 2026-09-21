@@ -6,9 +6,9 @@ name: ci-rust-fmt
 
 on:
   push:
-    branches: [main, develop, 'feature/**']
+    branches: [main, dev, 'feature/**']
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
