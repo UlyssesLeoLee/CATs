@@ -9,9 +9,9 @@ name: ci-rust-build
 
 on:
   push:
-    branches: [main, develop, 'feature/**']
+    branches: [main, dev, 'feature/**']
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
   workflow_dispatch:
 
 # 取消同一 ref 上正在跑的旧 run
