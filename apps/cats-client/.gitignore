@@ -1,0 +1,10 @@
+# cats-client local ignore (ULYS-154 切片 D 加入)
+#
+# gen/ — tauri-build 在 build 时生成的 schema/permission 缓存 (重 build 可复现)
+# Cargo.lock — apps/ 是 binary crate, 通常 commit; 但本客户端 standalone build,
+#   根 workspace 已有 Cargo.lock, 重复提交会冲突 → 暂时不 commit, 等纳入 monorepo 时再加
+# node_modules — Vite/Svelte local install
+gen/
+Cargo.lock
+node_modules/
+dist/

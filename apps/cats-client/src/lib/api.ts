@@ -45,6 +45,23 @@ async function webInvoke<T>(cmd: string, args?: unknown): Promise<T> {
       );
     case "fetch_translation_lookup":
       return { matches: [], from_cache: false } as unknown as T;
+    // 切片 D (ULYS-154) web 模式占位
+    case "dispatch_translation_task":
+      throw new Error(
+        "派发翻译任务仅在 Tauri 桌面客户端可用 (web preview 不连后端)",
+      );
+    case "list_local_tasks":
+      return { tasks: [] } as unknown as T;
+    case "update_local_task_status":
+      return null as unknown as T;
+    case "list_task_events":
+      return { events: [] } as unknown as T;
+    case "add_local_glossary_entry":
+      throw new Error(
+        "新增术语仅在 Tauri 桌面客户端可用 (本地 SQLite 不可用)",
+      );
+    case "list_local_glossary_entries":
+      return { entries: [] } as unknown as T;
     case "create_project":
     case "enqueue_offline_action":
     case "sync_offline_queue":
@@ -103,6 +120,42 @@ export interface AuthLoginResponse {
   access_token_expires_at: string;
 }
 
+// ---- 切片 D (ULYS-154) 新增类型 ----
+
+export interface DispatchTaskResponse {
+  task_id: string;
+  project_id: string;
+  status: string; // queued | running | succeeded | failed
+}
+
+export interface LocalTask {
+  task_id: string;
+  project_id: string;
+  status: string;
+  source_text: string;
+  target_text?: string | null;
+  media_type?: string | null;
+  updated_at: string;
+}
+
+export interface LocalTaskEvent {
+  event_id: number;
+  task_id: string;
+  event_type: string;
+  payload_json?: string | null;
+  recorded_at: string;
+}
+
+export interface LocalGlossaryEntry {
+  entry_id: string;
+  source_term: string;
+  target_term: string;
+  domain?: string | null;
+  notes?: string | null;
+  project_id?: string | null;
+  created_at: string;
+}
+
 export const runtimeMode = {
   isTauri: () => isTauri(),
   mode: isTauri() ? "tauri" : "web",
@@ -150,4 +203,52 @@ export async function enqueueOfflineAction(args: {
 
 export async function syncOfflineQueue(): Promise<{ total: number; succeeded: number; failed: number }> {
   return invoke("sync_offline_queue");
+}
+
+// ---- 切片 D (ULYS-154) 新增 API ----
+
+export async function dispatchTranslationTask(args: {
+  project_id: string;
+  file_id: string;
+  media_type: string;
+  source_text: string;
+}): Promise<DispatchTaskResponse> {
+  return invoke<DispatchTaskResponse>("dispatch_translation_task", { args });
+}
+
+export async function listLocalTasks(args: {
+  project_id?: string | null;
+  limit?: number;
+}): Promise<{ tasks: LocalTask[] }> {
+  return invoke<{ tasks: LocalTask[] }>("list_local_tasks", { args });
+}
+
+export async function updateLocalTaskStatus(args: {
+  task_id: string;
+  new_status: string;
+}): Promise<null> {
+  return invoke<null>("update_local_task_status", { args });
+}
+
+export async function listTaskEvents(args: {
+  task_id: string;
+}): Promise<{ events: LocalTaskEvent[] }> {
+  return invoke<{ events: LocalTaskEvent[] }>("list_task_events", { args });
+}
+
+export async function addLocalGlossaryEntry(args: {
+  source_term: string;
+  target_term: string;
+  domain?: string | null;
+  notes?: string | null;
+  project_id?: string | null;
+}): Promise<{ entry: LocalGlossaryEntry }> {
+  return invoke<{ entry: LocalGlossaryEntry }>("add_local_glossary_entry", { args });
+}
+
+export async function listLocalGlossaryEntries(args: {
+  project_id?: string | null;
+  limit?: number;
+}): Promise<{ entries: LocalGlossaryEntry[] }> {
+  return invoke<{ entries: LocalGlossaryEntry[] }>("list_local_glossary_entries", { args });
 }
