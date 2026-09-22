@@ -8,9 +8,10 @@ use super::{random_past_within_days, Factory};
 use serde::{Deserialize, Serialize};
 
 /// Audit 事件结果
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditOutcome {
+    #[default]
     Success,
     Failure,
 }
@@ -22,10 +23,6 @@ impl AuditOutcome {
             Self::Failure => "failure",
         }
     }
-}
-
-impl Default for AuditOutcome {
-    fn default() -> Self { Self::Success }
 }
 
 /// AuditEvent 数据

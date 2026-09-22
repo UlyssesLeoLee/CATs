@@ -67,13 +67,9 @@ macro_rules! name_matches_crate {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    /// 验证宏能展开
-    #[test]
-    fn macro_expands_for_self() {
-        name_matches_crate!(env!("CARGO_PKG_NAME"));
-        // 上面宏展开后产生 2 个 #[test] (version_is_semver_like + name_matches_crate),
-        // 跟这个测试一起共 3 个 test 在本 mod
-    }
+    // 验证宏能在自身 crate 内正确展开: 必须在 mod 顶层调用 (与 16 个真实服务的
+    // tests/smoke.rs 用法一致), 不能包在另一个 fn 里——包在 fn 里会让宏生成的
+    // #[test] 变成嵌套在函数体内的 "unnameable test items", clippy -D warnings
+    // 下无法通过 (且实际上也测不出宏是否真的生成了可运行的测试)。
+    name_matches_crate!(env!("CARGO_PKG_NAME"));
 }
