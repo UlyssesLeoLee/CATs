@@ -19,10 +19,20 @@ linker = "rust-lld.exe"
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [target.aarch64-unknown-linux-gnu]
-# 同上。注: ci-rust-build.yaml 的 aarch64 交叉编译 job 通过
-# CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER 环境变量另外指定
-# aarch64-linux-gnu-gcc, 优先级高于本文件, 不受此处影响。
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# 不加 -fuse-ld=lld override (per 实测更正, 见下)。
+#
+# 原以为 CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER 环境变量 (ci-rust-build.yaml
+# 里指定 aarch64-linux-gnu-gcc) 会让本文件的设置完全不生效, 所以曾在这里也加过
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]——这个假设是错的: 环境变量只覆盖
+# `linker` 这一项, 本 target 段的 `rustflags` 仍然会被拼进最终的链接命令。结果是
+# aarch64-linux-gnu-gcc 被传了 -fuse-ld=lld, 但交叉编译环境里没有为 aarch64 配置
+# 好对应的 lld 后端, collect2 报 "cannot find 'ld'", 交叉编译 job 直接挂掉
+# (实测确认, per ULYS-113 CI 审计后续)。
+#
+# 设计文档 (CATs_Rust技术选型书_v1.0.md §3.2/§3.3) 的链接器优化示例本来就只写了
+# x86_64-unknown-linux-gnu 一个 target, 这里不是文档原意覆盖的范围。交叉编译 job
+# 完全靠上面那个环境变量 + apt 装的 gcc-aarch64-linux-gnu 工具链跑, 不需要也不该
+# 加这个 override。
 
 # --- 文档注释警告 ---
 [doc]
