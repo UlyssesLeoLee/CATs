@@ -43,9 +43,10 @@ pub trait Factory: Sized + Clone {
 // =====================================================================
 
 /// 项目状态 (per project-service 状态机)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectStatus {
+    #[default]
     Draft,
     Active,
     Archived,
@@ -69,14 +70,11 @@ impl ProjectStatus {
     }
 }
 
-impl Default for ProjectStatus {
-    fn default() -> Self { Self::Draft }
-}
-
 /// 任务状态 (per task-service 状态机)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
+    #[default]
     Pending,
     Queued,
     Running,
@@ -107,10 +105,6 @@ impl TaskStatus {
             Self::Cancelled => "cancelled",
         }
     }
-}
-
-impl Default for TaskStatus {
-    fn default() -> Self { Self::Pending }
 }
 
 // =====================================================================

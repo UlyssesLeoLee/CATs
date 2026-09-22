@@ -2,7 +2,7 @@
 //!
 //! 引用: 设计书 §4.1.2
 
-use super::{pick_random, random_past_within_days, Factory, ProjectStatus};
+use super::{random_past_within_days, Factory, ProjectStatus};
 use fake::faker::lorem::en::Sentence;
 use fake::Fake;
 use serde::{Deserialize, Serialize};

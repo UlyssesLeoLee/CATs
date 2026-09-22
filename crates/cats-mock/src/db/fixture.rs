@@ -91,7 +91,7 @@ impl DbFixture for InMemoryDbFixture {
 
     async fn truncate_all(&self) -> anyhow::Result<()> {
         let mut tables = self.tables.lock().unwrap();
-        for (_, rows) in tables.iter_mut() {
+        for rows in tables.values_mut() {
             rows.clear();
         }
         Ok(())
