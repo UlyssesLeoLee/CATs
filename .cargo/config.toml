@@ -13,10 +13,16 @@ incremental = true
 linker = "rust-lld.exe"
 
 [target.x86_64-unknown-linux-gnu]
-linker = "rust-lld"
+# per ULYS-113 CI 审计: 直接把 linker 设为 rust-lld 会脱离 cc 驱动, 找不到系统库
+# (-lgcc_s / -lc 等), 在 GitHub 托管 runner 上必挂。改走 cc + -fuse-ld=lld,
+# 由 cc 提供标准库搜索路径, lld 只替换底层链接器 (per 技术选型书 §3.2/§3.3 原意)。
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [target.aarch64-unknown-linux-gnu]
-linker = "rust-lld"
+# 同上。注: ci-rust-build.yaml 的 aarch64 交叉编译 job 通过
+# CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER 环境变量另外指定
+# aarch64-linux-gnu-gcc, 优先级高于本文件, 不受此处影响。
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 # --- 文档注释警告 ---
 [doc]
