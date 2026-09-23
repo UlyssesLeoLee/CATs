@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 # workspace 共享依赖
 cats-common.workspace = true
+cats-rbac = { workspace = true }
 tokio.workspace       = true
 actix-web.workspace   = true
 anyhow.workspace      = true
@@ -22,6 +23,11 @@ thiserror.workspace   = true
 tracing.workspace     = true
 serde.workspace       = true
 serde_json.workspace  = true
+reqwest.workspace     = true
+chrono.workspace      = true
+# JWT 签名验证 (per ULYS-149 审核: 之前只解 payload 不验签, 可伪造任意声明)
+# 与 auth-service 用同一个 crate + 同一份 JWT_SECRET (HS256, per 技术选型书 §9 ADR-R-09)
+jsonwebtoken          = "9"
 # BFF 聚合层不直连 PG（透传到下游 service）
 # 暂未挂接 gRPC 契约（M1 阶段按需引入）
 

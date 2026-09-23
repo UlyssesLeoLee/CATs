@@ -565,6 +565,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "cats-ai-gateway"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "anyhow",
+ "async-trait",
+ "cats-common",
+ "chrono",
+ "prost",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tonic 0.13.1",
+ "tonic-build",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "cats-bff"
 version = "0.1.0"
 dependencies = [
@@ -572,6 +592,10 @@ dependencies = [
  "anyhow",
  "cats-common",
  "cats-mock",
+ "cats-rbac",
+ "chrono",
+ "jsonwebtoken",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

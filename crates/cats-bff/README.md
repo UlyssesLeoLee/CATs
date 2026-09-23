@@ -1,79 +1,54 @@
-# cats-bff
+# cats-bff — BFF 聚合服务 (M1 阶段)
 
-> CATs BFF 聚合服务
+> CATs 客户端 → 后端的桥接层 (per 微服务架构书 v1.0 §4.1)
 
-| 项目 | 内容 |
-|---|---|
-| Crate 名 | `cats-bff` |
-| 阶段 | MVP |
-| 默认端口 | 8097（由 env `BIND_ADDR` 覆盖） |
-| 数据边界 | `无（聚合层）` |
-| 镜像 | `harbor.cats.internal/cats/cats-bff:0.1.0` |
+## 8 业务 endpoint (per OpenAPI v1.0.1 §paths)
 
-## 概述
+| Method | Path | 上游 | 鉴权 | RBAC | 备注 |
+|---|---|---|---|---|---|
+| POST | `/v1/auth/login` | auth-service | — | — | 转发 + 注入 JWT |
+| POST | `/v1/auth/refresh` | auth-service | — | — | 转发 |
+| POST | `/v1/auth/logout` | auth-service | Bearer | — | 转发 |
+| GET  | `/v1/auth/me` | auth-service | Bearer | — | 聚合 (per §3) |
+| GET  | `/v1/projects` | project-service | Bearer | Read | 转发 + RBAC |
+| POST | `/v1/projects` | project-service | Bearer | Create | 转发 + RBAC + Idempotency-Key |
+| POST | `/v1/tasks` | task-service | Bearer | Create | 转发 + RBAC |
+| GET  | `/healthz` | 本地 | — | — | ✅ 已有 |
 
-客户端 → 后端微服务的桥接层，聚合多服务调用、鉴权透传、SSE 进度推送
+## 配置 (env)
 
-引用：[CATs_微服务架构设计书_v1.0 §4.1](../../doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)（16 服务清单）
-
-## API 端点（M0 占位）
-
-| Method | Path | 说明 |
-|---|---|---|
-| GET | `/healthz` | 存活/就绪探针，返回 `{status, app:{name,version}}` |
-
-M1 阶段补充：参见 [api/openapi/cats-openapi-v1.yaml](../../api/openapi/cats-openapi-v1.yaml)
-
-## 数据边界
-
-- **Schema / 逻辑库**：`无（聚合层）`
-- **不读写他人的数据库**（per 架构书 §1.2 原则 4）
-- **不持有业务真相**于 Valkey/Kafka（per §1.2 原则 2）
-
-## 上下游服务
-
-- **上游（被调用）**：客户端 / BFF
-- **下游（主动调用）**：`cats-proto`（gRPC 契约）+ 数据库（PostgreSQL 18.6，per [技术基线 §1](../../doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md)）
-
-## 跨服务 gRPC 契约
-
-本服务 M0 阶段无独立 gRPC 接口（M1 阶段视情况引入）。
-
-## 本地运行
-
-```powershell
-# 编译
-cargo build -p cats-bff
-
-# 运行
-$env:BIND_ADDR = "0.0.0.0:8097"
-cargo run -p cats-bff
-
-# 健康检查
-curl http://127.0.0.1:8097/healthz
+```
+SERVICE_BIND_ADDR   default 0.0.0.0:8097
+AUTH_SERVICE_URL    default http://localhost:8081
+USER_SERVICE_URL    default http://localhost:8082
+PROJECT_SERVICE_URL default http://localhost:8083
+TASK_SERVICE_URL    default http://localhost:8084
+TRANSLATION_CORE_URL default http://localhost:8086
+UPSTREAM_TIMEOUT_SECS default 5
 ```
 
-## 测试
+## 错误信封 (per 接口设计书 v2.0 §1.3 + OpenAPI v1.0.1 ErrorBody schema)
 
-```powershell
-cargo test -p cats-bff
+```json
+{
+  "error": "missing_authorization",
+  "message": "authentication required",
+  "detail": null
+}
 ```
 
-## 容器化
+3 字段 (error + message + detail), 跟 `crates/auth-service/src/models.rs` ErrorBody 一致。
 
-```bash
-docker build -f deploy/docker/Dockerfile.rust --build-arg CRATE_NAME=cats-bff -t cats-bff:0.1.0 .
-```
+## 引用
 
-## Helm 部署
+- 父: ULYS-125 (功能点罗列)
+- 切片 spec: `doc/05-其他/MVP商业版/_slice_a_bff.md`
+- OpenAPI: `api/openapi/cats-openapi-v1.0.1.yaml`
+- 接口设计: `doc/03-详细设计/接口设计/CATs_接口设计书_v2.0.md`
+- 微服务架构: `doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md` §4.1
+- 权限矩阵: `doc/05-其他/管理/CATs_权限矩阵_v1.0.md` §3
+- 错误码表: `doc/05-其他/管理/CATs_错误码表_v1.0.md` §3 (28 条 snake_case)
 
-```bash
-helm lint deploy/helm/cats-bff
-helm template deploy/helm/cats-bff
-```
+## 作者署名
 
-## 引用基线文档
-
-- [CATs_微服务架构设计书_v1.0 §4.1](../../doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md)
-- [CATs_技术基线_v1.0 §1](../../doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md)
-- [CATs_Rust技术选型书_v1.0](../../doc/02-基础设计/技术选型/CATs_Rust技术选型书_v1.0.md)
+架构师 (Mavis 接手 agent per DEC-008 + 守门 #14 v3) <architecture@mavis.local>
