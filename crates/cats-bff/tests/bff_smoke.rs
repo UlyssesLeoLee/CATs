@@ -11,11 +11,13 @@
 //! 6. /v1/auth/me 在"结构完全不是 JWT"的垃圾字符串下返回 401
 //! 7. /v1/auth/me 在正确签名 + 未过期的 token 下能通过验签这一关 (不是 401)
 //! 8. /v1/auth/me 在"签名正确但 token_type=refresh"的 token 下返回 401 (per PR #12 review 补充)
+//! 9. /v1/auth/me 在"签名正确但 payload 里根本没有 token_type 字段"的 token 下返回 401
+//!    (per token_type 校验完整性复核, 2026-09-23; 模拟 fix 上线前签发的旧 token)
 //!
 //! 注: 上游 service 没起 → 业务 endpoint 返回 502, 不是 200, 这也是验收的预期行为
 //!
 //! 关于测试里的 JWT_SECRET (per ULYS-149 审核修复新增测试, 2026-09-23):
-//! 下面 5/6/7/8 四个测试都会读写进程级环境变量 `JWT_SECRET`。`cargo test` 默认在同一
+//! 下面 5/6/7/8/9 五个测试都会读写进程级环境变量 `JWT_SECRET`。`cargo test` 默认在同一
 //! 进程内多线程并发跑各个 `#[test]`，为避免几个测试互相覆写导致 flaky，全部统一设成
 //! 同一个常量 `TEST_JWT_SECRET`——设成相同值即使并发写入也不产生竞争 (最终值恒定)。
 //! "伪造签名"测试签发时刻意用另一个不同的常量, 与 JWT_SECRET 当前是什么值无关。
@@ -43,6 +45,30 @@ fn sign_test_token(secret: &str, exp_offset_secs: i64, token_type: &str) -> Stri
         exp: chrono::Utc::now().timestamp() + exp_offset_secs,
         token_type: token_type.to_string(),
         roles: vec![],
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .expect("test token signing should not fail")
+}
+
+/// 模拟"payload 里根本没有 token_type 字段"的 token（例如 fix 上线前旧版 auth-service
+/// 签发、或客户端缓存下来的旧 token）。故意不用 `cats_bff::principal::Claims`（它现在
+/// 要求这个字段），单独定义一个更窄的结构体来构造这种"字段缺失"的边界情况。
+#[derive(serde::Serialize)]
+struct ClaimsMissingTokenType {
+    sub: String,
+    username: String,
+    exp: i64,
+}
+
+fn sign_token_missing_token_type(secret: &str, exp_offset_secs: i64) -> String {
+    let claims = ClaimsMissingTokenType {
+        sub: "00000000-0000-0000-0000-000000000001".to_string(),
+        username: "test-user".to_string(),
+        exp: chrono::Utc::now().timestamp() + exp_offset_secs,
     };
     encode(
         &Header::default(),
@@ -257,5 +283,26 @@ async fn me_with_refresh_token_returns_401() {
         resp.status(),
         StatusCode::UNAUTHORIZED,
         "a refresh token must not be accepted as a bearer access token on a protected endpoint"
+    );
+}
+
+#[actix_web::test]
+async fn me_with_token_missing_token_type_returns_401() {
+    // 正确密钥签名、未过期，但 payload 里根本没有 token_type 字段的 token
+    // （例如 fix 上线前签发的旧 token）必须被拒绝，而不是因为 serde 反序列化
+    // 宽松处理缺失字段而被静默放行。
+    env::set_var("JWT_SECRET", TEST_JWT_SECRET);
+    let missing = sign_token_missing_token_type(TEST_JWT_SECRET, 3600);
+
+    let app = test::init_service(test_app()).await;
+    let req = test::TestRequest::get()
+        .uri("/v1/auth/me")
+        .insert_header(("Authorization", format!("Bearer {missing}")))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "a token missing the token_type field must not be silently accepted"
     );
 }
