@@ -126,6 +126,7 @@ impl BffError {
                     "missing_authorization" => ErrorCode::MissingAuthorization,
                     "invalid_token" => ErrorCode::InvalidToken,
                     "token_expired" => ErrorCode::TokenExpired,
+                    "invalid_token_type" => ErrorCode::InvalidTokenType,
                     "invalid_credentials" => ErrorCode::InvalidCredentials,
                     _ => ErrorCode::MissingAuthorization,
                 },
