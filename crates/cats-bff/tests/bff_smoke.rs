@@ -10,11 +10,12 @@
 //! 5. /v1/auth/me 在"签名与 JWT_SECRET 不匹配"的伪造 token 下返回 401 (per ULYS-149 审核修复)
 //! 6. /v1/auth/me 在"结构完全不是 JWT"的垃圾字符串下返回 401
 //! 7. /v1/auth/me 在正确签名 + 未过期的 token 下能通过验签这一关 (不是 401)
+//! 8. /v1/auth/me 在"签名正确但 token_type=refresh"的 token 下返回 401 (per PR #12 review 补充)
 //!
 //! 注: 上游 service 没起 → 业务 endpoint 返回 502, 不是 200, 这也是验收的预期行为
 //!
 //! 关于测试里的 JWT_SECRET (per ULYS-149 审核修复新增测试, 2026-09-23):
-//! 下面 5/6/7 三个测试都会读写进程级环境变量 `JWT_SECRET`。`cargo test` 默认在同一
+//! 下面 5/6/7/8 四个测试都会读写进程级环境变量 `JWT_SECRET`。`cargo test` 默认在同一
 //! 进程内多线程并发跑各个 `#[test]`，为避免几个测试互相覆写导致 flaky，全部统一设成
 //! 同一个常量 `TEST_JWT_SECRET`——设成相同值即使并发写入也不产生竞争 (最终值恒定)。
 //! "伪造签名"测试签发时刻意用另一个不同的常量, 与 JWT_SECRET 当前是什么值无关。
@@ -35,11 +36,12 @@ const TEST_JWT_SECRET: &str = "cats_bff_test_secret_at_least_32_bytes_long_x";
 /// 故意用一个不同的密钥签发"伪造"token, 用于验证验签会拒绝密钥不匹配的情况
 const WRONG_JWT_SECRET: &str = "a_completely_different_secret_the_bff_never_sees";
 
-fn sign_test_token(secret: &str, exp_offset_secs: i64) -> String {
+fn sign_test_token(secret: &str, exp_offset_secs: i64, token_type: &str) -> String {
     let claims = Claims {
         sub: "00000000-0000-0000-0000-000000000001".to_string(),
         username: "test-user".to_string(),
         exp: chrono::Utc::now().timestamp() + exp_offset_secs,
+        token_type: token_type.to_string(),
         roles: vec![],
     };
     encode(
@@ -175,7 +177,7 @@ async fn me_with_forged_signature_returns_401() {
     // BFF 只信任用 JWT_SECRET 签的 token；用另一个密钥签出的 token
     // 即使 payload 字段（sub/username/exp）看起来完全合法，也必须被拒绝。
     env::set_var("JWT_SECRET", TEST_JWT_SECRET);
-    let forged = sign_test_token(WRONG_JWT_SECRET, 3600);
+    let forged = sign_test_token(WRONG_JWT_SECRET, 3600, "access");
 
     let app = test::init_service(test_app()).await;
     let req = test::TestRequest::get()
@@ -205,7 +207,7 @@ async fn me_with_garbage_token_returns_401() {
 async fn me_with_expired_token_returns_401() {
     // 签名正确但已过期的 token 也必须被拒绝 (验证 validate_exp 生效)。
     env::set_var("JWT_SECRET", TEST_JWT_SECRET);
-    let expired = sign_test_token(TEST_JWT_SECRET, -3600);
+    let expired = sign_test_token(TEST_JWT_SECRET, -3600, "access");
 
     let app = test::init_service(test_app()).await;
     let req = test::TestRequest::get()
@@ -223,7 +225,7 @@ async fn me_with_valid_signed_token_passes_auth_gate() {
     // 所以请求会在 handler 内部转发失败，最终变成 502/500——这恰好证明请求
     // 已经越过了鉴权层，走到了业务逻辑，与 login_without_upstream_returns_502 是同一模式。
     env::set_var("JWT_SECRET", TEST_JWT_SECRET);
-    let valid = sign_test_token(TEST_JWT_SECRET, 3600);
+    let valid = sign_test_token(TEST_JWT_SECRET, 3600, "access");
 
     let app = test::init_service(test_app()).await;
     let req = test::TestRequest::get()
@@ -235,5 +237,25 @@ async fn me_with_valid_signed_token_passes_auth_gate() {
         resp.status(),
         StatusCode::UNAUTHORIZED,
         "correctly signed, unexpired token must not be rejected as unauthorized"
+    );
+}
+
+#[actix_web::test]
+async fn me_with_refresh_token_returns_401() {
+    // token_type=refresh 的 token 即使签名正确、未过期，也不能当 access token 用
+    // (per PR #12 review: refresh token 泄漏不应扩大到能打所有受保护端点)。
+    env::set_var("JWT_SECRET", TEST_JWT_SECRET);
+    let refresh = sign_test_token(TEST_JWT_SECRET, 3600, "refresh");
+
+    let app = test::init_service(test_app()).await;
+    let req = test::TestRequest::get()
+        .uri("/v1/auth/me")
+        .insert_header(("Authorization", format!("Bearer {refresh}")))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "a refresh token must not be accepted as a bearer access token on a protected endpoint"
     );
 }

@@ -7,6 +7,14 @@
 //!   签名 + `exp` 过期时间，签名或时间任一不通过都会被拒绝，不再信任客户端可控输入。
 //! - BFF 在 handler 入口用 `RbacChecker::check` 校验 (Role, Resource, Action)
 //!
+//! **补充修复 (per PR #12 review, 2026-09-23)**：初版只验签+校验 `exp`，未区分
+//! `token_type`。`auth-service` 同时签发 `access`(1h) 和 `refresh`(24h) 两种 token，
+//! 且自己的 `/v1/auth/refresh` handler 明确拒绝把 access token 当 refresh token 用
+//! (`crates/auth-service/src/handlers.rs` 的 `token_type != "refresh"` 检查)——
+//! 但反过来 BFF 这边此前没有对称检查，refresh token 泄漏后能直接当 access token
+//! 打到所有受保护端点，可用窗口从 1h 变相延长到 24h。现在 `verify_jwt` 额外校验
+//! `claims.token_type == "access"`，其它值一律按 `invalid_token_type` 拒绝。
+//!
 //! **已知留尾（本次修复范围之外，需要单独跟进）**：`auth-service` 签发的真实 JWT
 //! (`crates/auth-service/src/models.rs::Claims`) 目前根本不包含 `roles` 声明——即便
 //! 签名验证通过，`Principal.roles` 在生产环境下也永远是空的，所有走 `RbacChecker`
@@ -34,11 +42,16 @@ use actix_web::{FromRequest, HttpRequest};
 /// 字段对齐 `auth-service::models::Claims`（签发方）。注意真实 token **不含 `roles`**——
 /// 这里保留 `roles` 字段只是为了不破坏 `Principal` 的既有接口形状，`#[serde(default)]`
 /// 保证字段缺失时反序列化不报错，实际值目前恒为空数组（见上方模块文档"已知留尾"）。
+///
+/// `token_type` 与 `roles` 不同：真实 token 一定带这个字段（签发方 `issue_jwt` 强制写入，
+/// 见 `auth-service::auth::issue_jwt`），所以这里**不加 `#[serde(default)]`**——缺失该字段
+/// 的 token 应当直接反序列化失败、被当作 `invalid_token` 拒绝，而不是静默放行。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String, // user_id
     pub username: String,
     pub exp: i64,
+    pub token_type: String, // "access" | "refresh"; verify_jwt 只放行 "access"
     #[serde(default)]
     pub roles: Vec<String>,
 }
@@ -109,11 +122,13 @@ impl Principal {
     }
 }
 
-/// 验证 JWT 签名 + 过期时间，返回 Claims (per ULYS-149 审核修复)
+/// 验证 JWT 签名 + 过期时间 + token 类型，返回 Claims (per ULYS-149 审核修复 + PR #12 补充)
 ///
 /// 与 `auth-service::auth::verify_jwt` 使用同一把共享密钥（`JWT_SECRET` 环境变量）、
 /// 同一种算法（HS256，per 技术选型书 §9 ADR-R-09），确保 BFF 只信任 auth-service
-/// 真正签发过的 token，拒绝任何签名不匹配或已过期的请求。
+/// 真正签发过的 token，拒绝任何签名不匹配或已过期的请求。签名+时间通过后，
+/// 额外要求 `token_type == "access"`——refresh token 只应在 `/v1/auth/refresh`
+/// 这一个 endpoint 里被使用，绝不应该被当作访问其它受保护端点的 Bearer token。
 fn verify_jwt(token: &str) -> BffResult<Claims> {
     let secret = env::var("JWT_SECRET")
         .map_err(|_| BffError::ServerMisconfigured("JWT_SECRET env var not set".to_string()))?;
@@ -123,12 +138,18 @@ fn verify_jwt(token: &str) -> BffResult<Claims> {
     // 与 auth-service::auth::verify_jwt 的 `Validation::default()` 行为一致。
     validation.validate_exp = true;
 
-    decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
+    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
         .map(|data| data.claims)
         .map_err(|err| match err.kind() {
             ErrorKind::ExpiredSignature => BffError::Unauthorized("token_expired"),
             _ => BffError::Unauthorized("invalid_token"),
-        })
+        })?;
+
+    if claims.token_type != "access" {
+        return Err(BffError::Unauthorized("invalid_token_type"));
+    }
+
+    Ok(claims)
 }
 
 /// 共享 RBAC checker (per main.rs 注入到 AppState)
