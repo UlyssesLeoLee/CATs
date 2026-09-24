@@ -1,6 +1,7 @@
 {
   "$schema": "https://ulysses-star.local/schemas/aci/v0.1.0-draft.json",
   "aci_version": "0.1.0-draft",
+  "aci_compat_version": "0.1.0-draft",
   "project": "cats-mock",
   "description": "CATs cats-mock ACI 契约 v0.1 — 提示词型断言 (LLM-可读)",
   "homepage": "https://github.com/UlyssesLeoLee/CATs/tree/main/crates/cats-mock",
@@ -127,5 +128,31 @@
     "docs/architecture/2026-09-22-aci-mock-interface/00-design-analysis.md v0.2",
     "docs/briefs/ulys-191-star-mock-aci-stage1.md v0.1",
     "scripts/_lib_validate.py (风格参考)"
-  ]
+  ],
+  "plugins": {
+    "data": {
+      "plugin_id": "data",
+      "enabled": true,
+      "default_mode": "offline",
+      "modules": {}
+    },
+    "db": {
+      "plugin_id": "db",
+      "enabled": true,
+      "default_mode": "offline",
+      "modules": {}
+    },
+    "http": {
+      "plugin_id": "http",
+      "enabled": true,
+      "default_mode": "offline",
+      "modules": {}
+    },
+    "infra": {
+      "plugin_id": "infra",
+      "enabled": true,
+      "default_mode": "offline",
+      "modules": {}
+    }
+  }
 }
