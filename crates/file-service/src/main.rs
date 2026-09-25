@@ -4,7 +4,9 @@
 //! 引用: ULYS-152 切片 B-3
 
 use actix_web::{web, App, HttpServer};
+use cats_rbac::RbacChecker;
 use std::env;
+use std::sync::Arc;
 use tracing::info;
 
 #[actix_web::main]
@@ -28,12 +30,17 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    // 共享 RbacChecker (per ULYS-152 切片 B-3 §"RBAC 中间件挂在每个 endpoint")
+    let rbac_checker = Arc::new(RbacChecker::new());
+
     info!(bind_addr = %bind_addr, "starting file-service");
 
     let pool_data = web::Data::new(pool);
+    let rbac_data = web::Data::new(rbac_checker);
     HttpServer::new(move || {
         App::new()
             .app_data(pool_data.clone())
+            .app_data(rbac_data.clone())
             .route("/healthz", web::get().to(file_service::handlers::healthz))
             .route(
                 "/v1/files",

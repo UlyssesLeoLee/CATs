@@ -4,8 +4,10 @@
 //! 引用: ULYS-152 切片 B-4
 
 use actix_web::{web, App, HttpServer};
+use cats_rbac::RbacChecker;
 use notification_service::EventBus;
 use std::env;
+use std::sync::Arc;
 use tracing::info;
 
 #[actix_web::main]
@@ -31,10 +33,13 @@ async fn main() -> std::io::Result<()> {
 
     let pool_data = web::Data::new(pool);
     let bus_data = web::Data::new(EventBus::new());
+    // 共享 RbacChecker (per ULYS-152 切片 B-4 §"RBAC 中间件挂在每个 endpoint")
+    let rbac_data = web::Data::new(Arc::new(RbacChecker::new()));
     HttpServer::new(move || {
         App::new()
             .app_data(pool_data.clone())
             .app_data(bus_data.clone())
+            .app_data(rbac_data.clone())
             .route(
                 "/healthz",
                 web::get().to(notification_service::handlers::healthz),

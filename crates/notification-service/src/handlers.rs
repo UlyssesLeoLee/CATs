@@ -23,11 +23,14 @@ use crate::models::{
     CreateNotificationRequest, ErrorBody, ListNotificationsQuery, MarkReadResponse,
     NotificationListResponse, NotificationResponse,
 };
-use actix_web::{web, HttpResponse, Responder};
+use crate::rbac;
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use cats_rbac::RbacChecker;
 use serde::Serialize;
 use serde_json::json;
 use sqlx::PgPool;
 use std::env;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// 健康检查响应
@@ -47,47 +50,52 @@ pub async fn healthz() -> impl Responder {
     })
 }
 
-/// `POST /v1/notifications` — 创建通知 (M1 简化: 直接走 HTTP, 后续由 Kafka consumer 接)
+/// `POST /v1/notifications` — 创建通知 (RBAC: Alert Create)
 pub async fn create_notification(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
     bus: web::Data<EventBus>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     body: web::Json<CreateNotificationRequest>,
 ) -> impl Responder {
-    let req = body.into_inner();
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "POST").await {
+        return HttpResponse::build(status).json(body);
+    }
+    let req_body = body.into_inner();
 
-    if req.title.is_empty() {
+    if req_body.title.is_empty() {
         return HttpResponse::BadRequest().json(ErrorBody {
             error: "invalid_request".to_string(),
             message: "title must not be empty".to_string(),
             detail: None,
         });
     }
-    if req.title.len() > 200 {
+    if req_body.title.len() > 200 {
         return HttpResponse::BadRequest().json(ErrorBody {
             error: "invalid_request".to_string(),
             message: "title must be ≤ 200 chars".to_string(),
             detail: None,
         });
     }
-    if req.notif_type.is_empty() {
+    if req_body.notif_type.is_empty() {
         return HttpResponse::BadRequest().json(ErrorBody {
             error: "invalid_request".to_string(),
             message: "type must not be empty".to_string(),
             detail: None,
         });
     }
-    let payload = if req.payload.is_null() {
+    let payload = if req_body.payload.is_null() {
         json!({})
     } else {
-        req.payload.clone()
+        req_body.payload.clone()
     };
 
     let row = match db::insert(
         pool.get_ref(),
-        req.user_id,
-        &req.notif_type,
-        &req.title,
-        &req.body,
+        req_body.user_id,
+        &req_body.notif_type,
+        &req_body.title,
+        &req_body.body,
         &payload,
     )
     .await
@@ -111,11 +119,16 @@ pub async fn create_notification(
     HttpResponse::Created().json(NotificationResponse::from(row))
 }
 
-/// `GET /v1/notifications` — 列出通知 (按 user_id, 分页)
+/// `GET /v1/notifications` — 列出通知 (按 user_id, 分页) (RBAC: Alert Read)
 pub async fn list_notifications(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     query: web::Query<ListNotificationsQuery>,
 ) -> impl Responder {
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "GET").await {
+        return HttpResponse::build(status).json(body);
+    }
     let q = query.into_inner();
     let limit = q.limit.clamp(1, 200);
     let offset = q.offset.max(0);
@@ -149,13 +162,19 @@ pub async fn list_notifications(
 
 /// `PATCH /v1/notifications/{id}/read` — 标记已读
 ///
-/// Query 参数: user_id (per 业务: 通知只能由所属 user 标记已读, 防越权)
+/// Query 参数: user_id (per 业务: 通知只能由所属 user 标记已读, 防越权) (RBAC: Alert Update)
 pub async fn mark_notification_read(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
     bus: web::Data<EventBus>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     path: web::Path<String>,
     query: web::Query<MarkReadQuery>,
 ) -> impl Responder {
+    let path_str = format!("/v1/notifications/{}", path.as_ref());
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "PATCH").await {
+        return HttpResponse::build(status).json(body);
+    }
     let id_str = path.into_inner();
     let id = match Uuid::parse_str(&id_str) {
         Ok(u) => u,
@@ -212,12 +231,18 @@ pub struct MarkReadQuery {
 ///   * SSE 与 broadcast::Receiver 天然契合 (server -> client 单向流)
 ///   * 客户端用 `new EventSource("/v1/notifications/ws")` 即可订阅
 /// - Sprint 2 升级: 引入 actix-ws 0.1 后, 把 stream 替换为 ws frame codec, 端点保持
+/// `GET /v1/notifications/ws` — 实时推送 (SSE 实现, WS deferred to Sprint 2) (RBAC: Alert Read)
 ///
 /// Query 参数: user_id (per 业务: 只推送该用户的通知)
 pub async fn notification_stream(
+    req: HttpRequest,
     bus: web::Data<EventBus>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     query: web::Query<StreamQuery>,
 ) -> impl Responder {
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications/ws", "GET").await {
+        return HttpResponse::build(status).json(body);
+    }
     let _user_id = query.into_inner().user_id;
     let mut rx = bus.subscribe();
 
