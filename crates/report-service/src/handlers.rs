@@ -12,10 +12,13 @@ use crate::db;
 use crate::models::{
     AuditSummaryResponse, ErrorBody, TranslationVolumeResponse, UsageReportItem, UsageReportResponse,
 };
-use actix_web::{web, HttpResponse, Responder};
+use crate::rbac;
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use cats_rbac::RbacChecker;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Serialize)]
@@ -50,11 +53,16 @@ pub struct UsageQuery {
     pub to: DateTime<Utc>,
 }
 
-/// `GET /v1/reports/usage`
+/// `GET /v1/reports/usage` (RBAC: Report Read)
 pub async fn usage_report(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     q: web::Query<UsageQuery>,
 ) -> impl Responder {
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/reports/usage", "GET").await {
+        return HttpResponse::build(status).json(body);
+    }
     if q.from >= q.to {
         return HttpResponse::BadRequest().json(ErrorBody::new(
             "invalid_request",
@@ -104,11 +112,16 @@ pub struct TranslationVolumeQuery {
     pub to: DateTime<Utc>,
 }
 
-/// `GET /v1/reports/translation-volume`
+/// `GET /v1/reports/translation-volume` (RBAC: Report Read)
 pub async fn translation_volume(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     q: web::Query<TranslationVolumeQuery>,
 ) -> impl Responder {
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/reports/translation-volume", "GET").await {
+        return HttpResponse::build(status).json(body);
+    }
     if q.from >= q.to {
         return HttpResponse::BadRequest().json(ErrorBody::new(
             "invalid_request",
@@ -167,11 +180,16 @@ pub struct AuditSummaryQuery {
     pub to: DateTime<Utc>,
 }
 
-/// `GET /v1/reports/audit-summary`
+/// `GET /v1/reports/audit-summary` (RBAC: Report Read)
 pub async fn audit_summary(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     q: web::Query<AuditSummaryQuery>,
 ) -> impl Responder {
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/reports/audit-summary", "GET").await {
+        return HttpResponse::build(status).json(body);
+    }
     if q.from >= q.to {
         return HttpResponse::BadRequest().json(ErrorBody::new(
             "invalid_request",

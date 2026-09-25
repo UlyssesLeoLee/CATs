@@ -20,6 +20,7 @@
 pub mod db;
 pub mod handlers;
 pub mod models;
+pub mod rbac;
 
 pub use handlers::{
     audit_summary, healthz, healthz_response, translation_volume, usage_report, HealthResponse,

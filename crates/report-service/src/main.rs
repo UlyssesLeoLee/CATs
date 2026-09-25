@@ -57,10 +57,13 @@ async fn main() -> std::io::Result<()> {
     };
 
     let pool_data = web::Data::new(pool);
+    // 共享 RbacChecker (per ULYS-153 切片 C-1 §"RBAC 集成")
+    let rbac_data = web::Data::new(std::sync::Arc::new(cats_rbac::RbacChecker::new()));
     let bind_addr = cfg.bind_addr.clone();
     HttpServer::new(move || {
         App::new()
             .app_data(pool_data.clone())
+            .app_data(rbac_data.clone())
             .route("/healthz", web::get().to(report_service::handlers::healthz))
             .route(
                 "/v1/reports/usage",

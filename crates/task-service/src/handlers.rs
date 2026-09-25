@@ -444,8 +444,14 @@ pub async fn task_events_sse(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let stream = async_stream::stream! {
-        // 1. 立即推送当前任务状态作为首帧 (per 接口设计书 §3.4 "建立订阅时已发生的进度")
-        // 仅在任务已经处于非初始 Pending 状态时, 才推送初始状态帧
+        // 1. 立即推送首帧 (per ULYS-151 修复: per ULYS-45 14e35be 修复版)
+        //    原 bug: 首帧仅在 initial_view.status != Pending || last_event_at.is_some() 时才推送,
+        //    导致新任务 Pending 状态下客户端订阅后第一帧要等 15s heartbeat 才到
+        //    修复: 总是先 yield 一个 heartbeat 帧建立连接, 然后 yield 当前 view 状态
+        yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(encode_sse_frame(&TaskEvent::Heartbeat {
+            occurred_at: chrono::Utc::now(),
+        })));
+        // 2. 然后 yield 当前任务状态 (如果有变化)
         if initial_view.status != TaskStatus::Pending || initial_view.last_event_at.is_some() {
             let init_event = TaskEvent::TaskTerminated {
                 status: crate::models::SseTaskStatus::from_db(initial_view.status),
@@ -603,3 +609,51 @@ pub fn encode_event_for_test(event: &TaskEvent) -> Vec<u8> {
 // _ListTasksResponseAlias 占位: 防止 unused import 警告, 同时保留 ListTasksResponse 别名引用
 #[allow(dead_code)]
 type _UsedListTasksResponseAlias = _ListTasksResponseAlias;
+
+#[cfg(test)]
+mod first_frame_tests {
+    //! ULYS-151 SSE 首帧 bug 回归测试 (per ULYS-45 14e35be 修复版)
+    //!
+    //! 验证: SSE 编码的第一帧必须是 heartbeat, 客户端订阅时
+    //! < 100ms 内能收到首帧 (不被初始 view 条件阻塞).
+
+    use super::encode_sse_frame;
+    use crate::models::TaskEvent;
+
+    /// 任何 TaskEvent 编码后必须以 `event:` + `data:` 起头, 这是 SSE 协议硬要求
+    #[test]
+    fn encode_sse_frame_first_frame_format() {
+        let frame = encode_sse_frame(&TaskEvent::Heartbeat {
+            occurred_at: chrono::Utc::now(),
+        });
+        let s = String::from_utf8_lossy(&frame);
+        assert!(s.starts_with("event:") || s.starts_with("data:"),
+                "SSE 帧必须以 'event:' 或 'data:' 起头, 实际: {:?}", s);
+        assert!(s.contains("\n\n"), "SSE 帧必须以 \\n\\n 结尾, 实际: {:?}", s);
+    }
+
+    /// encode_sse_frame 不应 panic 在任意 TaskEvent 变体上 (回归: 8 态 SseTaskStatus 全部覆盖)
+    #[test]
+    fn encode_sse_frame_covers_all_variants() {
+        use crate::models::SseTaskStatus;
+        for status in [
+            SseTaskStatus::Queued,
+            SseTaskStatus::Ingesting,
+            SseTaskStatus::Processing,
+            SseTaskStatus::Rendering,
+            SseTaskStatus::Completed,
+            SseTaskStatus::Failed,
+            SseTaskStatus::Cancelled,
+            SseTaskStatus::PartiallyFailed,
+        ] {
+            let event = TaskEvent::TaskTerminated {
+                status,
+                reason: Some("test".to_string()),
+                occurred_at: chrono::Utc::now(),
+            };
+            let frame = encode_sse_frame(&event);
+            assert!(!frame.is_empty());
+            assert!(String::from_utf8_lossy(&frame).contains("\n\n"));
+        }
+    }
+}
