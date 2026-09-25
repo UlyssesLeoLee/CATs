@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use reqwest::{Client, Method, RequestBuilder, StatusCode};
+use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
 
 use crate::state::{AppState, TokenPair};
