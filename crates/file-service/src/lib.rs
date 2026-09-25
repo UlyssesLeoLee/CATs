@@ -26,6 +26,7 @@
 pub mod db;
 pub mod handlers;
 pub mod models;
+pub mod rbac;
 
 pub use models::{
     ErrorBody, FileListResponse, FileMetadataResponse, ListFilesQuery, NewFileRecord, UploadFileRequest,

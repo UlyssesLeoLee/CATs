@@ -25,6 +25,7 @@ pub mod db;
 pub mod events;
 pub mod handlers;
 pub mod models;
+pub mod rbac;
 
 pub use events::EventBus;
 pub use models::{
