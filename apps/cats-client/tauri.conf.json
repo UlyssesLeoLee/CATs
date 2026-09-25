@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CATs",
+  "version": "0.1.0",
+  "identifier": "com.cats.client",
+  "build": {
+    "beforeDevCommand": "pnpm run dev",
+    "beforeBuildCommand": "pnpm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "./dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "CATs 桌面客户端",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.cats.internal http://localhost:8097 ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis", "deb", "appimage", "dmg"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "全媒体 AI 辅助翻译 SaaS 平台桌面客户端",
+    "longDescription": "CATs 桌面客户端：文档导入 / 实时翻译 / 段落级编辑 / TM 术语管理 / 离线工作模式。"
+  },
+  "plugins": {}
+}

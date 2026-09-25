@@ -5,7 +5,7 @@ edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
-description = "CATs 文件存取服务（per 微服务架构书 §4.1）"
+description = "CATs 文件存取服务（per 微服务架构书 §4.1 + ULYS-152 切片 B-3）"
 readme      = "README.md"
 publish     = false
 
@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 # workspace 共享依赖
 cats-common.workspace = true
+cats-rbac.workspace   = true
 tokio.workspace       = true
 actix-web.workspace   = true
 anyhow.workspace      = true
@@ -23,6 +24,11 @@ tracing.workspace     = true
 serde.workspace       = true
 serde_json.workspace  = true
 sqlx.workspace        = true
+# 业务级
+uuid       = { version = "1", features = ["v4", "serde"] }
+chrono     = { version = "0.4", features = ["serde"] }
+sha2       = "0.10"
+base64     = "0.22"
 # 暂未挂接 gRPC 契约（M1 阶段按需引入）
 
 [dev-dependencies]

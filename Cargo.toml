@@ -34,6 +34,8 @@ members = [
     "crates/cats-bff",
 "crates/m1-s0-smoke",
     "crates/cats-rbac",
+    # AI 网关 (per ADR-010 + Sprint 2 100%)
+    "crates/cats-ai-gateway",
     # 测试基础设施 (per CATs_测试Mock项目设计书_v1.0)
     "crates/cats-mock",
 ]
@@ -84,6 +86,9 @@ async-trait = "0.1"
 # 共享库（workspace 内部）
 cats-proto  = { path = "crates/proto" }
 cats-common = { path = "crates/common" }
+cats-rbac   = { path = "crates/cats-rbac" }
+# JWT payload 解析 (无验签, 简化版)
+base64      = "0.22"
 # cats-mock 测试基础设施用 (per CATs_测试Mock项目设计书_v1.0 §6 依赖矩阵)
 chrono    = { version = "0.4", features = ["serde"] }
 fake      = { version = "2", features = ["derive", "chrono"] }
