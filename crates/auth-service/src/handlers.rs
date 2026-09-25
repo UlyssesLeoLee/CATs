@@ -18,6 +18,19 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// M1 默认角色 (per ULYS-149 第二层缺口修复)
+///
+/// 简化版: 所有登录用户默认获得 ["User"] 角色.
+/// Sprint 2 接 user-service / workspace-membership 时, 应从 user_roles 表 JOIN 注入.
+fn default_roles_for(user: &crate::models::UserCredential) -> Vec<String> {
+    // 简化逻辑: superadmin 用户 (硬编码 username "admin") 额外给 Sponsor; 其余只给 User.
+    if user.username == "admin" {
+        vec!["User".to_string(), "Sponsor".to_string()]
+    } else {
+        vec!["User".to_string()]
+    }
+}
+
 /// AppState: PgPool + AuditSink (dyn) + 配置
 #[derive(Clone)]
 pub struct AppState {
@@ -168,11 +181,11 @@ pub async fn login(
         .await;
         return unauthorized();
     }
-    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access") {
+    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access", default_roles_for(&user)) {
         Ok(p) => p,
         Err(e) => return server_error(&format!("jwt issue failed: {e}")),
     };
-    let (refresh_token, _refresh_exp) = match issue_jwt(user.id, &user.username, "refresh") {
+    let (refresh_token, _refresh_exp) = match issue_jwt(user.id, &user.username, "refresh", default_roles_for(&user)) {
         Ok(p) => p,
         Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
     };
@@ -313,12 +326,12 @@ pub async fn refresh(
         return server_error(&format!("revoke_jti failed: {e}"));
     }
 
-    // 签发新 access + 新 refresh (新 jti)
-    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access") {
+    // 签发新 access + 新 refresh (新 jti) — 从现有 claims.roles 复刻 (per ULYS-149 第二层缺口)
+    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access", claims.roles.clone()) {
         Ok(p) => p,
         Err(e) => return server_error(&format!("jwt issue failed: {e}")),
     };
-    let (refresh_token, _) = match issue_jwt(user.id, &user.username, "refresh") {
+    let (refresh_token, _) = match issue_jwt(user.id, &user.username, "refresh", claims.roles.clone()) {
         Ok(p) => p,
         Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
     };

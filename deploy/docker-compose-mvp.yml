@@ -1,0 +1,313 @@
+# CATs MVP Backend - 一键 docker-compose 起所有服务
+# 简化路径: 避开 k3d,直接 docker compose (per 9/4 17:47 mock 项目偏好 + MVP 商业版 quick 启动)
+#
+# 用法:
+#   1. cargo build --release --workspace (一次性,需要 20-40 分钟)
+#   2. cd deploy && docker compose -f docker-compose-mvp.yml up -d
+#   3. 验证: curl http://localhost:8080/healthz
+#
+# 暴露端口:
+#   - 5432 (PostgreSQL 18.6 + pgvector 0.8.6)
+#   - 9092 (Kafka)
+#   - 8080 (envoy-edge)
+#   - 8090 (cats-ai-gateway)
+#   - 50051 (translation-core gRPC)
+#   - 8081-8090 (各 service 直连, dev 用)
+
+version: "3.9"
+
+x-cargo-base: &cargo-base
+  image: cats-runtime:latest
+  build:
+    context: ..
+    dockerfile: deploy/docker/Dockerfile.runtime
+  restart: unless-stopped
+
+services:
+  # ============================================================
+  # 1. PostgreSQL 18.6 + pgvector 0.8.6 (per CATs_技术基线_v1.0 §1)
+  # ============================================================
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: cats-mvp-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev_only_local
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:56432:5432"
+    volumes:
+      - cats-mvp-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # 2. Kafka (KRaft 1-broker MVP 简化)
+  # ============================================================
+  kafka:
+    image: apache/kafka:3.7.1
+    container_name: cats-mvp-kafka
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: cats-mvp-cluster-1234567890
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ============================================================
+  # 3. cats-ai-gateway (mock providers, MVP)
+  # ============================================================
+  ai-gateway:
+    <<: *cargo-base
+    container_name: cats-mvp-ai-gateway
+    environment:
+      RUST_LOG: info
+      REST_BIND_ADDR: 0.0.0.0:8090
+      GRPC_BIND_ADDR: 0.0.0.0:50061
+      COMPLIANCE_MODE: Cloud
+    ports:
+      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:50061:50061"
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  # ============================================================
+  # 4. translation-core (gRPC server)
+  # ============================================================
+  translation-core:
+    <<: *cargo-base
+    container_name: cats-mvp-translation-core
+    command: ["/usr/local/bin/translation-core"]
+    environment:
+      RUST_LOG: info
+      GRPC_BIND_ADDR: 0.0.0.0:50051
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/project_db"
+      AI_GATEWAY_URL: "http://ai-gateway:8090"
+    ports:
+      - "127.0.0.1:50051:50051"
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      ai-gateway: { condition: service_started }
+
+  # ============================================================
+  # 5. auth-service
+  # ============================================================
+  auth-service:
+    <<: *cargo-base
+    container_name: cats-mvp-auth-service
+    command: ["/usr/local/bin/auth-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/auth_db"
+      JWT_SECRET: "dev-jwt-secret-rotate-in-prod"
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # ============================================================
+  # 6. user-service
+  # ============================================================
+  user-service:
+    <<: *cargo-base
+    container_name: cats-mvp-user-service
+    command: ["/usr/local/bin/user-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/user_db"
+    ports:
+      - "127.0.0.1:8082:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # ============================================================
+  # 7. project-service
+  # ============================================================
+  project-service:
+    <<: *cargo-base
+    container_name: cats-mvp-project-service
+    command: ["/usr/local/bin/project-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/project_db"
+    ports:
+      - "127.0.0.1:8083:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # ============================================================
+  # 8. task-service
+  # ============================================================
+  task-service:
+    <<: *cargo-base
+    container_name: cats-mvp-task-service
+    command: ["/usr/local/bin/task-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/task_db"
+    ports:
+      - "127.0.0.1:8084:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # ============================================================
+  # 9. file-service
+  # ============================================================
+  file-service:
+    <<: *cargo-base
+    container_name: cats-mvp-file-service
+    command: ["/usr/local/bin/file-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/file_db"
+      FILES_DIR: "/var/lib/cats/files"
+    ports:
+      - "127.0.0.1:8085:8080"
+    volumes:
+      - cats-mvp-files:/var/lib/cats/files
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # ============================================================
+  # 10. notification-service (Kafka consumer)
+  # ============================================================
+  notification-service:
+    <<: *cargo-base
+    container_name: cats-mvp-notification-service
+    command: ["/usr/local/bin/notification-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/notification_db"
+      KAFKA_BROKER: "kafka:9092"
+      KAFKA_NOTIFICATIONS_TOPIC: "cats.notifications.v1"
+    ports:
+      - "127.0.0.1:8086:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  # ============================================================
+  # 11. report-service
+  # ============================================================
+  report-service:
+    <<: *cargo-base
+    container_name: cats-mvp-report-service
+    command: ["/usr/local/bin/report-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/task_db"
+    ports:
+      - "127.0.0.1:8087:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # ============================================================
+  # 12. audit-service (Kafka consumer)
+  # ============================================================
+  audit-service:
+    <<: *cargo-base
+    container_name: cats-mvp-audit-service
+    command: ["/usr/local/bin/audit-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/audit_db"
+      KAFKA_BROKER: "kafka:9092"
+      KAFKA_AUDIT_TOPIC: "cats.audit.v1"
+    ports:
+      - "127.0.0.1:8088:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  # ============================================================
+  # 13. worker-service (周期 scheduler)
+  # ============================================================
+  worker-service:
+    <<: *cargo-base
+    container_name: cats-mvp-worker-service
+    command: ["/usr/local/bin/worker-service"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/task_db"
+      TRANSLATION_CORE_URL: "http://translation-core:50051"
+    ports:
+      - "127.0.0.1:8089:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      translation-core: { condition: service_started }
+
+  # ============================================================
+  # 14. cats-bff (Tauri 客户端锚点)
+  # ============================================================
+  cats-bff:
+    <<: *cargo-base
+    container_name: cats-mvp-bff
+    command: ["/usr/local/bin/cats-bff"]
+    environment:
+      RUST_LOG: info
+      BIND_ADDR: 0.0.0.0:8080
+      AUTH_SERVICE_URL: "http://auth-service:8080"
+      PROJECT_SERVICE_URL: "http://project-service:8080"
+      TRANSLATION_CORE_URL: "http://translation-core:50051"
+    ports:
+      - "127.0.0.1:8090:8080"  # 客户端走这个
+    depends_on:
+      auth-service: { condition: service_started }
+      project-service: { condition: service_started }
+      translation-core: { condition: service_started }
+
+  # ============================================================
+  # 15. envoy-edge (per 9/1 13:03 nginx → envoy)
+  # ============================================================
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    container_name: cats-mvp-envoy
+    restart: unless-stopped
+    volumes:
+      - ./envoy-mvp.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "127.0.0.1:10000:8080"
+    depends_on:
+      - auth-service
+      - project-service
+      - task-service
+      - file-service
+      - notification-service
+      - report-service
+      - audit-service
+
+volumes:
+  cats-mvp-pgdata: {}
+  cats-mvp-files: {}

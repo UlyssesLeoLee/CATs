@@ -1,0 +1,17 @@
+{
+  "id": "mock-anthropic-001",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Mock Anthropic response"
+    }
+  ],
+  "model": "claude-3-sonnet",
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 10,
+    "output_tokens": 20
+  }
+}
