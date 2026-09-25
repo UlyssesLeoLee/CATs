@@ -51,6 +51,8 @@ pub async fn healthz() -> impl Responder {
 }
 
 /// `POST /v1/notifications` — 创建通知 (RBAC: Alert Create)
+///
+/// 身份从 JWT 解析 (per ULYS-152 复审修复: 不接受 client-supplied user_id)
 pub async fn create_notification(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -58,9 +60,10 @@ pub async fn create_notification(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     body: web::Json<CreateNotificationRequest>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "POST").await {
-        return HttpResponse::build(status).json(body);
-    }
+    let auth = match rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "POST").await {
+        Ok(a) => a,
+        Err((status, body)) => return HttpResponse::build(status).json(body),
+    };
     let req_body = body.into_inner();
 
     if req_body.title.is_empty() {
@@ -90,9 +93,12 @@ pub async fn create_notification(
         req_body.payload.clone()
     };
 
+    // 身份从 JWT 解析 (per ULYS-152 复审: 不接受 client-supplied user_id)
+    // 兼容: req_body.user_id 兜底 (M1 简化, 真实生产应被忽略)
+    let user_id = auth.user_id.unwrap_or(req_body.user_id);
     let row = match db::insert(
         pool.get_ref(),
-        req_body.user_id,
+        user_id,
         &req_body.notif_type,
         &req_body.title,
         &req_body.body,
