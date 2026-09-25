@@ -34,6 +34,8 @@ members = [
     "crates/cats-bff",
 "crates/m1-s0-smoke",
     "crates/cats-rbac",
+    # AI 网关 (per ADR-010 + Sprint 2 100%)
+    "crates/cats-ai-gateway",
     # 测试基础设施 (per CATs_测试Mock项目设计书_v1.0)
     "crates/cats-mock",
 ]
@@ -84,6 +86,10 @@ async-trait = "0.1"
 # 共享库（workspace 内部）
 cats-proto  = { path = "crates/proto" }
 cats-common = { path = "crates/common" }
+# ACI 跨项目 emitter (per ULYS-191 §4.3.2 brief v0.1)
+# 守门 #11 缺标比错标: git dep 锁 rev=df28c56 (= ULYS-191.1 / ULYS-224 main HEAD)
+aci-emitter = { git = "https://github.com/UlyssesLeoLee/aci-emitter", rev = "df28c56" }
+
 # cats-mock 测试基础设施用 (per CATs_测试Mock项目设计书_v1.0 §6 依赖矩阵)
 chrono    = { version = "0.4", features = ["serde"] }
 fake      = { version = "2", features = ["derive", "chrono"] }

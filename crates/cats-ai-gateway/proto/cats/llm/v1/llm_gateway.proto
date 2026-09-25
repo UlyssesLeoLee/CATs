@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package cats.llm.v1;
+
+// LlmGateway — CATs AI 网关对外 gRPC 契约（per ADR-010 §4 + 接口设计书 §1.5）
+// MVP 阶段：本文件由 cats-ai-gateway crate 独立编译（per 2026-09-19 落地任务）。
+// 待 proto 治理流程统一后迁回 `crates/proto/proto/cats/v1/`。
+
+// ──────────────────────────────────────────────────────────────
+// Chat: 同步调用 (translation-core / 内嵌使用)
+// ──────────────────────────────────────────────────────────────
+service LlmGateway {
+  // 同步 chat 调用
+  rpc Chat(ChatRequest) returns (ChatResponse);
+
+  // 流式 chat 调用 — MVP 阶段未实现（per 2026-09-19 落地任务, 留 Sprint 3）
+  // rpc ChatStream(ChatRequest) returns (stream ChatResponse);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Messages
+// ──────────────────────────────────────────────────────────────
+
+message ChatMessage {
+  string role   = 1;  // "system" | "user" | "assistant"
+  string content = 2;
+}
+
+message ChatRequest {
+  string                org_id              = 1;
+  string                model               = 2;  // "gpt-4o-mini" | "claude-3-5-sonnet" | "gemini-1.5-flash" | "deepseek-chat"
+  repeated ChatMessage  messages            = 3;
+  float                 temperature         = 4;  // 0.0 ~ 2.0
+  uint32                max_tokens          = 5;
+  // 合规模式: "cloud" | "local" (per ADR-010 §4 双路径)
+  string                compliance_mode     = 6;
+  // 幂等键 (per 接口设计书 §1.1)
+  string                idempotency_key     = 7;
+}
+
+message ChatResponse {
+  string                id                  = 1;
+  string                model               = 2;
+  string                provider            = 3;  // 实际命中的 provider 名
+  string                content             = 4;
+  uint32                prompt_tokens       = 5;
+  uint32                completion_tokens   = 6;
+  uint32                total_tokens        = 7;
+  // 命中链路: "openai->anthropic" (按 fallback 顺序)
+  string                fallback_chain      = 8;
+}

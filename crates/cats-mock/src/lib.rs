@@ -26,6 +26,7 @@
 // 设计书是 single source of truth;这里不强制每行 doc comment, 避免 100+ warning 噪音
 #![allow(missing_docs)]
 
+pub mod aci_emitter_helper;
 pub mod data;
 pub mod db;
 pub mod http;
@@ -38,9 +39,13 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
 /// 返回 crate 版本字符串
-pub fn version() -> &'static str { VERSION }
+pub fn version() -> &'static str {
+    VERSION
+}
 /// 返回 crate 名称
-pub fn name() -> &'static str { NAME }
+pub fn name() -> &'static str {
+    NAME
+}
 
 #[cfg(test)]
 mod tests {
@@ -49,7 +54,10 @@ mod tests {
     #[test]
     fn version_is_semver_like() {
         let v = version();
-        assert!(v.starts_with("0.1."), "version should start with '0.1.', got {v}");
+        assert!(
+            v.starts_with("0.1."),
+            "version should start with '0.1.', got {v}"
+        );
     }
 
     #[test]
