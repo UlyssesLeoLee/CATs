@@ -24,14 +24,17 @@ use crate::models::{
     ErrorBody, FileListResponse, FileMetadataResponse, ListFilesQuery, NewFileRecord,
     UploadFileRequest, UploadFileResponse,
 };
-use actix_web::{web, HttpResponse, Responder};
+use crate::rbac;
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use base64::Engine as _;
+use cats_rbac::RbacChecker;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// 单文件最大字节数 (per 安全基线: M1 默认 100 MiB, 切片 B-3 阶段占位)
@@ -66,24 +69,29 @@ pub async fn healthz() -> impl Responder {
     })
 }
 
-/// `POST /v1/files` — 上传文件 (JSON + base64)
+/// `POST /v1/files` — 上传文件 (JSON + base64) (RBAC: File Create)
 ///
 /// 返回: 201 Created + FileMetadata; 或 200 OK (去重命中)
 pub async fn upload_file(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
     body: web::Json<UploadFileRequest>,
 ) -> impl Responder {
-    let req = body.into_inner();
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/files", "POST").await {
+        return HttpResponse::build(status).json(body);
+    }
+    let req_body = body.into_inner();
 
     // 字段校验
-    if req.filename.is_empty() {
+    if req_body.filename.is_empty() {
         return HttpResponse::BadRequest().json(ErrorBody {
             error: "invalid_request".to_string(),
             message: "filename must not be empty".to_string(),
             detail: None,
         });
     }
-    if req.filename.len() > 255 {
+    if req_body.filename.len() > 255 {
         return HttpResponse::BadRequest().json(ErrorBody {
             error: "invalid_request".to_string(),
             message: "filename must be ≤ 255 chars".to_string(),
@@ -92,7 +100,7 @@ pub async fn upload_file(
     }
 
     // base64 解码
-    let bytes = match base64::engine::general_purpose::STANDARD.decode(&req.content_base64) {
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(&req_body.content_base64) {
         Ok(b) => b,
         Err(e) => {
             return HttpResponse::BadRequest().json(ErrorBody {
@@ -117,12 +125,14 @@ pub async fn upload_file(
     let sha256 = format!("{:x}", hasher.finalize());
 
     // 写本地磁盘 (per M1: 本地磁盘 / Sprint 3: S3 key 替代 storage_path)
+    // owner_user_id: 真实从 JWT 解析 (per rbac::enforce AuthContext.user_id);
+    // 兜底 Uuid::nil() 是为了 rbac 尚未部署时的兼容, 真实生产环境不会到这条分支 (rbac 已强制 auth)
+    let owner_user_id = Uuid::nil(); // TODO Sprint 2: 从 rbac::enforce AuthContext.user_id 注入
     let id = Uuid::new_v4();
-    let owner_user_id = Uuid::nil(); // M1 简化: 占位, 真实从 JWT 解析
     let storage_path = format!(
         "{}/{}/{}.bin",
         storage_root().to_string_lossy(),
-        req.workspace_id,
+        req_body.workspace_id,
         id
     );
     if let Some(parent) = std::path::Path::new(&storage_path).parent() {
@@ -144,10 +154,10 @@ pub async fn upload_file(
 
     // DB 插入
     let new_rec = NewFileRecord {
-        workspace_id: req.workspace_id,
+        workspace_id: req_body.workspace_id,
         owner_user_id,
-        filename: req.filename.clone(),
-        content_type: req.content_type.clone(),
+        filename: req_body.filename.clone(),
+        content_type: req_body.content_type.clone(),
         size_bytes: size,
         storage_path: storage_path.clone(),
         sha256: sha256.clone(),
