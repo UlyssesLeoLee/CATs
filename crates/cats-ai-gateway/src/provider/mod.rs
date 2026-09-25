@@ -234,10 +234,11 @@ impl AiProvider for MockProvider {
 }
 
 // fixture 文件编译期嵌入 (per 落地任务: mock_data 在 crates/cats-mock/mock_data/ai_gw/)
-const OPENAI_FIXTURE: &str    = include_str!("../../cats-mock/mock_data/ai_gw/openai_responses.json");
-const ANTHROPIC_FIXTURE: &str = include_str!("../../cats-mock/mock_data/ai_gw/anthropic_responses.json");
-const GEMINI_FIXTURE: &str    = include_str!("../../cats-mock/mock_data/ai_gw/gemini_responses.json");
-const DEEPSEEK_FIXTURE: &str  = include_str!("../../cats-mock/mock_data/ai_gw/deepseek_responses.json");
+// 路径: src/provider/mod.rs → 上 3 层 → crates/ → cats-mock/mock_data/ai_gw/
+const OPENAI_FIXTURE: &str    = include_str!("../../../cats-mock/mock_data/ai_gw/openai_responses.json");
+const ANTHROPIC_FIXTURE: &str = include_str!("../../../cats-mock/mock_data/ai_gw/anthropic_responses.json");
+const GEMINI_FIXTURE: &str    = include_str!("../../../cats-mock/mock_data/ai_gw/gemini_responses.json");
+const DEEPSEEK_FIXTURE: &str  = include_str!("../../../cats-mock/mock_data/ai_gw/deepseek_responses.json");
 
 /// 构造 OpenAI mock provider
 pub fn openai() -> Arc<dyn AiProvider> {

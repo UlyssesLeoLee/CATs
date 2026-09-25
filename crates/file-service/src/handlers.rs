@@ -78,9 +78,10 @@ pub async fn upload_file(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     body: web::Json<UploadFileRequest>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/files", "POST").await {
-        return HttpResponse::build(status).json(body);
-    }
+    let auth = match rbac::enforce(rbac_checker.get_ref(), &req, "/v1/files", "POST").await {
+        Ok(a) => a,
+        Err((status, body)) => return HttpResponse::build(status).json(body),
+    };
     let req_body = body.into_inner();
 
     // 字段校验
@@ -125,9 +126,9 @@ pub async fn upload_file(
     let sha256 = format!("{:x}", hasher.finalize());
 
     // 写本地磁盘 (per M1: 本地磁盘 / Sprint 3: S3 key 替代 storage_path)
-    // owner_user_id: 真实从 JWT 解析 (per rbac::enforce AuthContext.user_id);
-    // 兜底 Uuid::nil() 是为了 rbac 尚未部署时的兼容, 真实生产环境不会到这条分支 (rbac 已强制 auth)
-    let owner_user_id = Uuid::nil(); // TODO Sprint 2: 从 rbac::enforce AuthContext.user_id 注入
+    // owner_user_id: 真实从 JWT 解析 (per rbac::enforce AuthContext.user_id)
+    // rbac::enforce 已强制 auth (401 missing_authorization), 所以 auth.user_id 兜底 nil 永远不会触发
+    let owner_user_id = auth.user_id.unwrap_or_else(Uuid::nil);
     let id = Uuid::new_v4();
     let storage_path = format!(
         "{}/{}/{}.bin",
