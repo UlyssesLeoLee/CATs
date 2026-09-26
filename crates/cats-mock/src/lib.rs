@@ -21,6 +21,31 @@
 //!     db::DbFixture,                 // DB fixture
 //! };
 //! ```
+//!
+//! ## module_switch 接入 (per ULYS-190 §4.4 CATs stage2 brief)
+//!
+//! CATs cats-mock 通过 `.aci.json` 的 `plugins.<plugin_id>.modules.<module_id>`
+//! 三层开关暴露 13 个 module_switch (data 4 + db 3 + http 4 + infra 2)。读法:
+//!
+//! ```text
+//! 跨语言 dispatch:
+//!   python crates/cats-mock/scripts/_lib_mock_switch_cats.py crates/cats-mock
+//! ```
+//!
+//! 跨项目範式对齐 IM1.0 stage1 (per G-MS-04 命名一致性 + mock_ws_frames server_frames 聚合模式)。
+//! Rust native 版本跨 session (per G-MS-BRIEF-S44-01 跨项目推广); 当前 Python helper 通过
+//! subprocess 暴露 (per AGENTS.md 守门 #9)。CI gate `mock-switch-validate.py
+//! validate-one cats` (Star ship) 验证 13 module 全部 enabled + cluster_ok=True。
+//!
+//! mock_switch_trace_format (per .mock-cluster.json) 输出例 (~92 字, 略超 G-MS-08 ~80 字,
+//! 跨 session 截断):
+//!   `cluster.enabled=True,mode=offline,plugins=[data(4m),db(3m),http(4m),infra(2m)]=13/13 modules`
+//!
+//! 13 module 拆分 (per §4.4 stage2 命名锁定):
+//! - `data` plugin 4 module: user / project / task / audit (per 业务对象 factory)
+//! - `db` plugin 3 module: fixture / schema / seed (per DB fixture 角色)
+//! - `http` plugin 4 module: server / routes / response / healthz (per HTTP server 角色)
+//! - `infra` plugin 2 module: kafka / redis (per 基础设施替身)
 
 // 公共 API 的详细文档见设计书 doc/02-基础设计/测试/CATs_测试Mock项目设计书_v1.0.md
 // 设计书是 single source of truth;这里不强制每行 doc comment, 避免 100+ warning 噪音
