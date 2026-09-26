@@ -5,9 +5,25 @@
   "project": "cats-mock",
   "description": "CATs cats-mock ACI 契约 v0.1 — 提示词型断言 (LLM-可读)",
   "homepage": "https://github.com/UlyssesLeoLee/CATs/tree/main/crates/cats-mock",
-  "supported_layers": ["ut", "it", "st", "e2e"],
-  "severity_levels": ["critical", "high", "medium", "low", "info"],
-  "assertion_statuses": ["PASS", "FAIL", "WARN", "SKIP"],
+  "supported_layers": [
+    "ut",
+    "it",
+    "st",
+    "e2e"
+  ],
+  "severity_levels": [
+    "critical",
+    "high",
+    "medium",
+    "low",
+    "info"
+  ],
+  "assertion_statuses": [
+    "PASS",
+    "FAIL",
+    "WARN",
+    "SKIP"
+  ],
   "expect_value_types": [
     "response_within_ms",
     "response_status_2xx",
@@ -134,25 +150,107 @@
       "plugin_id": "data",
       "enabled": true,
       "default_mode": "offline",
-      "modules": {}
+      "modules": {
+        "user": {
+          "module_id": "user",
+          "enabled": true,
+          "mode": "offline",
+          "description": "UserFactory + User struct + UserDbRow (business object factory for users)"
+        },
+        "project": {
+          "module_id": "project",
+          "enabled": true,
+          "mode": "offline",
+          "description": "ProjectFactory + Project struct + ProjectStatus enum (business object factory for projects)"
+        },
+        "task": {
+          "module_id": "task",
+          "enabled": true,
+          "mode": "offline",
+          "description": "TaskFactory + Task struct + TaskStatus enum (business object factory for tasks)"
+        },
+        "audit": {
+          "module_id": "audit",
+          "enabled": true,
+          "mode": "offline",
+          "description": "AuditEventFactory + AuditEvent struct + AuditOutcome enum (business object factory for audit events)"
+        }
+      }
     },
     "db": {
       "plugin_id": "db",
       "enabled": true,
       "default_mode": "offline",
-      "modules": {}
+      "modules": {
+        "fixture": {
+          "module_id": "fixture",
+          "enabled": true,
+          "mode": "offline",
+          "description": "InMemoryDbFixture + PgDbFixture + DbFixture trait + factory fns in_memory()/pg() (per-project DB fixture, 替代 testcontainers)"
+        },
+        "schema": {
+          "module_id": "schema",
+          "enabled": true,
+          "mode": "offline",
+          "description": "SchemaSet + 5 schema fns: users_schema/projects_schema/tasks_schema/audit_log_schema/translation_unit_schema (per-table DB schema definitions)"
+        },
+        "seed": {
+          "module_id": "seed",
+          "enabled": true,
+          "mode": "offline",
+          "description": "SeedSet + SeedEntry + SeedParam + 5 seed fns: users_default/projects_default/ + users_from/projects_from (per-table seed data factory)"
+        }
+      }
     },
     "http": {
       "plugin_id": "http",
       "enabled": true,
       "default_mode": "offline",
-      "modules": {}
+      "modules": {
+        "server": {
+          "module_id": "server",
+          "enabled": true,
+          "mode": "offline",
+          "description": "MockServer + MockServerConfig (in-memory actix-web HTTP server, 替代 wiremock/axum-test)"
+        },
+        "routes": {
+          "module_id": "routes",
+          "enabled": true,
+          "mode": "offline",
+          "description": "6 route registration fns: auth_routes/user_routes/project_routes/task_routes/audit_routes/healthz_routes (per-resource HTTP route registration)"
+        },
+        "response": {
+          "module_id": "response",
+          "enabled": true,
+          "mode": "offline",
+          "description": "ResponseBuilder + ErrorBody + MockError (HTTP response/error builders, JSON 序列化)"
+        },
+        "healthz": {
+          "module_id": "healthz",
+          "enabled": true,
+          "mode": "offline",
+          "description": "healthz_routes fn (HEALTHZ/READYZ endpoint, 跨 module aggregate per design §4.4)"
+        }
+      }
     },
     "infra": {
       "plugin_id": "infra",
       "enabled": true,
       "default_mode": "offline",
-      "modules": {}
+      "modules": {
+        "kafka": {
+          "module_id": "kafka",
+          "enabled": true,
+          "mode": "offline",
+          "description": "MockKafka + KafkaMessage (in-memory Kafka 替身, 替代 rdkafka-test)"
+        },
+        "redis": {
+          "module_id": "redis",
+          "enabled": true,
+          "mode": "offline",
+          "description": "MockRedis (in-memory Redis 替身, 替代 fake-redis)"
+        }
+      }
     }
   }
 }
