@@ -43,13 +43,19 @@ impl AiGatewayService {
     }
 
     /// 引用 router
-    pub fn router(&self) -> &Router { &self.router }
+    pub fn router(&self) -> &Router {
+        &self.router
+    }
 
     /// 引用 quota
-    pub fn quota(&self) -> &QuotaTracker { &self.quota }
+    pub fn quota(&self) -> &QuotaTracker {
+        &self.quota
+    }
 
     /// 引用 compliance
-    pub fn compliance(&self) -> &ComplianceGate { &self.compliance }
+    pub fn compliance(&self) -> &ComplianceGate {
+        &self.compliance
+    }
 
     /// 业务级 chat 调用:
     /// 1. 合规预检 (按 model 字段命中的 provider, 必须在合规模式内)
@@ -78,7 +84,8 @@ impl AiGatewayService {
         self.quota.check(org_id, estimated_tokens).await?;
 
         // 3. retry + fallback
-        let outcome = execute_with_retry(&self.router, &retry_policy_via(&self.retry_policy), req).await;
+        let outcome =
+            execute_with_retry(&self.router, &retry_policy_via(&self.retry_policy), req).await;
 
         match outcome {
             RetryOutcome::Ok { response, .. } => {
@@ -92,7 +99,9 @@ impl AiGatewayService {
 }
 
 /// RetryPolicy 引用包装 (避免在 AiGatewayService 上持有 RetryPolicy 引用导致的 lifetime 麻烦)
-fn retry_policy_via(p: &RetryPolicy) -> RetryPolicy { p.clone() }
+fn retry_policy_via(p: &RetryPolicy) -> RetryPolicy {
+    p.clone()
+}
 
 /// 启发式 token 估算 (per 任务要求 7.3 配额)
 fn estimate_tokens(req: &ChatRequest) -> u32 {
@@ -131,7 +140,10 @@ mod tests {
         let svc = default_service();
         let req = ChatRequest {
             model: "gpt-4o-mini".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "translate hello".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "translate hello".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -150,7 +162,10 @@ mod tests {
         let svc = default_service().with_compliance(ComplianceMode::Local);
         let req = ChatRequest {
             model: "gpt-4o-mini".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -168,7 +183,10 @@ mod tests {
         let svc = AiGatewayService::new(router, small_quota);
         let req = ChatRequest {
             model: "gpt-4o-mini".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "x".repeat(1000) }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "x".repeat(1000),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -182,7 +200,10 @@ mod tests {
         let svc = default_service();
         let req = ChatRequest {
             model: "unknown-xyz".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -190,7 +211,9 @@ mod tests {
         let err = svc.chat("org-1", &req).await.unwrap_err();
         // fallback chain 会返回 default (openai), 所以这里不会 ProviderNotFound
         // 但 mock openai 会返回 — 应当 Ok
-        assert!(matches!(err, ProviderError::ProviderNotFound(_)) || err.to_string().contains("openai"));
+        assert!(
+            matches!(err, ProviderError::ProviderNotFound(_)) || err.to_string().contains("openai")
+        );
         let _ = ProviderName::OpenAi; // suppress unused
     }
 }

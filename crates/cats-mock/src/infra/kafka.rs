@@ -46,10 +46,17 @@ pub struct MockKafka {
 
 impl MockKafka {
     /// 新建
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// produce 一条
-    pub fn produce(&self, topic: impl Into<String>, key: Option<&str>, value: &[u8]) -> KafkaMessage {
+    pub fn produce(
+        &self,
+        topic: impl Into<String>,
+        key: Option<&str>,
+        value: &[u8],
+    ) -> KafkaMessage {
         let topic = topic.into();
         let mut topics = self.topics.lock().unwrap();
         let queue = topics.entry(topic.clone()).or_default();
@@ -102,10 +109,14 @@ impl MockKafka {
     }
 
     /// 已 produce 总数
-    pub fn produced(&self) -> u64 { *self.produced_count.lock().unwrap() }
+    pub fn produced(&self) -> u64 {
+        *self.produced_count.lock().unwrap()
+    }
 
     /// 已 consume 总数
-    pub fn consumed(&self) -> u64 { *self.consumed_count.lock().unwrap() }
+    pub fn consumed(&self) -> u64 {
+        *self.consumed_count.lock().unwrap()
+    }
 
     /// 清空所有 topic
     pub fn clear(&self) {

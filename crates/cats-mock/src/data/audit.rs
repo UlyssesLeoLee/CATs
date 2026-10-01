@@ -140,12 +140,16 @@ impl AuditEventFactory {
 }
 
 impl Default for AuditEventFactory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Factory for AuditEventFactory {
     type Output = AuditEvent;
-    fn build(&self) -> AuditEvent { self.build_one() }
+    fn build(&self) -> AuditEvent {
+        self.build_one()
+    }
     fn build_many(&self, count: usize) -> Vec<AuditEvent> {
         (0..count).map(|_| self.build_one()).collect()
     }
@@ -165,7 +169,10 @@ mod tests {
 
     #[test]
     fn failed_event() {
-        let e = AuditEventFactory::new().failed().of_type("login_failed").build();
+        let e = AuditEventFactory::new()
+            .failed()
+            .of_type("login_failed")
+            .build();
         assert_eq!(e.outcome, AuditOutcome::Failure);
         assert_eq!(e.event_type, "login_failed");
     }

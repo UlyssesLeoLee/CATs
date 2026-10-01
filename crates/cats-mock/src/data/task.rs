@@ -84,7 +84,9 @@ impl TaskFactory {
             .task_type
             .clone()
             .unwrap_or_else(|| "translate".to_string());
-        let status = self.status.unwrap_or_else(|| pick_random(TaskStatus::all()));
+        let status = self
+            .status
+            .unwrap_or_else(|| pick_random(TaskStatus::all()));
         let attempts = self.attempts.unwrap_or(0);
         let last_error = if self.with_error {
             Some("simulated worker failure: timeout after 30s".to_string())
@@ -114,12 +116,16 @@ impl TaskFactory {
 }
 
 impl Default for TaskFactory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Factory for TaskFactory {
     type Output = Task;
-    fn build(&self) -> Task { self.build_one() }
+    fn build(&self) -> Task {
+        self.build_one()
+    }
     fn build_many(&self, count: usize) -> Vec<Task> {
         (0..count).map(|_| self.build_one()).collect()
     }

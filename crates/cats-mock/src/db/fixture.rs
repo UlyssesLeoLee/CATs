@@ -43,10 +43,14 @@ pub struct InMemoryDbFixture {
 
 impl InMemoryDbFixture {
     /// 新建空 fixture
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// 当前表数量
-    pub fn table_count(&self) -> usize { self.tables.lock().unwrap().len() }
+    pub fn table_count(&self) -> usize {
+        self.tables.lock().unwrap().len()
+    }
 
     /// 某表的行数
     pub fn row_count(&self, table: &str) -> usize {
@@ -138,10 +142,14 @@ impl PgDbFixture {
     }
 
     /// 已应用的 schema 数
-    pub fn applied_schema_count(&self) -> usize { self.applied_schemas.len() }
+    pub fn applied_schema_count(&self) -> usize {
+        self.applied_schemas.len()
+    }
 
     /// 是否已连接
-    pub fn is_connected(&self) -> bool { self.pool.is_some() }
+    pub fn is_connected(&self) -> bool {
+        self.pool.is_some()
+    }
 }
 
 #[async_trait::async_trait]
@@ -189,7 +197,10 @@ fn extract_table_name(create_stmt: &str) -> Option<String> {
         if t.is_empty() {
             continue;
         }
-        if t.eq_ignore_ascii_case("IF") || t.eq_ignore_ascii_case("NOT") || t.eq_ignore_ascii_case("EXISTS") {
+        if t.eq_ignore_ascii_case("IF")
+            || t.eq_ignore_ascii_case("NOT")
+            || t.eq_ignore_ascii_case("EXISTS")
+        {
             continue;
         }
         return Some(t.trim_end_matches('(').to_string());
@@ -207,10 +218,14 @@ fn seed_param_to_string(p: &SeedParam) -> String {
 // =====================================================================
 
 /// 新建 in-memory fixture (默认, 无依赖)
-pub fn in_memory() -> InMemoryDbFixture { InMemoryDbFixture::new() }
+pub fn in_memory() -> InMemoryDbFixture {
+    InMemoryDbFixture::new()
+}
 
 /// 准备 PG fixture (stub, 调用方需补实现)
-pub fn pg(dsn: impl Into<String>) -> PgDbFixture { PgDbFixture::prepare(dsn) }
+pub fn pg(dsn: impl Into<String>) -> PgDbFixture {
+    PgDbFixture::prepare(dsn)
+}
 
 #[cfg(test)]
 mod tests {
@@ -235,7 +250,9 @@ mod tests {
     async fn in_memory_apply_seed_increments_rows() {
         let db = InMemoryDbFixture::new();
         db.apply_schema(SchemaSet::all_common()).await.unwrap();
-        db.apply_seed(crate::db::seed::users_default()).await.unwrap();
+        db.apply_seed(crate::db::seed::users_default())
+            .await
+            .unwrap();
         assert_eq!(db.row_count("users_credential"), 1);
     }
 
@@ -243,7 +260,9 @@ mod tests {
     async fn in_memory_truncate_clears_rows() {
         let db = InMemoryDbFixture::new();
         db.apply_schema(SchemaSet::all_common()).await.unwrap();
-        db.apply_seed(crate::db::seed::audit_events_default()).await.unwrap();
+        db.apply_seed(crate::db::seed::audit_events_default())
+            .await
+            .unwrap();
         assert_eq!(db.row_count("audit_log"), 1);
         db.truncate_all().await.unwrap();
         assert_eq!(db.row_count("audit_log"), 0);

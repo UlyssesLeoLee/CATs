@@ -10,8 +10,8 @@ use cats_ai_gateway::provider::{AiProvider, ChatMessage, ChatRequest};
 use cats_ai_gateway::quota::{QuotaConfig, QuotaTracker};
 use cats_ai_gateway::retry::RetryPolicy;
 use cats_ai_gateway::router::Router;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 fn req(content: &str, model: &str) -> ChatRequest {
     ChatRequest {
@@ -77,7 +77,10 @@ async fn test_quota_over_limit() {
 #[tokio::test]
 async fn test_compliance_local_rejects_cloud() {
     let cm = ComplianceMode::Local;
-    assert!(cm.allows("openai").is_err(), "Local mode rejects cloud provider");
+    assert!(
+        cm.allows("openai").is_err(),
+        "Local mode rejects cloud provider"
+    );
     let cm = ComplianceMode::Cloud;
     assert!(cm.allows("openai").is_ok());
 }
@@ -90,12 +93,22 @@ async fn test_retry_first_fail_second_ok() {
     }
     #[async_trait::async_trait]
     impl AiProvider for FlakyProvider {
-        fn name(&self) -> &str { "flaky" }
-        fn cost_per_1k_tokens(&self) -> f64 { 1.0 }
-        async fn chat(&self, _req: ChatRequest) -> Result<cats_ai_gateway::provider::ChatResponse, cats_ai_gateway::error::ProviderError> {
+        fn name(&self) -> &str {
+            "flaky"
+        }
+        fn cost_per_1k_tokens(&self) -> f64 {
+            1.0
+        }
+        async fn chat(
+            &self,
+            _req: ChatRequest,
+        ) -> Result<cats_ai_gateway::provider::ChatResponse, cats_ai_gateway::error::ProviderError>
+        {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
-                Err(cats_ai_gateway::error::ProviderError::Upstream("fail".into()))
+                Err(cats_ai_gateway::error::ProviderError::Upstream(
+                    "fail".into(),
+                ))
             } else {
                 Ok(cats_ai_gateway::provider::ChatResponse {
                     target_text: "ok".into(),
@@ -106,7 +119,9 @@ async fn test_retry_first_fail_second_ok() {
         }
     }
 
-    let provider: Arc<dyn AiProvider> = Arc::new(FlakyProvider { calls: Arc::new(AtomicU32::new(0)) });
+    let provider: Arc<dyn AiProvider> = Arc::new(FlakyProvider {
+        calls: Arc::new(AtomicU32::new(0)),
+    });
     let policy = RetryPolicy::default();
 
     let result = policy.execute(&provider, req("hi", "flaky")).await;
@@ -119,13 +134,23 @@ struct MockProviderAlwaysOK {
     name: String,
 }
 impl MockProviderAlwaysOK {
-    fn new(name: &str) -> Self { Self { name: name.into() } }
+    fn new(name: &str) -> Self {
+        Self { name: name.into() }
+    }
 }
 #[async_trait::async_trait]
 impl AiProvider for MockProviderAlwaysOK {
-    fn name(&self) -> &str { &self.name }
-    fn cost_per_1k_tokens(&self) -> f64 { 1.0 }
-    async fn chat(&self, _req: ChatRequest) -> Result<cats_ai_gateway::provider::ChatResponse, cats_ai_gateway::error::ProviderError> {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn cost_per_1k_tokens(&self) -> f64 {
+        1.0
+    }
+    async fn chat(
+        &self,
+        _req: ChatRequest,
+    ) -> Result<cats_ai_gateway::provider::ChatResponse, cats_ai_gateway::error::ProviderError>
+    {
         Ok(cats_ai_gateway::provider::ChatResponse {
             target_text: format!("ok from {}", self.name),
             prompt_tokens: 1,
@@ -138,13 +163,25 @@ struct MockProviderAlwaysFail {
     name: String,
 }
 impl MockProviderAlwaysFail {
-    fn new(name: &str) -> Self { Self { name: name.into() } }
+    fn new(name: &str) -> Self {
+        Self { name: name.into() }
+    }
 }
 #[async_trait::async_trait]
 impl AiProvider for MockProviderAlwaysFail {
-    fn name(&self) -> &str { &self.name }
-    fn cost_per_1k_tokens(&self) -> f64 { 1.0 }
-    async fn chat(&self, _req: ChatRequest) -> Result<cats_ai_gateway::provider::ChatResponse, cats_ai_gateway::error::ProviderError> {
-        Err(cats_ai_gateway::error::ProviderError::Upstream("always fail".into()))
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn cost_per_1k_tokens(&self) -> f64 {
+        1.0
+    }
+    async fn chat(
+        &self,
+        _req: ChatRequest,
+    ) -> Result<cats_ai_gateway::provider::ChatResponse, cats_ai_gateway::error::ProviderError>
+    {
+        Err(cats_ai_gateway::error::ProviderError::Upstream(
+            "always fail".into(),
+        ))
     }
 }

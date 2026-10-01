@@ -232,7 +232,10 @@ mod tests {
     fn build_insert_sql_targets_audit_log_table() {
         // 验证 SQL 写入正确的表
         let (sql, _) = DbAuditSink::build_insert_sql();
-        assert!(sql.contains("INSERT INTO audit_log"), "must INSERT INTO audit_log");
+        assert!(
+            sql.contains("INSERT INTO audit_log"),
+            "must INSERT INTO audit_log"
+        );
     }
 
     #[test]
@@ -265,14 +268,17 @@ mod tests {
         // 防回归: 有人增字段后忘记加到 SQL
         let (sql, _) = DbAuditSink::build_insert_sql();
         let required_columns = [
-            "event_id", "user_id", "event_type", "outcome",
-            "detail", "source_ip", "user_agent", "occurred_at",
+            "event_id",
+            "user_id",
+            "event_type",
+            "outcome",
+            "detail",
+            "source_ip",
+            "user_agent",
+            "occurred_at",
         ];
         for col in required_columns {
-            assert!(
-                sql.contains(col),
-                "INSERT column list must include {col}"
-            );
+            assert!(sql.contains(col), "INSERT column list must include {col}");
         }
     }
 }

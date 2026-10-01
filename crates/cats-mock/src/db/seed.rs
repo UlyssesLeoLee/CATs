@@ -41,7 +41,10 @@ pub enum SeedParam {
 impl SeedSet {
     /// 空
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into(), entries: vec![] }
+        Self {
+            label: label.into(),
+            entries: vec![],
+        }
     }
 
     /// 加一条 entry
@@ -51,7 +54,9 @@ impl SeedSet {
     }
 
     /// 总条数
-    pub fn total(&self) -> usize { self.entries.len() }
+    pub fn total(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 // =====================================================================
@@ -82,7 +87,8 @@ pub fn users_from(users: &[User]) -> SeedSet {
                 INSERT INTO users_credential
                     (id, username, email, password_hash, is_active, created_at, updated_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#.to_string(),
+            "#
+            .to_string(),
             params: vec![
                 SeedParam::Uuid(u.id),
                 SeedParam::Text(u.username.clone()),
@@ -95,7 +101,10 @@ pub fn users_from(users: &[User]) -> SeedSet {
         })
         .collect();
 
-    SeedSet { label: format!("users(count={})", users.len()), entries }
+    SeedSet {
+        label: format!("users(count={})", users.len()),
+        entries,
+    }
 }
 
 /// 1 个默认 project (归属 admin)
@@ -140,7 +149,10 @@ pub fn projects_from(projects: &[Project]) -> SeedSet {
         })
         .collect();
 
-    SeedSet { label: format!("projects(count={})", projects.len()), entries }
+    SeedSet {
+        label: format!("projects(count={})", projects.len()),
+        entries,
+    }
 }
 
 /// 1 个默认 task
@@ -184,7 +196,10 @@ pub fn tasks_from(tasks: &[Task]) -> SeedSet {
         })
         .collect();
 
-    SeedSet { label: format!("tasks(count={})", tasks.len()), entries }
+    SeedSet {
+        label: format!("tasks(count={})", tasks.len()),
+        entries,
+    }
 }
 
 /// 1 个 audit event
@@ -227,7 +242,10 @@ pub fn audit_events_from(events: &[AuditEvent]) -> SeedSet {
         })
         .collect();
 
-    SeedSet { label: format!("audit_events(count={})", events.len()), entries }
+    SeedSet {
+        label: format!("audit_events(count={})", events.len()),
+        entries,
+    }
 }
 
 #[cfg(test)]
@@ -280,7 +298,10 @@ mod tests {
         // 占位符格式: $1, $2, ... 简单计数
         let dollar_count = entry.sql.matches('$').count();
         // $1..$7 共 7 个占位符
-        assert!(dollar_count >= 7, "expected ≥7 placeholders, got {dollar_count}");
+        assert!(
+            dollar_count >= 7,
+            "expected ≥7 placeholders, got {dollar_count}"
+        );
         // param count 必须与占位符数量匹配 (这里手工对齐, 不动态解析)
         assert_eq!(entry.params.len(), 7, "params must match placeholders");
     }

@@ -157,9 +157,15 @@ mod tests {
 
     #[async_trait]
     impl AiProvider for FlakyProvider {
-        fn name(&self) -> ProviderName { self.name }
-        fn supported_models(&self) -> &[&str] { &["flaky-model"] }
-        fn cost_per_1k_tokens(&self) -> f64 { 0.0 }
+        fn name(&self) -> ProviderName {
+            self.name
+        }
+        fn supported_models(&self) -> &[&str] {
+            &["flaky-model"]
+        }
+        fn cost_per_1k_tokens(&self) -> f64 {
+            0.0
+        }
         async fn chat(&self, _req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
             let mut n = self.attempts.lock().unwrap();
             *n += 1;
@@ -189,9 +195,15 @@ mod tests {
     }
     #[async_trait]
     impl AiProvider for AlwaysFailProvider {
-        fn name(&self) -> ProviderName { self.name }
-        fn supported_models(&self) -> &[&str] { &["fail-model"] }
-        fn cost_per_1k_tokens(&self) -> f64 { 0.0 }
+        fn name(&self) -> ProviderName {
+            self.name
+        }
+        fn supported_models(&self) -> &[&str] {
+            &["fail-model"]
+        }
+        fn cost_per_1k_tokens(&self) -> f64 {
+            0.0
+        }
         async fn chat(&self, _req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
             Err(ProviderError::Transient {
                 provider: self.name.as_str().to_string(),
@@ -203,7 +215,10 @@ mod tests {
     fn sample_req() -> ChatRequest {
         ChatRequest {
             model: "flaky-model".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -232,7 +247,9 @@ mod tests {
     #[tokio::test]
     async fn fallback_to_next_provider_after_all_failures() {
         // openai 一直 fail, anthropic 第一次成功
-        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider { name: ProviderName::OpenAi });
+        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider {
+            name: ProviderName::OpenAi,
+        });
         let anthropic: Arc<dyn AiProvider> = Arc::new(FlakyProvider {
             name: ProviderName::Anthropic,
             attempts: Arc::new(std::sync::Mutex::new(0)),
@@ -251,8 +268,12 @@ mod tests {
 
     #[tokio::test]
     async fn all_providers_fail_returns_all_failed() {
-        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider { name: ProviderName::OpenAi });
-        let anthropic: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider { name: ProviderName::Anthropic });
+        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider {
+            name: ProviderName::OpenAi,
+        });
+        let anthropic: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider {
+            name: ProviderName::Anthropic,
+        });
         let router = Router::new(vec![openai, anthropic]);
         let outcome = execute_with_retry(&router, &RetryPolicy::default(), &sample_req()).await;
         match outcome {

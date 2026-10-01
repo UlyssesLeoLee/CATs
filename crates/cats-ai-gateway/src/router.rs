@@ -115,12 +115,15 @@ mod tests {
         let r = test_router();
         let chain = r.fallback_chain("claude-3-5-sonnet");
         let names: Vec<_> = chain.iter().map(|p| p.name()).collect();
-        assert_eq!(names, vec![
-            ProviderName::Anthropic,
-            ProviderName::OpenAi,    // FALLBACK_ORDER 后续
-            ProviderName::Gemini,
-            ProviderName::DeepSeek,
-        ]);
+        assert_eq!(
+            names,
+            vec![
+                ProviderName::Anthropic,
+                ProviderName::OpenAi, // FALLBACK_ORDER 后续
+                ProviderName::Gemini,
+                ProviderName::DeepSeek,
+            ]
+        );
     }
 
     #[test]
@@ -128,24 +131,30 @@ mod tests {
         let r = test_router();
         let chain = r.fallback_chain("unknown-xyz");
         let names: Vec<_> = chain.iter().map(|p| p.name()).collect();
-        assert_eq!(names, vec![
-            ProviderName::OpenAi,
-            ProviderName::Anthropic,
-            ProviderName::Gemini,
-            ProviderName::DeepSeek,
-        ]);
+        assert_eq!(
+            names,
+            vec![
+                ProviderName::OpenAi,
+                ProviderName::Anthropic,
+                ProviderName::Gemini,
+                ProviderName::DeepSeek,
+            ]
+        );
     }
 
     #[tokio::test]
     async fn route_single_unknown_model_returns_provider_not_found() {
         let r = test_router();
-        let err = r.route_single(&ChatRequest {
-            model: "unknown-xyz".into(),
-            messages: vec![],
-            temperature: 0.7,
-            max_tokens: 1024,
-            idempotency_key: "".into(),
-        }).await.unwrap_err();
+        let err = r
+            .route_single(&ChatRequest {
+                model: "unknown-xyz".into(),
+                messages: vec![],
+                temperature: 0.7,
+                max_tokens: 1024,
+                idempotency_key: "".into(),
+            })
+            .await
+            .unwrap_err();
         match err {
             ProviderError::ProviderNotFound(m) => assert_eq!(m, "unknown-xyz"),
             other => panic!("expected ProviderNotFound, got {:?}", other),
