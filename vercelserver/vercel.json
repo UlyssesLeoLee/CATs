@@ -1,0 +1,35 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "name": "cats-vercel-test-server",
+  "public": false,
+  "buildCommand": "bash scripts/build.sh",
+  "outputDirectory": "src",
+  "installCommand": "echo skip-root-install",
+  "framework": null,
+  "cleanUrls": true,
+  "trailingSlash": true,
+  "rewrites": [
+    { "source": "/cats-client", "destination": "/cats-client/index.html" },
+    { "source": "/cats-client/(.*)", "destination": "/cats-client/index.html" },
+    { "source": "/web-console-mock", "destination": "/web-console-mock/index.html" },
+    { "source": "/web-console-mock/(.*)", "destination": "/web-console-mock/index.html" },
+    { "source": "/media-pipeline-mock", "destination": "/media-pipeline-mock/index.html" },
+    { "source": "/media-pipeline-mock/(.*)", "destination": "/media-pipeline-mock/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Vercel-Test-Server", "value": "true" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" }
+      ]
+    }
+  ]
+}

@@ -1,28 +1,36 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { route } from "./lib/router.svelte";
+  import { runtimeMode } from "./lib/api";
   import LoginPage from "./routes/LoginPage.svelte";
   import TranslatePage from "./routes/TranslatePage.svelte";
   import ProjectsPage from "./routes/ProjectsPage.svelte";
 
   let { children } = $props();
 
-  onMount(() => {
-    // hash 变化监听: 自写 hash router
-    const handler = () => {
-      route.current = parseHash(location.hash);
-    };
-    window.addEventListener("hashchange", handler);
-    handler(); // 初始化
-    return () => window.removeEventListener("hashchange", handler);
-  });
+  // 本地 $state + $effect: hashchange → 写入 routeName, 模板读 routeName.
+  // 备用保险: navVersion 计数, 每次 hashchange ++ 用于 {#key} 强制重渲,
+  // 兜底 Svelte 5 production build 下 $state→{#if} reactive 漂移的极端情况.
+  let routeName = $state<string>("login");
+  let navVersion = $state(0);
 
-  function parseHash(hash: string): { name: string; params: URLSearchParams } {
-    const cleaned = hash.startsWith("#") ? hash.slice(1) : hash;
-    const [path, query] = cleaned.split("?");
-    const name = path || "login";
-    return { name, params: new URLSearchParams(query ?? "") };
-  }
+  onMount(() => {
+    const update = () => {
+      const cleaned = location.hash.startsWith("#")
+        ? location.hash.slice(1)
+        : location.hash;
+      const [path] = cleaned.split("?");
+      routeName = path || "login";
+      navVersion += 1;
+      route.current = {
+        name: routeName,
+        params: new URLSearchParams(),
+      };
+    };
+    window.addEventListener("hashchange", update);
+    update(); // 初始化
+    return () => window.removeEventListener("hashchange", update);
+  });
 </script>
 
 <div class="cats-shell">
@@ -33,16 +41,23 @@
       <a href="#/translate">翻译</a>
       <a href="#/login">登录</a>
     </nav>
+    {#if !runtimeMode.isTauri()}
+      <span class="badge-web" title="静态预览 — 无 Tauri runtime, 命令走 mock">
+        web preview
+      </span>
+    {/if}
   </header>
 
   <main>
-    {#if route.current.name === "translate"}
-      <TranslatePage />
-    {:else if route.current.name === "projects"}
-      <ProjectsPage />
-    {:else}
-      <LoginPage />
-    {/if}
+    {#key navVersion}
+      {#if routeName === "translate"}
+        <TranslatePage />
+      {:else if routeName === "projects"}
+        <ProjectsPage />
+      {:else}
+        <LoginPage />
+      {/if}
+    {/key}
   </main>
 </div>
 
@@ -76,6 +91,16 @@
   }
   nav a:hover {
     color: #fff;
+  }
+  .badge-web {
+    margin-left: auto;
+    background: #f59e0b;
+    color: #0f172a;
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
   }
   main {
     flex: 1;

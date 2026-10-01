@@ -8,6 +8,7 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 //   即从 src-tauri/ 出发, ../dist = apps/cats-client/dist
 
 export default defineConfig({
+  base: "./",
   plugins: [svelte()],
   build: {
     outDir: "dist",

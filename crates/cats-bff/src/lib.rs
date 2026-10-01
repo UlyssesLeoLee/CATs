@@ -1,9 +1,14 @@
-//! `cats-bff` — BFF 聚合服务
+//! `cats-bff` — BFF 聚合服务 (M1 阶段, per 切片 A _slice_a_bff.md)
 //!
 //! 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §4.1
 //! 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
-//!
-//! M0 阶段：仅暴露 `version()` / `name()`。业务实现 M1 阶段落地。
+//! 引用: api/openapi/cats-openapi-v1.0.1.yaml §paths
+
+pub mod config;
+pub mod error;
+pub mod handlers;
+pub mod principal;
+pub mod upstream;
 
 /// 当前 crate 语义版本
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
