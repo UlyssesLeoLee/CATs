@@ -275,7 +275,6 @@ mod tests {
     #[test]
     fn seed_entry_param_count_matches_sql_placeholders() {
         // 防 SQL placeholder 数量 vs params 数量不匹配
-        use crate::data::Factory;
         let s = users_default();
         let entry = &s.entries[0];
         // 占位符格式: $1, $2, ... 简单计数

@@ -6,9 +6,9 @@ name: ci-rust-clippy
 
 on:
   push:
-    branches: [main, develop, 'feature/**']
+    branches: [main, dev, 'feature/**']
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
@@ -29,6 +29,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install lld (Linux, per .cargo/config.toml -fuse-ld=lld)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
 
       - name: Install Rust toolchain 1.98.0
         uses: dtolnay/rust-toolchain@stable

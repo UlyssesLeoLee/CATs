@@ -162,7 +162,7 @@ impl MockRedis {
         v.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
         let n = v.len() as isize;
         let s = if start < 0 { (n + start).max(0) } else { start.min(n) } as usize;
-        let e = if stop < 0 { (n + stop + 1) } else { (stop + 1).min(n) } as usize;
+        let e = if stop < 0 { n + stop + 1 } else { (stop + 1).min(n) } as usize;
         v[s..e.min(v.len())].iter().map(|(m, _)| m.to_string()).collect()
     }
 

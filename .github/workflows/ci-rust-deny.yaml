@@ -10,9 +10,9 @@ name: ci-rust-deny
 
 on:
   push:
-    branches: [main, develop, 'feature/**']
+    branches: [main, dev, 'feature/**']
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
   workflow_dispatch:
   schedule:
     # 每周一 03:00 UTC 跑完整 audit（advisories + sources + bans + licenses）

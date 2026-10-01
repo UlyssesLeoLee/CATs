@@ -13,11 +13,11 @@ name: ci-proto-check
 
 on:
   push:
-    branches: [main, develop, 'feature/**']
+    branches: [main, dev, 'feature/**']
   paths:
     - 'proto/**'
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
     paths:
       - 'proto/**'
   workflow_dispatch:
