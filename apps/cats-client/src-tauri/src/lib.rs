@@ -56,14 +56,21 @@ pub fn run() -> anyhow::Result<()> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_offline_status,
-            commands::auth_login,
-            commands::auth_refresh,
-            commands::fetch_translation_lookup,
-            commands::list_projects,
-            commands::create_project,
-            commands::enqueue_offline_action,
-            commands::sync_offline_queue,
+            commands::offline_cmd::get_offline_status,
+            commands::auth_cmd::auth_login,
+            commands::auth_cmd::auth_refresh,
+            commands::translate_cmd::fetch_translation_lookup,
+            commands::project_cmd::list_projects,
+            commands::project_cmd::create_project,
+            commands::offline_cmd::enqueue_offline_action,
+            commands::offline_cmd::sync_offline_queue,
+            // 切片 D (ULYS-154) 新增
+            commands::task_cmd::dispatch_translation_task,
+            commands::task_cmd::list_local_tasks,
+            commands::task_cmd::update_local_task_status,
+            commands::task_cmd::list_task_events,
+            commands::task_cmd::add_local_glossary_entry,
+            commands::task_cmd::list_local_glossary_entries,
         ])
         .run(tauri::generate_context!())
         .map_err(Into::into)

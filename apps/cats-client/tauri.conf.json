@@ -7,7 +7,7 @@
     "beforeDevCommand": "pnpm run dev",
     "beforeBuildCommand": "pnpm run build",
     "devUrl": "http://localhost:5173",
-    "frontendDist": "../dist"
+    "frontendDist": "./dist"
   },
   "app": {
     "windows": [
@@ -32,7 +32,11 @@
     "active": true,
     "targets": ["msi", "nsis", "deb", "appimage", "dmg"],
     "icon": [
-      "icons/icon.png"
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
     ],
     "category": "Productivity",
     "shortDescription": "全媒体 AI 辅助翻译 SaaS 平台桌面客户端",

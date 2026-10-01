@@ -5,6 +5,10 @@
   import LoginPage from "./routes/LoginPage.svelte";
   import TranslatePage from "./routes/TranslatePage.svelte";
   import ProjectsPage from "./routes/ProjectsPage.svelte";
+  // 切片 D (ULYS-154) 新增页面
+  import GlossaryPage from "./routes/GlossaryPage.svelte";
+  import TmPage from "./routes/TmPage.svelte";
+  import TasksPage from "./routes/TasksPage.svelte";
 
   let { children } = $props();
 
@@ -39,6 +43,9 @@
     <nav>
       <a href="#/projects">项目</a>
       <a href="#/translate">翻译</a>
+      <a href="#/tasks">任务</a>
+      <a href="#/tm">TM</a>
+      <a href="#/glossary">术语</a>
       <a href="#/login">登录</a>
     </nav>
     {#if !runtimeMode.isTauri()}
@@ -54,6 +61,12 @@
         <TranslatePage />
       {:else if routeName === "projects"}
         <ProjectsPage />
+      {:else if routeName === "tasks"}
+        <TasksPage />
+      {:else if routeName === "tm"}
+        <TmPage />
+      {:else if routeName === "glossary"}
+        <GlossaryPage />
       {:else}
         <LoginPage />
       {/if}

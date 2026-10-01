@@ -1,51 +1,69 @@
 //! `file-service` 入口
 //!
-//! M0 阶段：actix-web 4 健康检查占位，端口与绑定地址走环境变量。
-//! 业务 endpoint 在 M1 阶段按微服务架构书 §4.1 + OpenAPI v1 落地。
+//! 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md §4.1
+//! 引用: ULYS-152 切片 B-3
 
-use actix_web::{web, App, HttpResponse, HttpServer};
-use cats_common::AppMeta;
-use serde::Serialize;
+use actix_web::{web, App, HttpServer};
+use cats_rbac::RbacChecker;
 use std::env;
+use std::sync::Arc;
 use tracing::info;
-
-/// 业务配置（M0 占位：从 env 读取；M1 替换为结构化 config）
-#[derive(Debug, Clone)]
-struct Config {
-    bind_addr: String,
-}
-
-impl Config {
-    fn from_env() -> Self {
-        Self {
-            bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8085".to_string()),
-        }
-    }
-}
-
-/// 健康检查响应
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    app: AppMeta,
-}
-
-/// `GET /healthz` — 存活探针 + 启动探针复用
-async fn healthz() -> HttpResponse {
-    HttpResponse::Ok().json(HealthResponse {
-        status: "ok",
-        app: AppMeta::current(),
-    })
-}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     cats_common::init_tracing();
-    let cfg = Config::from_env();
-    info!(bind_addr = %cfg.bind_addr, "starting file-service");
 
-    HttpServer::new(|| App::new().route("/healthz", web::get().to(healthz)))
-        .bind(&cfg.bind_addr)?
-        .run()
-        .await
+    // DATABASE_URL 必须设置, 否则 fail-fast (per 安全约束: 不打印值)
+    if env::var("DATABASE_URL").is_err() {
+        eprintln!("ERROR: DATABASE_URL env var not set");
+        std::process::exit(1);
+    }
+
+    let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8085".to_string());
+
+    // 构造连接池 (lazy, 不实际连 DB)
+    let pool = match file_service::db::build_pool().await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("ERROR: db pool build failed: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // 共享 RbacChecker (per ULYS-152 切片 B-3 §"RBAC 中间件挂在每个 endpoint")
+    let rbac_checker = Arc::new(RbacChecker::new());
+
+    info!(bind_addr = %bind_addr, "starting file-service");
+
+    let pool_data = web::Data::new(pool);
+    let rbac_data = web::Data::new(rbac_checker);
+    HttpServer::new(move || {
+        App::new()
+            .app_data(pool_data.clone())
+            .app_data(rbac_data.clone())
+            .route("/healthz", web::get().to(file_service::handlers::healthz))
+            .route(
+                "/v1/files",
+                web::post().to(file_service::handlers::upload_file),
+            )
+            .route(
+                "/v1/files",
+                web::get().to(file_service::handlers::list_files),
+            )
+            .route(
+                "/v1/files/{id}",
+                web::get().to(file_service::handlers::download_file),
+            )
+            .route(
+                "/v1/files/{id}",
+                web::delete().to(file_service::handlers::delete_file),
+            )
+            .route(
+                "/v1/files/{id}/metadata",
+                web::get().to(file_service::handlers::get_file_metadata),
+            )
+    })
+    .bind(&bind_addr)?
+    .run()
+    .await
 }
