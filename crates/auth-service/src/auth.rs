@@ -212,7 +212,8 @@ mod tests {
     /// 缺 roles 字段的旧 token 仍能反序列化 (向后兼容)
     #[test]
     fn claims_legacy_token_without_roles_deserializes() {
-        let json = r#"{"sub":"u","username":"alice","exp":1,"iat":1,"jti":"j","token_type":"access"}"#;
+        let json =
+            r#"{"sub":"u","username":"alice","exp":1,"iat":1,"jti":"j","token_type":"access"}"#;
         let parsed: Claims = serde_json::from_str(json).expect("deserialize");
         assert!(parsed.roles.is_empty(), "默认空 roles");
     }

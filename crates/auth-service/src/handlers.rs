@@ -181,14 +181,16 @@ pub async fn login(
         .await;
         return unauthorized();
     }
-    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access", default_roles_for(&user)) {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt issue failed: {e}")),
-    };
-    let (refresh_token, _refresh_exp) = match issue_jwt(user.id, &user.username, "refresh", default_roles_for(&user)) {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
-    };
+    let (access_token, access_exp) =
+        match issue_jwt(user.id, &user.username, "access", default_roles_for(&user)) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt issue failed: {e}")),
+        };
+    let (refresh_token, _refresh_exp) =
+        match issue_jwt(user.id, &user.username, "refresh", default_roles_for(&user)) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
+        };
 
     // 审计: login success
     build_audit(
@@ -327,14 +329,16 @@ pub async fn refresh(
     }
 
     // 签发新 access + 新 refresh (新 jti) — 从现有 claims.roles 复刻 (per ULYS-149 第二层缺口)
-    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access", claims.roles.clone()) {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt issue failed: {e}")),
-    };
-    let (refresh_token, _) = match issue_jwt(user.id, &user.username, "refresh", claims.roles.clone()) {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
-    };
+    let (access_token, access_exp) =
+        match issue_jwt(user.id, &user.username, "access", claims.roles.clone()) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt issue failed: {e}")),
+        };
+    let (refresh_token, _) =
+        match issue_jwt(user.id, &user.username, "refresh", claims.roles.clone()) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
+        };
 
     // 审计: refresh success + refresh_revoked
     build_audit(
