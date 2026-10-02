@@ -54,7 +54,9 @@ impl TaskType {
 /// 任务状态 (per DB schema CHECK 约束, 切片 B-2 范围: 5 态)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum TaskStatus {
+    #[default]
     Pending,
     Running,
     Completed,
@@ -87,12 +89,6 @@ impl TaskStatus {
     /// 是否为终态 (per 接口设计书 §3.4 状态机: 终态后 SSE 流正常关闭)
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
-    }
-}
-
-impl Default for TaskStatus {
-    fn default() -> Self {
-        Self::Pending
     }
 }
 

@@ -54,12 +54,13 @@ pub struct KafkaAuditEvent {
 
 #[derive(Debug, Deserialize)]
 struct RestRecord {
+    // topic 此前被建模进来但从未被读取，ci-rust-clippy 的 -D warnings 判为
+    // dead_code。serde 默认忽略响应里的多余字段，删掉不影响解析。
+    // partition / offset 保留：ingest 循环的 info!/error! 日志要用它们。
     #[serde(default)]
-    topic: Option<String>,
+    partition: i32,
     #[serde(default)]
-    partition: Option<i32>,
-    #[serde(default)]
-    offset: Option<i64>,
+    offset: i64,
     /// 业务 payload (proxy 默认 base64, 但我们直接当 raw JSON 字符串处理)
     #[serde(default)]
     value: serde_json::Value,
@@ -73,10 +74,7 @@ struct RestRecordsResponse {
 
 #[derive(Debug, Deserialize)]
 struct RestRecordGroup {
-    #[serde(default)]
-    partition: i32,
-    #[serde(default)]
-    offset: i64,
+    // partition / offset 同样只描述 wire format、从未被读取，理由同 RestRecord。
     #[serde(default)]
     records: Vec<RestRecord>,
 }

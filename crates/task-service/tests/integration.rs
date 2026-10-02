@@ -237,10 +237,7 @@ impl SseParser {
     fn feed(&mut self, bytes: &[u8]) -> Vec<SseFrame> {
         self.buffer.extend_from_slice(bytes);
         let mut frames = Vec::new();
-        loop {
-            let Some(idx) = self.find_boundary() else {
-                break;
-            };
+        while let Some(idx) = self.find_boundary() {
             let frame_bytes: Vec<u8> = self.buffer[..idx].to_vec();
             let boundary_len = if idx + 3 < self.buffer.len()
                 && self.buffer[idx] == b'\r'
@@ -423,7 +420,6 @@ async fn e2e_unauthenticated_returns_401() {
 #[actix_web::test]
 async fn e2e_user_can_subscribe_and_receive_heartbeat() {
     use actix_web::http::header;
-    use futures_util::StreamExt;
     let app = actix_test::init_service(make_app_no_db(build_state_no_pool())).await;
     let task_id = Uuid::new_v4();
 
@@ -442,7 +438,7 @@ async fn e2e_user_can_subscribe_and_receive_heartbeat() {
         .uri(&format!("/internal/v1/tasks/{task_id}/stage-progress"))
         // Sponsor 是 cats-rbac 默认权限矩阵中拥有全权的角色 (per §4 5 域 Lead 各管各资源)
         .insert_header((header::AUTHORIZATION, "Bearer cats-role:Sponsor"))
-        .set_json(&serde_json::json!({
+        .set_json(serde_json::json!({
             "event_id": "evt_test",
             "stage": "asr",
             "status": "started",
@@ -610,10 +606,6 @@ async fn smoke_timeout_helper() {
     assert!(result.is_err(), "应超时 (10ms < 20ms)");
 }
 
-// 防止 warning: futures_util::StreamExt 实际在 e2e_* 测试间接使用, 这里不再单独引用
-#[allow(dead_code)]
-fn _stream_ext_used() {
-    // 通过 macro 调用确保依赖仍被声明; 不返回值避免 lifetime 抱怨
-    use futures_util::stream::StreamExt as _;
-    let _ = futures_util::stream::empty::<()>().next();
-}
+// futures_util::StreamExt 在下面的 e2e_* 测试里直接用到，这里无需再放一个
+// 占位函数——之前那个占位里的 `let _ = <future>` 并不会 await，
+// 且会触发 clippy::let_underscore_future。

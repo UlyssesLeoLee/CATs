@@ -6,11 +6,11 @@
 //!
 //! M1 业务实现 (per ULYS-153 切片 C-1 完成判据):
 //! - GET /v1/reports/usage?from=&to=&org_id=
-//!     — 按 action/resource_type 分组的统计 (e.g. login 数 / task 创建数 / 翻译完成数)
+//!   — 按 action/resource_type 分组的统计 (e.g. login 数 / task 创建数 / 翻译完成数)
 //! - GET /v1/reports/translation-volume?project_id=&from=&to=
-//!     — 翻译量统计 (audit_logs 中 action='translate.completed' 过滤 by project_id)
+//!   — 翻译量统计 (audit_logs 中 action='translate.completed' 过滤 by project_id)
 //! - GET /v1/reports/audit-summary?workspace_id=&from=&to=
-//!     — 审计摘要 (总事件数 / 独立 actor 数 / 按 action 分组 topN / 最近事件时间)
+//!   — 审计摘要 (总事件数 / 独立 actor 数 / 按 action 分组 topN / 最近事件时间)
 //!
 //! 数据源说明 (per 切片 C-1 §数据源 + 微服务架构书 §1.2 原则 4):
 //! - 默认从 report_db 自有 schema 聚合 (本切片 MVP)

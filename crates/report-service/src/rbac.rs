@@ -210,12 +210,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enforce_user_can_read_reports() {
+    async fn enforce_user_cannot_read_reports() {
+        // GET /v1/reports/usage 映射到 (Resource::Report, Action::Read)。
+        // cats-rbac 矩阵里 Report 归 DatabaseLead（同时也在 SRE Lead 的资源集内），
+        // Role::User 的 Read 集只有 User / Task / Project / File / Translation，
+        // 所以普通 User 被拒是正确行为。
+        //
+        // 原测试 enforce_user_can_read_reports 断言 result.is_ok()，等于要求把
+        // Report 加进 User 权限集 —— 为让测试通过而放宽授权矩阵方向是反的。
+        // 与 notification-service 的同类测试一并修正。
         let checker = Arc::new(RbacChecker::new());
-        let req = TestRequest::default()
+
+        let user_req = TestRequest::default()
             .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
             .to_http_request();
-        let result = enforce(&checker, &req, "/v1/reports/usage", "GET").await;
-        assert!(result.is_ok(), "User should be able to read reports");
+        let (status, body) = enforce(&checker, &user_req, "/v1/reports/usage", "GET")
+            .await
+            .expect_err("User must not read Report-scoped resources");
+        assert_eq!(status, actix_web::http::StatusCode::FORBIDDEN);
+        assert_eq!(body.error, "operation_not_permitted");
+
+        // 对照：确实持有 Report/Read 的角色应放行
+        let dba_req = TestRequest::default()
+            .insert_header((header::AUTHORIZATION, "Bearer cats-role:DatabaseLead"))
+            .to_http_request();
+        assert!(
+            enforce(&checker, &dba_req, "/v1/reports/usage", "GET")
+                .await
+                .is_ok(),
+            "DatabaseLead holds Report/Read and must be allowed"
+        );
     }
 }
