@@ -275,7 +275,7 @@ mod tests {
             .await
             .expect_err("User must not read Alert-scoped resources");
         assert_eq!(status, actix_web::http::StatusCode::FORBIDDEN);
-        assert_eq!(body.error, "forbidden");
+        assert_eq!(body.error, "operation_not_permitted");
 
         let sre_req = TestRequest::default()
             .insert_header((header::AUTHORIZATION, "Bearer cats-role:SRELead"))
