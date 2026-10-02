@@ -6,6 +6,27 @@
 //! - `forward_project_list` — project-service REST 透传（带 X-Cats-* header）
 //!
 //! 翻译相关 gRPC 调用见 [`crate::grpc_clients`]。
+//!
+//! ---
+//!
+//! **未接入状态（不参与编译）**
+//!
+//! 本文件由 `feat/mvp-final-*` 抢救进仓（commit `68fe10b`），`lib.rs` 未声明
+//! `mod` 故不参与编译。它与 `src/upstream/` 目录版是两条平行设计：
+//!
+//! - 本文件：`UpstreamClient` 共享 reqwest client + 裸 `serde_json::Value` 透传
+//! - `src/upstream/`：`AuthClient` / `ProjectsClient` / `TasksClient` 三个强类型
+//!   客户端，带 RBAC 校验，是 `main.rs` 实际注册路由所用的实现
+//!
+//! 直接接入不可行——它依赖的 4 个 API 在当前 `Config` 上均不存在：
+//! `Config::for_test`、`auth_service_base`、`project_service_base`、
+//! `upstream_timeout_ms`（当前是 `auth_service_url` / `project_service_url` /
+//! `upstream_timeout_secs`）。接入前需先做适配改造。
+//!
+//! 文件名带 `_passthrough` 后缀而非直接叫 `upstream.rs`：同名会与
+//! `src/upstream/mod.rs` 争抢同一模块路径，触发 E0761
+//! `file for module 'upstream' found at both ...`，并连带让 `handlers.rs` 的
+//! `crate::upstream::auth` 解析失败，级联出 14 个 never-type-fallback 错误。
 
 use std::time::Duration;
 

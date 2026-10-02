@@ -1,5 +1,15 @@
 //! BFF HTTP 路由（actix-web 4）
 //!
+//! **未接入状态（不参与编译）**
+//!
+//! 本文件由 `feat/mvp-final-*` 抢救进仓（commit `68fe10b`），`lib.rs` 未声明
+//! `mod routes` 故不参与编译。当前生效的路由注册在 `main.rs`，走
+//! `handlers::*` + `upstream::{auth,projects,tasks}` 那套强类型客户端。
+//!
+//! 本文件属于另一条平行设计（`/api/v1/*` 前缀 + 裸透传），其依赖的
+//! `crate::upstream::UpstreamClient` 与 `crate::grpc_clients` 同为未接入文件，
+//! 接入前需先做适配改造。详见 `upstream_passthrough.rs` 头部的说明。
+//!
 //! 端点清单（per 任务规范 + 接口设计书 v2.0 §3.5）：
 //!
 //! | Method | Path                          | 类型        | 下游                                  |

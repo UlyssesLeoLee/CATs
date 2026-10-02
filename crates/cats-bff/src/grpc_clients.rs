@@ -1,5 +1,12 @@
 //! BFF → translation-core 的 gRPC 客户端封装
 //!
+//! **未接入状态（不参与编译）**
+//!
+//! 本文件由 `feat/mvp-final-*` 抢救进仓（commit `68fe10b`），`lib.rs` 未声明
+//! `mod grpc_clients` 故不参与编译。它与 `routes.rs`、`upstream_passthrough.rs`
+//! 是同一套未接入的平行设计。接入前需先做适配改造，详见
+//! `upstream_passthrough.rs` 头部的说明。
+//!
 //! proto 定义见 `proto/cats/v1/translation_core.proto`：
 //! ```proto
 //! service TranslationCoreService {
