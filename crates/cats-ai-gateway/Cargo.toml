@@ -35,3 +35,6 @@ tonic-build.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+# 集成测试（tests/）只能用 dev-dependencies，无法访问 [dependencies]，
+# 所以 #[async_trait] 需要在这里再声明一次。已在锁文件中，不改变依赖解析结果。
+async-trait.workspace = true

@@ -64,7 +64,7 @@ pub struct Claims {
     pub jti: String,        // JWT ID (UUID v4)
     pub token_type: String, // "access" or "refresh"
     #[serde(default)]
-    pub roles: Vec<String>,  // 用户角色列表 (per ULYS-149 第二层缺口: BFF principal.roles 依赖此字段)
+    pub roles: Vec<String>, // 用户角色列表 (per ULYS-149 第二层缺口: BFF principal.roles 依赖此字段)
 }
 
 /// DB 实体: auth_db.users_credential

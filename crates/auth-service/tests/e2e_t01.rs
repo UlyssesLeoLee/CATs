@@ -130,6 +130,7 @@ fn make_app_with_db_audit(
 
 /// refresh 成功后旧 refresh_token 二次使用必须 401 (jti 已撤销)
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_refresh_rotation_revokes_old_jti() {
     setup_env();
     let pool = make_pool().await;
@@ -184,6 +185,7 @@ async fn e2e_t01_refresh_rotation_revokes_old_jti() {
 
 /// 错 refresh_token (非 JWT) → 401 invalid_token
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_refresh_invalid_token_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -205,6 +207,7 @@ async fn e2e_t01_refresh_invalid_token_returns_401() {
 
 /// access_token 不能用于 refresh (token_type 错) → 401 invalid_token_type
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_refresh_wrong_token_type_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -243,6 +246,7 @@ async fn e2e_t01_refresh_wrong_token_type_returns_401() {
 
 /// logout 成功 → 200 + revoked=true + 旧 refresh_token 之后 refresh 必 401
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_logout_revokes_refresh_token() {
     setup_env();
     let pool = make_pool().await;
@@ -302,6 +306,7 @@ async fn e2e_t01_logout_revokes_refresh_token() {
 
 /// logout 错 refresh_token → 401
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_logout_invalid_token_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -323,6 +328,7 @@ async fn e2e_t01_logout_invalid_token_returns_401() {
 
 /// logout 二次调用（同一个 jti）→ 仍然 200, 但 audit 不重复 (ON CONFLICT 兜底)
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_logout_idempotent_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -376,6 +382,7 @@ async fn e2e_t01_logout_idempotent_returns_200() {
 
 /// login + logout 之后 audit_log 表必须有对应事件 (DbAuditSink 真实落库)
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_audit_log_persisted_to_db() {
     setup_env();
     let pool = make_pool().await;
@@ -408,6 +415,7 @@ async fn e2e_t01_audit_log_persisted_to_db() {
 
 /// login_failed (错密码) → audit_log 出现 login_failed / outcome=failure
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_audit_log_captures_login_failure() {
     setup_env();
     let pool = make_pool().await;
@@ -440,6 +448,7 @@ async fn e2e_t01_audit_log_captures_login_failure() {
 
 /// refresh 轮换后 audit_log 同时有 refresh + refresh_revoked 两条
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_t01_audit_log_captures_refresh_rotation() {
     setup_env();
     let pool = make_pool().await;
@@ -504,6 +513,7 @@ async fn e2e_t01_audit_log_captures_refresh_rotation() {
 /// - 误报防护: 只对 `build_audit` 函数切片做 substring 检测, 不会误报模块
 ///   其它位置的 spawn 调用 (目前没有, 未来如有需手工维护白名单)
 #[test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 fn e2e_t01_build_audit_must_not_use_spawn() {
     // 静态内联 handlers.rs 源码
     const HANDLERS_SRC: &str = include_str!("../src/handlers.rs");
@@ -551,6 +561,7 @@ fn e2e_t01_build_audit_must_not_use_spawn() {
 /// 如有人重构把整个 emit 包到 `async { ... }` 但忘了 `.await`, 上一条仍
 /// 通过, 本条会失败。
 #[test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 fn e2e_t01_build_audit_still_awaits_emit() {
     const HANDLERS_SRC: &str = include_str!("../src/handlers.rs");
     let fn_start = HANDLERS_SRC

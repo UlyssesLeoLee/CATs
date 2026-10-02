@@ -1,21 +1,29 @@
 {
-  "id": "mock-openai-001",
-  "object": "chat.completion",
-  "created": 1700000000,
-  "model": "gpt-4",
-  "choices": [
+  "provider": "openai",
+  "description": "cats-ai-gateway mock provider fixture for OpenAI. Schema: provider_schema.json.",
+  "default_model": "gpt-4o-mini",
+  "cost_per_1k_tokens_usd": 0.00015,
+  "responses": [
     {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Mock OpenAI response"
-      },
-      "finish_reason": "stop"
+      "prompt_substring": "translate",
+      "content": "Translation via gpt-4o-mini: hello -> 你好",
+      "prompt_tokens": 12,
+      "completion_tokens": 8,
+      "latency_ms": 0
+    },
+    {
+      "prompt_substring": "summarize",
+      "content": "Summary via gpt-4o-mini: the document covers CATs MVP scope.",
+      "prompt_tokens": 40,
+      "completion_tokens": 24,
+      "latency_ms": 0
+    },
+    {
+      "prompt_substring": "default",
+      "content": "Mock OpenAI response",
+      "prompt_tokens": 10,
+      "completion_tokens": 20,
+      "latency_ms": 0
     }
-  ],
-  "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 20,
-    "total_tokens": 30
-  }
+  ]
 }

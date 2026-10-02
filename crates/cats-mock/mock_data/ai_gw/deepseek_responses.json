@@ -1,21 +1,22 @@
 {
-  "id": "mock-deepseek-001",
-  "object": "chat.completion",
-  "created": 1700000000,
-  "model": "deepseek-chat",
-  "choices": [
+  "provider": "deepseek",
+  "description": "cats-ai-gateway mock provider fixture for DeepSeek. Schema: provider_schema.json.",
+  "default_model": "deepseek-chat",
+  "cost_per_1k_tokens_usd": 0.00014,
+  "responses": [
     {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Mock DeepSeek response"
-      },
-      "finish_reason": "stop"
+      "prompt_substring": "translate",
+      "content": "Translation via deepseek-chat: hello -> 你好",
+      "prompt_tokens": 13,
+      "completion_tokens": 8,
+      "latency_ms": 0
+    },
+    {
+      "prompt_substring": "default",
+      "content": "Mock DeepSeek response",
+      "prompt_tokens": 11,
+      "completion_tokens": 16,
+      "latency_ms": 0
     }
-  ],
-  "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 20,
-    "total_tokens": 30
-  }
+  ]
 }

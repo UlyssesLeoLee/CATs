@@ -41,24 +41,24 @@ impl ErrorCode {
     /// 对应 HTTP 状态码
     pub fn http_status(self) -> u16 {
         match self {
-            Self::ValidationError     => 400,
-            Self::ProviderNotFound    => 502,
-            Self::RateLimited         => 429,
-            Self::UpstreamError       => 502,
-            Self::ComplianceBlocked   => 409,
-            Self::InternalError       => 500,
+            Self::ValidationError => 400,
+            Self::ProviderNotFound => 502,
+            Self::RateLimited => 429,
+            Self::UpstreamError => 502,
+            Self::ComplianceBlocked => 409,
+            Self::InternalError => 500,
         }
     }
 
     /// 对应 gRPC status (per 接口设计 §1.4 映射)
     pub fn grpc_status(self) -> &'static str {
         match self {
-            Self::ValidationError   => "INVALID_ARGUMENT",
-            Self::ProviderNotFound  => "UNAVAILABLE",
-            Self::RateLimited       => "RESOURCE_EXHAUSTED",
-            Self::UpstreamError     => "UNAVAILABLE",
+            Self::ValidationError => "INVALID_ARGUMENT",
+            Self::ProviderNotFound => "UNAVAILABLE",
+            Self::RateLimited => "RESOURCE_EXHAUSTED",
+            Self::UpstreamError => "UNAVAILABLE",
             Self::ComplianceBlocked => "FAILED_PRECONDITION",
-            Self::InternalError     => "INTERNAL",
+            Self::InternalError => "INTERNAL",
         }
     }
 }
@@ -97,7 +97,11 @@ impl ErrorEnvelope {
     }
 
     /// 附加 details KV
-    pub fn with_detail(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+    pub fn with_detail(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
         self.error.details.insert(key.into(), value.into());
         self
     }
@@ -108,17 +112,11 @@ impl ErrorEnvelope {
 pub enum ProviderError {
     /// Provider 上游错误 (网络/超时/模型本身)
     #[error("upstream provider {provider} error: {message}")]
-    Upstream {
-        provider: String,
-        message: String,
-    },
+    Upstream { provider: String, message: String },
 
     /// Provider 抛出的可重试错误 (5xx / timeout)
     #[error("transient provider {provider} error: {message}")]
-    Transient {
-        provider: String,
-        message: String,
-    },
+    Transient { provider: String, message: String },
 
     /// 配额超限 (per org_id)
     #[error("rate limited for org {org_id}: {message}")]
@@ -159,26 +157,29 @@ impl ProviderError {
     /// 转为 ErrorEnvelope (HTTP body 用)
     pub fn to_envelope(&self, trace_id: &str) -> ErrorEnvelope {
         let code = match self {
-            Self::Upstream { .. }        => ErrorCode::UpstreamError,
-            Self::Transient { .. }       => ErrorCode::UpstreamError, // 重试耗尽后归 UPSTREAM_ERROR
-            Self::RateLimited { .. }     => ErrorCode::RateLimited,
+            Self::Upstream { .. } => ErrorCode::UpstreamError,
+            Self::Transient { .. } => ErrorCode::UpstreamError, // 重试耗尽后归 UPSTREAM_ERROR
+            Self::RateLimited { .. } => ErrorCode::RateLimited,
             Self::ComplianceBlocked { .. } => ErrorCode::ComplianceBlocked,
-            Self::ProviderNotFound(_)    => ErrorCode::ProviderNotFound,
-            Self::AllFailed(_)           => ErrorCode::UpstreamError,
-            Self::Validation(_)          => ErrorCode::ValidationError,
+            Self::ProviderNotFound(_) => ErrorCode::ProviderNotFound,
+            Self::AllFailed(_) => ErrorCode::UpstreamError,
+            Self::Validation(_) => ErrorCode::ValidationError,
         };
         let msg = self.to_string();
         let env = ErrorEnvelope::new(code, msg, trace_id.to_string());
         match self {
-            Self::RateLimited { org_id, retry_after_secs, .. } => env
+            Self::RateLimited {
+                org_id,
+                retry_after_secs,
+                ..
+            } => env
                 .with_detail("org_id", org_id.clone())
                 .with_detail("retry_after_secs", *retry_after_secs as i64),
-            Self::ComplianceBlocked { mode, .. } => env
-                .with_detail("compliance_mode", mode.clone()),
-            Self::ProviderNotFound(p) => env
-                .with_detail("provider", p.clone()),
-            Self::AllFailed(msg) => env
-                .with_detail("reason", msg.clone()),
+            Self::ComplianceBlocked { mode, .. } => {
+                env.with_detail("compliance_mode", mode.clone())
+            }
+            Self::ProviderNotFound(p) => env.with_detail("provider", p.clone()),
+            Self::AllFailed(msg) => env.with_detail("reason", msg.clone()),
             _ => env,
         }
     }
@@ -186,13 +187,13 @@ impl ProviderError {
     /// HTTP 状态码 (用于 actix-web ResponseError)
     pub fn http_status(&self) -> u16 {
         match self {
-            Self::Validation(_)         => 400,
-            Self::RateLimited { .. }    => 429,
+            Self::Validation(_) => 400,
+            Self::RateLimited { .. } => 429,
             Self::ComplianceBlocked { .. } => 409,
-            Self::ProviderNotFound(_)   => 502,
-            Self::AllFailed(_)          => 502,
-            Self::Upstream { .. }       => 502,
-            Self::Transient { .. }      => 502,
+            Self::ProviderNotFound(_) => 502,
+            Self::AllFailed(_) => 502,
+            Self::Upstream { .. } => 502,
+            Self::Transient { .. } => 502,
         }
     }
 }
@@ -205,7 +206,10 @@ impl actix_web::ResponseError for ProviderError {
         let status = actix_web::http::StatusCode::from_u16(self.http_status())
             .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
         let mut resp = actix_web::HttpResponse::build(status);
-        if let Self::RateLimited { retry_after_secs, .. } = self {
+        if let Self::RateLimited {
+            retry_after_secs, ..
+        } = self
+        {
             resp.insert_header(("Retry-After", retry_after_secs.to_string()));
         }
         resp.json(envelope)
@@ -230,7 +234,10 @@ mod tests {
     fn error_code_grpc_status_mapping() {
         assert_eq!(ErrorCode::ValidationError.grpc_status(), "INVALID_ARGUMENT");
         assert_eq!(ErrorCode::RateLimited.grpc_status(), "RESOURCE_EXHAUSTED");
-        assert_eq!(ErrorCode::ComplianceBlocked.grpc_status(), "FAILED_PRECONDITION");
+        assert_eq!(
+            ErrorCode::ComplianceBlocked.grpc_status(),
+            "FAILED_PRECONDITION"
+        );
     }
 
     #[test]

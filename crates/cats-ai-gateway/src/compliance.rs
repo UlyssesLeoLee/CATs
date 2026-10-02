@@ -4,12 +4,13 @@
 //!   - 合规项目走本地 vLLM + Qwen2.5-7B-Instruct (AWQ 量化版)
 //!   - 非合规项目走公有云 OpenAI / Anthropic API
 //!   - 通过 LiteLLM Proxy 抽象
+//!
 //! 引用: doc/05-其他/错误码/CATs_错误码表_v1.0.1.md §3.7 (COMPLIANCE_BLOCKED 409)
 //!
 //! MVP 行为:
-//! - Cloud mode: 允许调云端 provider (OpenAI / Anthropic / Gemini / DeepSeek)
-//! - Local mode: 强制只用本地 provider (未实现 → 409 COMPLIANCE_BLOCKED, fail-closed)
-//! - 双路径 fallback: 云端故障 → 降级本地 (若项目允许); 本地故障 → 明确错误不静默回云端
+//!   - Cloud mode: 允许调云端 provider (OpenAI / Anthropic / Gemini / DeepSeek)
+//!   - Local mode: 强制只用本地 provider (未实现 → 409 COMPLIANCE_BLOCKED, fail-closed)
+//!   - 双路径 fallback: 云端故障 → 降级本地 (若项目允许); 本地故障 → 明确错误不静默回云端
 
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +31,7 @@ impl ComplianceMode {
     pub fn parse(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
             "local" => Self::Local,
-            _       => Self::Cloud,
+            _ => Self::Cloud,
         }
     }
 
@@ -56,7 +57,9 @@ impl ComplianceGate {
     }
 
     /// 获取当前模式
-    pub fn mode(&self) -> ComplianceMode { self.mode }
+    pub fn mode(&self) -> ComplianceMode {
+        self.mode
+    }
 
     /// 切换模式 (per project, MVP 简化: 全局)
     pub fn set_mode(&mut self, mode: ComplianceMode) {
@@ -70,7 +73,10 @@ impl ComplianceGate {
     ///
     /// 不允许 → COMPLIANCE_BLOCKED 409 (fail-closed, per ADR-010 §4 "本地故障 → 明确错误不静默回云端")
     pub fn check(&self, provider_name: &str) -> Result<(), ProviderError> {
-        let is_cloud = matches!(provider_name, "openai" | "anthropic" | "gemini" | "deepseek");
+        let is_cloud = matches!(
+            provider_name,
+            "openai" | "anthropic" | "gemini" | "deepseek"
+        );
         let is_local = provider_name == "local";
 
         let allowed = match self.mode {
@@ -84,7 +90,8 @@ impl ComplianceGate {
             Err(ProviderError::ComplianceBlocked {
                 message: format!(
                     "provider '{}' is not allowed in compliance_mode='{}'",
-                    provider_name, self.mode.as_str()
+                    provider_name,
+                    self.mode.as_str()
                 ),
                 mode: self.mode.as_str().to_string(),
             })

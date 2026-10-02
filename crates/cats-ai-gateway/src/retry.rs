@@ -47,6 +47,7 @@ impl RetryPolicy {
 }
 
 /// 重试执行结果
+#[derive(Debug)]
 pub enum RetryOutcome {
     /// 命中 provider + chat 成功
     Ok {
@@ -157,9 +158,15 @@ mod tests {
 
     #[async_trait]
     impl AiProvider for FlakyProvider {
-        fn name(&self) -> ProviderName { self.name }
-        fn supported_models(&self) -> &[&str] { &["flaky-model"] }
-        fn cost_per_1k_tokens(&self) -> f64 { 0.0 }
+        fn name(&self) -> ProviderName {
+            self.name
+        }
+        fn supported_models(&self) -> &[&str] {
+            &["flaky-model"]
+        }
+        fn cost_per_1k_tokens(&self) -> f64 {
+            0.0
+        }
         async fn chat(&self, _req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
             let mut n = self.attempts.lock().unwrap();
             *n += 1;
@@ -189,9 +196,15 @@ mod tests {
     }
     #[async_trait]
     impl AiProvider for AlwaysFailProvider {
-        fn name(&self) -> ProviderName { self.name }
-        fn supported_models(&self) -> &[&str] { &["fail-model"] }
-        fn cost_per_1k_tokens(&self) -> f64 { 0.0 }
+        fn name(&self) -> ProviderName {
+            self.name
+        }
+        fn supported_models(&self) -> &[&str] {
+            &["fail-model"]
+        }
+        fn cost_per_1k_tokens(&self) -> f64 {
+            0.0
+        }
         async fn chat(&self, _req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
             Err(ProviderError::Transient {
                 provider: self.name.as_str().to_string(),
@@ -203,7 +216,10 @@ mod tests {
     fn sample_req() -> ChatRequest {
         ChatRequest {
             model: "flaky-model".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -232,14 +248,24 @@ mod tests {
     #[tokio::test]
     async fn fallback_to_next_provider_after_all_failures() {
         // openai 一直 fail, anthropic 第一次成功
-        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider { name: ProviderName::OpenAi });
+        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider {
+            name: ProviderName::OpenAi,
+        });
         let anthropic: Arc<dyn AiProvider> = Arc::new(FlakyProvider {
             name: ProviderName::Anthropic,
             attempts: Arc::new(std::sync::Mutex::new(0)),
             succeed_after: 1, // 第 1 次就成功
         });
         let router = Router::new(vec![openai, anthropic]);
-        let outcome = execute_with_retry(&router, &RetryPolicy::default(), &sample_req()).await;
+        // 用 "fail-model" 而不是 sample_req 的 "flaky-model"：
+        // Router::fallback_chain 的既定语义是「model 命中的 provider 优先」，
+        // 而 flaky-model 属于 anthropic，直接用它会让 anthropic 排在链首并立即
+        // 成功，openai 根本没被试到，测不到 fallback。要让 openai 先失败再落到
+        // anthropic，请求的 model 必须命中 openai（即它 supported_models 里的
+        // "fail-model"），anthropic 再由 FALLBACK_ORDER 追加在后面。
+        let mut req = sample_req();
+        req.model = "fail-model".into();
+        let outcome = execute_with_retry(&router, &RetryPolicy::default(), &req).await;
         match outcome {
             RetryOutcome::Ok { response, chain } => {
                 assert_eq!(response.provider, "anthropic");
@@ -251,8 +277,12 @@ mod tests {
 
     #[tokio::test]
     async fn all_providers_fail_returns_all_failed() {
-        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider { name: ProviderName::OpenAi });
-        let anthropic: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider { name: ProviderName::Anthropic });
+        let openai: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider {
+            name: ProviderName::OpenAi,
+        });
+        let anthropic: Arc<dyn AiProvider> = Arc::new(AlwaysFailProvider {
+            name: ProviderName::Anthropic,
+        });
         let router = Router::new(vec![openai, anthropic]);
         let outcome = execute_with_retry(&router, &RetryPolicy::default(), &sample_req()).await;
         match outcome {
