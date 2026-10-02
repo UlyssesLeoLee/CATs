@@ -47,6 +47,7 @@ impl RetryPolicy {
 }
 
 /// 重试执行结果
+#[derive(Debug)]
 pub enum RetryOutcome {
     /// 命中 provider + chat 成功
     Ok {
@@ -256,7 +257,15 @@ mod tests {
             succeed_after: 1, // 第 1 次就成功
         });
         let router = Router::new(vec![openai, anthropic]);
-        let outcome = execute_with_retry(&router, &RetryPolicy::default(), &sample_req()).await;
+        // 用 "fail-model" 而不是 sample_req 的 "flaky-model"：
+        // Router::fallback_chain 的既定语义是「model 命中的 provider 优先」，
+        // 而 flaky-model 属于 anthropic，直接用它会让 anthropic 排在链首并立即
+        // 成功，openai 根本没被试到，测不到 fallback。要让 openai 先失败再落到
+        // anthropic，请求的 model 必须命中 openai（即它 supported_models 里的
+        // "fail-model"），anthropic 再由 FALLBACK_ORDER 追加在后面。
+        let mut req = sample_req();
+        req.model = "fail-model".into();
+        let outcome = execute_with_retry(&router, &RetryPolicy::default(), &req).await;
         match outcome {
             RetryOutcome::Ok { response, chain } => {
                 assert_eq!(response.provider, "anthropic");

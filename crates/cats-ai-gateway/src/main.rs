@@ -15,7 +15,7 @@ use std::env;
 use tonic::transport::Server;
 use tracing::info;
 
-use cats_ai_gateway::api::{configure_routes, healthz_handler};
+use cats_ai_gateway::api::configure_routes;
 use cats_ai_gateway::compliance::ComplianceMode;
 use cats_ai_gateway::error::ProviderError;
 use cats_ai_gateway::proto::llm::v1::{

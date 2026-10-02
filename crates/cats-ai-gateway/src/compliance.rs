@@ -4,12 +4,13 @@
 //!   - 合规项目走本地 vLLM + Qwen2.5-7B-Instruct (AWQ 量化版)
 //!   - 非合规项目走公有云 OpenAI / Anthropic API
 //!   - 通过 LiteLLM Proxy 抽象
+//!
 //! 引用: doc/05-其他/错误码/CATs_错误码表_v1.0.1.md §3.7 (COMPLIANCE_BLOCKED 409)
 //!
 //! MVP 行为:
-//! - Cloud mode: 允许调云端 provider (OpenAI / Anthropic / Gemini / DeepSeek)
-//! - Local mode: 强制只用本地 provider (未实现 → 409 COMPLIANCE_BLOCKED, fail-closed)
-//! - 双路径 fallback: 云端故障 → 降级本地 (若项目允许); 本地故障 → 明确错误不静默回云端
+//!   - Cloud mode: 允许调云端 provider (OpenAI / Anthropic / Gemini / DeepSeek)
+//!   - Local mode: 强制只用本地 provider (未实现 → 409 COMPLIANCE_BLOCKED, fail-closed)
+//!   - 双路径 fallback: 云端故障 → 降级本地 (若项目允许); 本地故障 → 明确错误不静默回云端
 
 use serde::{Deserialize, Serialize};
 

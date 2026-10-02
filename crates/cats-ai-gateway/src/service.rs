@@ -176,7 +176,6 @@ mod tests {
 
     #[tokio::test]
     async fn quota_exceeded_short_circuits_before_provider_call() {
-        let svc = default_service();
         // 用极小配额 (1 token), 即便 prompt 估算也超限
         let small_quota = QuotaTracker::with_limit(1);
         let router = Router::new(vec![crate::provider::openai()]);
@@ -196,7 +195,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_model_returns_provider_not_found() {
+    async fn unknown_model_falls_back_to_default_provider() {
         let svc = default_service();
         let req = ChatRequest {
             model: "unknown-xyz".into(),
@@ -208,12 +207,24 @@ mod tests {
             max_tokens: 1024,
             idempotency_key: "".into(),
         };
-        let err = svc.chat("org-1", &req).await.unwrap_err();
         // fallback chain 会返回 default (openai), 所以这里不会 ProviderNotFound
         // 但 mock openai 会返回 — 应当 Ok
-        assert!(
-            matches!(err, ProviderError::ProviderNotFound(_)) || err.to_string().contains("openai")
-        );
+        //
+        // 之前的写法是 `svc.chat(...).await.unwrap_err()` 然后断言
+        // `ProviderNotFound || contains("openai")` —— 自相矛盾：注释和断言都说
+        // 可能返回 Ok，unwrap_err() 却会在这里直接 panic。改为如实断言实际行为。
+        match svc.chat("org-1", &req).await {
+            Ok(resp) => {
+                assert_eq!(
+                    resp.provider, "openai",
+                    "unknown model should fall back to the default provider"
+                );
+            }
+            Err(ProviderError::ProviderNotFound(m)) => {
+                panic!("unexpected ProviderNotFound for {m}: router falls back instead")
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+        }
         let _ = ProviderName::OpenAi; // suppress unused
     }
 }

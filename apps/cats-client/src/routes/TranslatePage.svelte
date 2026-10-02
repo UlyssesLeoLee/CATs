@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { fetchTranslationLookup, type TmMatch } from "../lib/api";
+  import {
+    dispatchTranslationTask,
+    fetchTranslationLookup,
+    runtimeMode,
+    type TmMatch,
+  } from "../lib/api";
 
   // MVP 默认项目 ID（前端只读 lookup；真实值由项目页路由参数传入）
   let projectId = $state("demo-project-001");
@@ -11,6 +16,21 @@
   let busy = $state(false);
   let errorMsg = $state<string | null>(null);
   let fromCache = $state(false);
+
+  // 切片 D: 派发任务状态
+  let dispatchBusy = $state(false);
+  let dispatchInfo = $state<string | null>(null);
+
+  // 切片 D: 标签保护 (placeholder / inline tag 静态检测)
+  // 检测规则 (per OFCAT F5 + i18next ICU MessageFormat):
+  //   {var}                  - simple placeholder
+  //   {var, plural, ...}     - ICU plural
+  //   {var, select, ...}     - ICU select
+  //   <tag>...</tag>         - HTML-like
+  //   [[var]]                - custom bracket
+  //   %var% / $var           - sprintf / shell
+  let detectedTags = $derived(detectInlineTags(sourceText));
+  let hasProtectedTags = $derived(detectedTags.length > 0);
 
   async function doLookup() {
     if (!sourceText.trim()) return;
@@ -31,6 +51,63 @@
       busy = false;
     }
   }
+
+  async function doDispatch() {
+    if (!sourceText.trim()) return;
+    if (!confirm(`派发 ${sourceText.length} 字符为翻译任务?`)) return;
+    dispatchBusy = true;
+    dispatchInfo = null;
+    errorMsg = null;
+    try {
+      // file_id 用 sourceText 的 SHA-like 短 hash (前端轻量)
+      const fileId = simpleHash(sourceText).toString(16).padStart(8, "0");
+      const r = await dispatchTranslationTask({
+        project_id: projectId,
+        file_id: fileId,
+        media_type: "TEXT",
+        source_text: sourceText,
+      });
+      dispatchInfo = `已派发 task_id=${r.task_id}, status=${r.status} — 去任务页追踪`;
+    } catch (e: unknown) {
+      errorMsg = String(e);
+    } finally {
+      dispatchBusy = false;
+    }
+  }
+
+  function goTasks() {
+    location.hash = "#/tasks";
+  }
+
+  function detectInlineTags(s: string): string[] {
+    const out: string[] = [];
+    // ICU / i18next placeholder
+    const reIcu = /\{[a-zA-Z0-9_]+(?:,\s*(?:plural|select|number|date|time)\b[^}]*)?\}/g;
+    for (const m of s.matchAll(reIcu)) out.push(m[0]);
+    // HTML-like
+    const reHtml = /<\/?[a-zA-Z][a-zA-Z0-9-]*>/g;
+    for (const m of s.matchAll(reHtml)) out.push(m[0]);
+    // Bracket placeholders
+    const reBracket = /\[\[[a-zA-Z0-9_]+\]\]/g;
+    for (const m of s.matchAll(reBracket)) out.push(m[0]);
+    // sprintf
+    const reSprintf = /%[sdif]/g;
+    for (const m of s.matchAll(reSprintf)) out.push(m[0]);
+    // shell
+    const reShell = /\$\{[a-zA-Z_][a-zA-Z0-9_]*\}/g;
+    for (const m of s.matchAll(reShell)) out.push(m[0]);
+    return Array.from(new Set(out));
+  }
+
+  // 32-bit FNV-1a hash (前端轻量替代 crypto.subtle.digest)
+  function simpleHash(s: string): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = (h * 0x01000193) >>> 0;
+    }
+    return h;
+  }
 </script>
 
 <section class="workbench">
@@ -38,6 +115,20 @@
   <div class="pane source">
     <h2>源文（{sourceLang}）</h2>
     <textarea bind:value={sourceText} placeholder="输入待翻译文本…"></textarea>
+
+    <!-- 切片 D: 标签保护提示 -->
+    {#if hasProtectedTags}
+      <div class="tag-protection">
+        <h3>🛡 标签保护 (F5)</h3>
+        <p>检测到 {detectedTags.length} 处内联标签, 翻译时应保留原样:</p>
+        <div class="tags">
+          {#each detectedTags as t (t)}
+            <code>{t}</code>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <div class="meta">
       <label>项目 ID <input bind:value={projectId} /></label>
       <label>源语 <input bind:value={sourceLang} maxlength="8" /></label>
@@ -45,6 +136,23 @@
       <button onclick={doLookup} disabled={busy || !sourceText.trim()}>
         {busy ? "查询中…" : "查 TM"}
       </button>
+    </div>
+
+    <!-- 切片 D: 派发任务按钮 -->
+    <div class="dispatch-row">
+      <button
+        class="dispatch"
+        onclick={doDispatch}
+        disabled={dispatchBusy || !sourceText.trim()}
+      >
+        {dispatchBusy ? "派发中…" : "派发为翻译任务"}
+      </button>
+      {#if dispatchInfo}
+        <p class="dispatch-info">
+          ✅ {dispatchInfo}
+          <button class="link" onclick={goTasks}>→ 任务页</button>
+        </p>
+      {/if}
     </div>
   </div>
 
@@ -74,21 +182,37 @@
     {/if}
   </div>
 
-  <!-- 右侧：TM/术语/标签 -->
+  <!-- 右侧：术语 / 标签 -->
   <div class="pane hints">
     <h2>术语 / 标签</h2>
     <div class="hint-block">
       <h3>TM 命中</h3>
-      <p>{matches.length} 条候选</p>
+      <p>{matches.length} 条候选 · <a href="#/tm">→ 浏览 TM 页</a></p>
     </div>
     <div class="hint-block">
-      <h3>QA 标签</h3>
-      <p>MVP 阶段未实现（per apps/cats-client/TODO.md）</p>
+      <h3>标签保护</h3>
+      <p>
+        {#if hasProtectedTags}
+          🛡 已检测 {detectedTags.length} 处 (见左下方)
+        {:else}
+          当前源文无内联标签 (F5 MVP 静态检测)
+        {/if}
+      </p>
     </div>
     <div class="hint-block">
       <h3>术语库</h3>
-      <p>MVP 阶段未实现</p>
+      <p><a href="#/glossary">→ 打开术语页</a></p>
     </div>
+    <div class="hint-block">
+      <h3>任务追踪</h3>
+      <p><a href="#/tasks">→ 任务列表</a></p>
+    </div>
+    {#if !runtimeMode.isTauri()}
+      <div class="hint-block">
+        <h3>运行时</h3>
+        <p>web preview · 派发功能不可用</p>
+      </div>
+    {/if}
   </div>
 </section>
 
@@ -120,6 +244,7 @@
     border-radius: 4px;
     font-family: inherit;
     font-size: 0.95rem;
+    min-height: 6rem;
   }
   .meta {
     display: grid;
@@ -146,6 +271,72 @@
     color: #fff;
     border: 0;
     border-radius: 4px;
+  }
+  .tag-protection {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: #ecfeff;
+    border: 1px solid #67e8f9;
+    border-radius: 4px;
+    font-size: 0.8rem;
+  }
+  .tag-protection h3 {
+    margin: 0 0 0.3rem 0;
+    font-size: 0.82rem;
+    color: #155e75;
+  }
+  .tag-protection p {
+    margin: 0 0 0.4rem 0;
+    color: #0e7490;
+  }
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .tags code {
+    background: #cffafe;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    color: #155e75;
+  }
+  .dispatch-row {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed #e2e8f0;
+  }
+  .dispatch {
+    width: 100%;
+    padding: 0.6rem 1rem;
+    background: #16a34a;
+    color: #fff;
+    border: 0;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .dispatch:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .dispatch-info {
+    margin: 0.4rem 0 0 0;
+    font-size: 0.8rem;
+    color: #166534;
+    background: #dcfce7;
+    padding: 0.4rem 0.6rem;
+    border-radius: 3px;
+  }
+  .link {
+    background: none;
+    color: #1d4ed8;
+    border: 0;
+    padding: 0 0 0 0.5rem;
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 0.8rem;
   }
   .placeholder {
     color: #94a3b8;
@@ -216,5 +407,12 @@
     margin: 0;
     font-size: 0.8rem;
     color: #64748b;
+  }
+  .hint-block a {
+    color: #1d4ed8;
+    text-decoration: none;
+  }
+  .hint-block a:hover {
+    text-decoration: underline;
   }
 </style>

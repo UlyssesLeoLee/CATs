@@ -85,6 +85,11 @@ mod tests {
     #[test]
     fn public_modules_are_exported() {
         // 回归保护：防重构时漏 pub
-        let _: fn() -> &'static str = provider::ProviderName::as_str;
+        // ProviderName::as_str 的签名是 fn(self) -> &'static str（按值接收 self），
+        // 之前的 fn() -> &'static str 与真实签名不符，导致 lib test 编译失败。
+        let _: fn(provider::ProviderName) -> &'static str = provider::ProviderName::as_str;
+
+        // 顺带确认它确实可调用，而不是只过类型检查
+        assert_eq!(provider::ProviderName::OpenAi.as_str(), "openai");
     }
 }

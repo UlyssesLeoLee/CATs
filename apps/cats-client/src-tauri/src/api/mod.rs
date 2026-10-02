@@ -18,6 +18,7 @@ pub mod auth;
 pub mod client;
 pub mod error;
 pub mod projects;
+pub mod tasks;
 pub mod translate;
 
 pub use client::ApiClient;

@@ -30,7 +30,7 @@ pub struct Project {
 }
 
 /// 项目列表响应
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ListProjectsResponse {
     pub projects: Vec<Project>,
     #[serde(default)]

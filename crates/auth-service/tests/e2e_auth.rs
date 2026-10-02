@@ -111,6 +111,7 @@ fn make_app(
 
 // === (a) POST /v1/auth/login 成功 → 200 + JWT ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_login_success_returns_200_with_jwt() {
     setup_env();
     let pool = make_pool().await;
@@ -143,6 +144,7 @@ async fn e2e_login_success_returns_200_with_jwt() {
 
 // === (b) POST /v1/auth/login 错密码 → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_login_wrong_password_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -170,6 +172,7 @@ async fn e2e_login_wrong_password_returns_401() {
 
 // === (c) POST /v1/auth/refresh 成功 → 200 + 新 access_token ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_refresh_success_returns_new_access_token() {
     setup_env();
     let pool = make_pool().await;
@@ -216,6 +219,7 @@ async fn e2e_refresh_success_returns_new_access_token() {
 
 // === (d) POST /v1/auth/refresh 错 token → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_refresh_invalid_token_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -239,6 +243,7 @@ async fn e2e_refresh_invalid_token_returns_401() {
 
 // === (bonus) GET /healthz → 200 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -254,6 +259,7 @@ async fn e2e_healthz_returns_200() {
 
 // === (e) GET /v1/auth/me 成功 → 200 + user_id/username/email ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_me_success_returns_user_info() {
     setup_env();
     let pool = make_pool().await;
@@ -298,6 +304,7 @@ async fn e2e_me_success_returns_user_info() {
 
 // === (f) GET /v1/auth/me 缺 Authorization → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_me_missing_token_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -318,6 +325,7 @@ async fn e2e_me_missing_token_returns_401() {
 
 // === (g) GET /v1/auth/me 错 token → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_me_invalid_token_returns_401() {
     setup_env();
     let pool = make_pool().await;
