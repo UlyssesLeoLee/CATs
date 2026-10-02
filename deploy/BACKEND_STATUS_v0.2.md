@@ -44,6 +44,10 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 本地（Windows，Rust 1.98.0）独立复核同样通过，`CARGO_TARGET_DIR` 隔离为
 `E:\DevCache\cargo\target-cats` 避免与机器上其他项目的 cargo 争用。
 
+> **覆盖范围警告**：以上门禁只覆盖 `Cargo.toml` workspace members 内的 crate。
+> `apps/cats-client`（Tauri 客户端）**不在 workspace 内**，因此一条都不覆盖。
+> 详见 §4.1。
+
 ### §2.2 测试
 
 `cargo test --workspace --all-features --locked -- --nocapture`
@@ -117,6 +121,7 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 
 | 项 | 性质 | 现状 |
 |---|---|---|
+| **Tauri 客户端不受任何 CI 门禁覆盖，且当前无法编译** | 🔴 P0 | 详见下方 §4.1——这是本轮核查中最实质的一处"声称与实际不符" |
 | 45 个 e2e 测试需真实 PostgreSQL | 🔴 P0 | 已显式 `#[ignore]` 跳过，**从未在 CI 实际执行过**。需提供带 PG 的测试环境后 `-- --ignored` 补跑 |
 | `docker compose up` 14 service 未执行 | 🔴 P0 | 仍未执行；binary 能编译 ≠ 服务能起来 |
 | 真实 AI provider 接 OpenAI/Anthropic | 🔴 P0 | 未做，当前只有 mock provider |
@@ -124,6 +129,45 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 | translation-core 接真 project_db + pgvector | 🟡 P1 | 未做 |
 | 真 mTLS 服务间通信 (per ADR-009) | 🟡 P1 | 未做 |
 | `cats-bff` 三个未接入文件 | 🟡 P1 | `upstream_passthrough.rs` / `routes.rs` / `grpc_clients.rs` 依赖 `Config::for_test`、`auth_service_base`、`project_service_base`、`upstream_timeout_ms`——**这 4 个 API 在当前 `Config` 上均不存在**，接入前需先适配改造 |
+
+### §4.1 Tauri 客户端：为什么"8/8 CI 全绿"不等于它能编译
+
+`apps/cats-client` **不在 `Cargo.toml` 的 workspace members 里**。它自己的
+`Cargo.toml` 注释就写明了这一点：
+
+> 注: 本 crate 当前**未加入 workspace** members，per 9/19 14:41 JST Mavis 向 owner 建议
+> apps/cats-client/** + crates/cats-bff/**, 都从 Cargo.toml workspace 根解绑。
+> 验证方式: `cargo check --manifest-path apps/cats-client/Cargo.toml`
+> 未纳入 monorepo workspace 统一构建、CI、覆盖率统计
+
+因此本报告 §2 的全部绿灯——clippy 三平台、485 测试、40% 覆盖率门禁——
+**没有一条覆盖 Tauri 客户端**。
+
+更进一步，它当前**无法编译**：
+
+- `apps/cats-client/build.rs` 调用 `tauri_build::build()`，该函数需要读取
+  `tauri.conf.json`；
+- 本分支上 `apps/cats-client/tauri.conf.json` **不存在**；
+- 缺 `tauri.conf.json` 时 `tauri_build::build()` 直接失败。
+
+> 诚实度标注：以上是静态判定（文件缺失 + build.rs 调用关系），**未实际执行
+> `cargo check --manifest-path`** 验证——Tauri 2.x 依赖树未在本机拉取。按"缺标比
+> 错标"原则，此处不声称"已验证必然编译失败"，只声称"缺必需配置文件，且不在
+> 任何 CI 门禁覆盖范围内"。
+
+需要的三个配置文件只存在于 `feat/mvp-final-review` / `feat/mvp-app` 两个分支，
+且属于**另一套目录布局**：
+
+| 文件 | 分支上的位置 | 本分支的位置 |
+|---|---|---|
+| `build.rs` | `apps/cats-client/src-tauri/build.rs` | `apps/cats-client/build.rs` |
+| `tauri.conf.json` | `apps/cats-client/src-tauri/tauri.conf.json` | **缺失** |
+| `capabilities/default.json` | `apps/cats-client/src-tauri/capabilities/default.json` | `apps/cats-client/capabilities/default.json`（位置不同） |
+
+分支上是标准 Tauri 2.x 布局（build script 与配置同在 `src-tauri/`），本分支是
+扁平布局（build script 在 crate 根、源码在 `src-tauri/src/`）。**不能直接复制**——
+`tauri.conf.json` 里的 `frontendDist` 等相对路径按 `src-tauri/` 基准书写。补齐
+需要先定布局，再改配置路径。
 
 ---
 
@@ -141,7 +185,7 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 
 | 验收项 | 交付物 | 运行时验证 |
 |---|---|---|
-| Tauri 桌面客户端 | ✅ 代码就绪 | ❌ 未验证 |
+| Tauri 桌面客户端 | ⚠️ 源码在仓，但缺 `tauri.conf.json`；且 `apps/cats-client` 不在 workspace members，**不受任何 CI 门禁覆盖** | ❌ 预计无法编译（静态判定，见 §4.1） |
 | 8 核心服务 + translation-core + AI GW | ✅ 代码就绪 | ❌ 未起服务；45 个 e2e 未跑 |
 | BFF endpoints | ✅ 代码就绪（`main.rs` 8 条路由） | ❌ 未起服务 |
 | 数据库 v2.0 + EXPLAIN v1.1 | ✅ 文档就绪 | ❌ 未在本轮验证 |
