@@ -21,8 +21,8 @@
 
 use crate::db;
 use crate::models::{
-    ErrorBody, FileListResponse, FileMetadataResponse, ListFilesQuery, NewFileRecord,
-    UploadFileRequest, UploadFileResponse,
+    ErrorBody, FileListResponse, FileMetadataResponse, NewFileRecord, UploadFileRequest,
+    UploadFileResponse,
 };
 use crate::rbac;
 use actix_web::{web, HttpRequest, HttpResponse, Responder};

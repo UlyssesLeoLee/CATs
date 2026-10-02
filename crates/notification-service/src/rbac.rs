@@ -257,12 +257,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enforce_user_can_read_notifications() {
+    async fn enforce_user_cannot_read_alert_scoped_notifications() {
+        // GET /v1/notifications 映射到 (Resource::Alert, Action::Read)。
+        // cats-rbac 的权限矩阵里 Alert 属于 SRE Lead（Read/Create/Update/Deploy/Audit），
+        // Role::User 的 Read 集只有 User / Task / Project / File / Translation。
+        // 所以普通 User 被拒是正确的。
+        //
+        // 之前的测试名叫 enforce_user_can_read_notifications 并断言 result.is_ok()，
+        // 那等于要求把 Alert 加进 User 的权限集 —— 为了让一个测试通过而放宽授权矩阵，
+        // 方向是反的。这里改为断言真实行为，并补一条 SRE Lead 可读的对照。
         let checker = Arc::new(RbacChecker::new());
-        let req = TestRequest::default()
+
+        let user_req = TestRequest::default()
             .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
             .to_http_request();
-        let result = enforce(&checker, &req, "/v1/notifications", "GET").await;
-        assert!(result.is_ok(), "User should be able to read notifications");
+        let (status, body) = enforce(&checker, &user_req, "/v1/notifications", "GET")
+            .await
+            .expect_err("User must not read Alert-scoped resources");
+        assert_eq!(status, actix_web::http::StatusCode::FORBIDDEN);
+        assert_eq!(body.error, "forbidden");
+
+        let sre_req = TestRequest::default()
+            .insert_header((header::AUTHORIZATION, "Bearer cats-role:SRELead"))
+            .to_http_request();
+        assert!(
+            enforce(&checker, &sre_req, "/v1/notifications", "GET")
+                .await
+                .is_ok(),
+            "SRELead holds Alert/Read and must be allowed"
+        );
     }
 }
