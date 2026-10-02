@@ -81,6 +81,7 @@ fn make_app(
 // 1. healthz
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -98,6 +99,7 @@ async fn e2e_healthz_returns_200() {
 // 2. POST /v1/users 创建 → 201
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_create_user_returns_201() {
     setup_env();
     let pool = make_pool().await;
@@ -129,6 +131,7 @@ async fn e2e_create_user_returns_201() {
 // 3. GET /v1/users/{id} 命中
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_user_by_id_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -175,6 +178,7 @@ async fn e2e_get_user_by_id_returns_200() {
 // 4. GET /v1/users/{id} 不存在 → 404 user_not_found
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_user_not_found_returns_404() {
     setup_env();
     let pool = make_pool().await;
@@ -194,6 +198,7 @@ async fn e2e_get_user_not_found_returns_404() {
 // 5. PUT /v1/users/{id} 部分更新
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_update_user_partial_returns_200() {
     setup_env();
     let pool = make_pool().await;

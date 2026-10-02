@@ -134,8 +134,7 @@ pub async fn get_project(
     path: web::Path<String>,
 ) -> impl Responder {
     let path_str = format!("/v1/projects/{}", path.as_ref());
-    if let Err((status, body)) =
-        rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "GET").await
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "GET").await
     {
         return HttpResponse::build(status).json(body);
     }

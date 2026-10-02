@@ -18,9 +18,9 @@ use actix_web::{test as actix_test, web, App};
 use serde_json::Value;
 use std::time::Duration;
 use task_service::{
-    handlers::{encode_event_for_test, AppState}, EventBus, ListTasksQuery, StageKind,
-    StageProgressRequest, StageStatus, SseTaskStatus, TaskEvent, TaskStatus, TaskType,
-    UpdateStatusRequest,
+    handlers::{encode_event_for_test, AppState},
+    EventBus, ListTasksQuery, SseTaskStatus, StageKind, StageProgressRequest, StageStatus,
+    TaskEvent, TaskStatus, TaskType, UpdateStatusRequest,
 };
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -40,7 +40,10 @@ fn task_status_round_trip_all_variants() {
     ] {
         assert_eq!(TaskStatus::parse(s.as_str()).unwrap(), s);
     }
-    assert!(TaskStatus::parse("queued").is_none(), "8-态 queued 不在 DB 范围");
+    assert!(
+        TaskStatus::parse("queued").is_none(),
+        "8-态 queued 不在 DB 范围"
+    );
     assert!(TaskStatus::parse("unknown").is_none());
 }
 
@@ -49,7 +52,10 @@ fn task_type_round_trip_all_variants() {
     for t in [TaskType::Translate, TaskType::Review, TaskType::Export] {
         assert_eq!(TaskType::parse(t.as_str()).unwrap(), t);
     }
-    assert!(TaskType::parse("asr").is_none(), "stage 类型与 task_type 不同");
+    assert!(
+        TaskType::parse("asr").is_none(),
+        "stage 类型与 task_type 不同"
+    );
 }
 
 #[test]
@@ -225,16 +231,16 @@ struct SseParser {
 
 impl SseParser {
     fn new() -> Self {
-        Self {
-            buffer: Vec::new(),
-        }
+        Self { buffer: Vec::new() }
     }
 
     fn feed(&mut self, bytes: &[u8]) -> Vec<SseFrame> {
         self.buffer.extend_from_slice(bytes);
         let mut frames = Vec::new();
         loop {
-            let Some(idx) = self.find_boundary() else { break };
+            let Some(idx) = self.find_boundary() else {
+                break;
+            };
             let frame_bytes: Vec<u8> = self.buffer[..idx].to_vec();
             let boundary_len = if idx + 3 < self.buffer.len()
                 && self.buffer[idx] == b'\r'
@@ -372,7 +378,9 @@ fn build_state_no_pool() -> AppState {
     AppState::new_with_buffer(pool, 16)
 }
 
-fn make_app_no_db(state: AppState) -> App<
+fn make_app_no_db(
+    state: AppState,
+) -> App<
     impl actix_web::dev::ServiceFactory<
         actix_web::dev::ServiceRequest,
         Config = (),

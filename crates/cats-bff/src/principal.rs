@@ -29,13 +29,13 @@
 //! - `crates/auth-service/src/auth.rs::verify_jwt`（同一套验证逻辑的签发方实现，本文件与其对齐）
 
 use crate::error::{BffError, BffResult};
-use cats_rbac::{Action, Resource, RbacChecker, Role};
+use actix_web::{FromRequest, HttpRequest};
+use cats_rbac::{Action, RbacChecker, Resource, Role};
 use jsonwebtoken::{decode, errors::ErrorKind, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::sync::Arc;
 use std::future::{ready, Ready};
-use actix_web::{FromRequest, HttpRequest};
+use std::sync::Arc;
 
 /// JWT payload（已验签）
 ///
@@ -138,12 +138,16 @@ fn verify_jwt(token: &str) -> BffResult<Claims> {
     // 与 auth-service::auth::verify_jwt 的 `Validation::default()` 行为一致。
     validation.validate_exp = true;
 
-    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
-        .map(|data| data.claims)
-        .map_err(|err| match err.kind() {
-            ErrorKind::ExpiredSignature => BffError::Unauthorized("token_expired"),
-            _ => BffError::Unauthorized("invalid_token"),
-        })?;
+    let claims = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .map(|data| data.claims)
+    .map_err(|err| match err.kind() {
+        ErrorKind::ExpiredSignature => BffError::Unauthorized("token_expired"),
+        _ => BffError::Unauthorized("invalid_token"),
+    })?;
 
     if claims.token_type != "access" {
         return Err(BffError::Unauthorized("invalid_token_type"));

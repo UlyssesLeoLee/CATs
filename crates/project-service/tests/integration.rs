@@ -64,7 +64,10 @@ fn make_app(
         .route("/v1/projects", web::post().to(handlers::create_project))
         .route("/v1/projects", web::get().to(handlers::list_projects))
         .route("/v1/projects/{id}", web::get().to(handlers::get_project))
-        .route("/v1/projects/{id}", web::patch().to(handlers::patch_project))
+        .route(
+            "/v1/projects/{id}",
+            web::patch().to(handlers::patch_project),
+        )
         .route(
             "/v1/projects/{id}",
             web::delete().to(handlers::delete_project),
@@ -75,6 +78,7 @@ fn make_app(
 // 1. healthz
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -92,6 +96,7 @@ async fn e2e_healthz_returns_200() {
 // 2. POST /v1/projects 创建 → 201
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_create_project_returns_201() {
     setup_env();
     let pool = make_pool().await;
@@ -129,6 +134,7 @@ async fn e2e_create_project_returns_201() {
 // 3. GET /v1/projects/{id} 命中 + 字段一致
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_project_by_id_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -178,6 +184,7 @@ async fn e2e_get_project_by_id_returns_200() {
 // 4. GET /v1/projects/{id} 不存在 → 404 project_not_found
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_project_not_found_returns_404() {
     setup_env();
     let pool = make_pool().await;
@@ -197,6 +204,7 @@ async fn e2e_get_project_not_found_returns_404() {
 // 5. GET /v1/projects?workspace_id=... 列表
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_list_projects_with_workspace_filter() {
     setup_env();
     let pool = make_pool().await;
@@ -267,6 +275,7 @@ async fn e2e_list_projects_with_workspace_filter() {
 // 6. PATCH /v1/projects/{id} 部分更新
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_patch_project_partial_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -320,6 +329,7 @@ async fn e2e_patch_project_partial_returns_200() {
 // 7. DELETE /v1/projects/{id} 软删除
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_delete_project_soft_returns_200() {
     setup_env();
     let pool = make_pool().await;

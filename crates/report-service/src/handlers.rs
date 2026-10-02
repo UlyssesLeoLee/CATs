@@ -10,7 +10,8 @@
 
 use crate::db;
 use crate::models::{
-    AuditSummaryResponse, ErrorBody, TranslationVolumeResponse, UsageReportItem, UsageReportResponse,
+    AuditSummaryResponse, ErrorBody, TranslationVolumeResponse, UsageReportItem,
+    UsageReportResponse,
 };
 use crate::rbac;
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
@@ -60,7 +61,9 @@ pub async fn usage_report(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     q: web::Query<UsageQuery>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/reports/usage", "GET").await {
+    if let Err((status, body)) =
+        rbac::enforce(rbac_checker.get_ref(), &req, "/v1/reports/usage", "GET").await
+    {
         return HttpResponse::build(status).json(body);
     }
     if q.from >= q.to {
@@ -119,7 +122,14 @@ pub async fn translation_volume(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     q: web::Query<TranslationVolumeQuery>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/reports/translation-volume", "GET").await {
+    if let Err((status, body)) = rbac::enforce(
+        rbac_checker.get_ref(),
+        &req,
+        "/v1/reports/translation-volume",
+        "GET",
+    )
+    .await
+    {
         return HttpResponse::build(status).json(body);
     }
     if q.from >= q.to {
@@ -128,13 +138,8 @@ pub async fn translation_volume(
             "from must be strictly before to",
         ));
     }
-    let daily = match db::translation_volume_by_project(
-        pool.get_ref(),
-        q.project_id,
-        q.from,
-        q.to,
-    )
-    .await
+    let daily = match db::translation_volume_by_project(pool.get_ref(), q.project_id, q.from, q.to)
+        .await
     {
         Ok(r) => r,
         Err(e) => {
@@ -143,22 +148,16 @@ pub async fn translation_volume(
             );
         }
     };
-    let (total_completed, total_chars) = match db::translation_volume_total(
-        pool.get_ref(),
-        q.project_id,
-        q.from,
-        q.to,
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(
-                ErrorBody::new("server_error", "translation_volume total query failed")
-                    .with_detail(e),
-            );
-        }
-    };
+    let (total_completed, total_chars) =
+        match db::translation_volume_total(pool.get_ref(), q.project_id, q.from, q.to).await {
+            Ok(t) => t,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(
+                    ErrorBody::new("server_error", "translation_volume total query failed")
+                        .with_detail(e),
+                );
+            }
+        };
     HttpResponse::Ok().json(TranslationVolumeResponse {
         project_id: q.project_id,
         from: q.from,
@@ -187,7 +186,14 @@ pub async fn audit_summary(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     q: web::Query<AuditSummaryQuery>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/reports/audit-summary", "GET").await {
+    if let Err((status, body)) = rbac::enforce(
+        rbac_checker.get_ref(),
+        &req,
+        "/v1/reports/audit-summary",
+        "GET",
+    )
+    .await
+    {
         return HttpResponse::build(status).json(body);
     }
     if q.from >= q.to {
@@ -252,7 +258,10 @@ mod tests {
         let body = ErrorBody::new("invalid_request", "from must be < to");
         let json = serde_json::to_string(&body).unwrap();
         assert!(json.contains("invalid_request"));
-        assert!(!json.contains("detail"), "detail should be skipped when None");
+        assert!(
+            !json.contains("detail"),
+            "detail should be skipped when None"
+        );
     }
 
     #[test]

@@ -60,7 +60,8 @@ pub async fn create_notification(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     body: web::Json<CreateNotificationRequest>,
 ) -> impl Responder {
-    let auth = match rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "POST").await {
+    let auth = match rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "POST").await
+    {
         Ok(a) => a,
         Err((status, body)) => return HttpResponse::build(status).json(body),
     };
@@ -132,7 +133,9 @@ pub async fn list_notifications(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     query: web::Query<ListNotificationsQuery>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "GET").await {
+    if let Err((status, body)) =
+        rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications", "GET").await
+    {
         return HttpResponse::build(status).json(body);
     }
     let q = query.into_inner();
@@ -178,7 +181,9 @@ pub async fn mark_notification_read(
     query: web::Query<MarkReadQuery>,
 ) -> impl Responder {
     let path_str = format!("/v1/notifications/{}", path.as_ref());
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "PATCH").await {
+    if let Err((status, body)) =
+        rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "PATCH").await
+    {
         return HttpResponse::build(status).json(body);
     }
     let id_str = path.into_inner();
@@ -237,7 +242,7 @@ pub struct MarkReadQuery {
 ///   * SSE 与 broadcast::Receiver 天然契合 (server -> client 单向流)
 ///   * 客户端用 `new EventSource("/v1/notifications/ws")` 即可订阅
 /// - Sprint 2 升级: 引入 actix-ws 0.1 后, 把 stream 替换为 ws frame codec, 端点保持
-/// `GET /v1/notifications/ws` — 实时推送 (SSE 实现, WS deferred to Sprint 2) (RBAC: Alert Read)
+///   `GET /v1/notifications/ws` — 实时推送 (SSE 实现, WS deferred to Sprint 2) (RBAC: Alert Read)
 ///
 /// Query 参数: user_id (per 业务: 只推送该用户的通知)
 pub async fn notification_stream(
@@ -246,7 +251,9 @@ pub async fn notification_stream(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     query: web::Query<StreamQuery>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications/ws", "GET").await {
+    if let Err((status, body)) =
+        rbac::enforce(rbac_checker.get_ref(), &req, "/v1/notifications/ws", "GET").await
+    {
         return HttpResponse::build(status).json(body);
     }
     let _user_id = query.into_inner().user_id;

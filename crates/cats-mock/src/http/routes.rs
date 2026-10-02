@@ -68,9 +68,10 @@ pub fn audit_routes(cfg: &mut web::ServiceConfig) {
 
 /// 通用 healthz
 pub fn healthz_routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/healthz", web::get().to(|| async {
-        HttpResponse::Ok().json(json!({"status": "ok"}))
-    }));
+    cfg.route(
+        "/healthz",
+        web::get().to(|| async { HttpResponse::Ok().json(json!({"status": "ok"})) }),
+    );
 }
 
 // =====================================================================
@@ -217,10 +218,7 @@ mod tests {
 
     #[actix_web::test]
     async fn auth_login_returns_200() {
-        let app = actix_test::init_service(
-            App::new().configure(auth_routes),
-        )
-        .await;
+        let app = actix_test::init_service(App::new().configure(auth_routes)).await;
         let req = actix_test::TestRequest::post()
             .uri("/v1/auth/login")
             .set_json(json!({"username": "x", "password": "y"}))
@@ -231,10 +229,7 @@ mod tests {
 
     #[actix_web::test]
     async fn user_get_existing_returns_200() {
-        let app = actix_test::init_service(
-            App::new().configure(user_routes),
-        )
-        .await;
+        let app = actix_test::init_service(App::new().configure(user_routes)).await;
         let req = actix_test::TestRequest::get()
             .uri("/v1/users/00000000-0000-0000-0000-000000000001")
             .to_request();
@@ -244,10 +239,7 @@ mod tests {
 
     #[actix_web::test]
     async fn user_get_zero_uuid_returns_404() {
-        let app = actix_test::init_service(
-            App::new().configure(user_routes),
-        )
-        .await;
+        let app = actix_test::init_service(App::new().configure(user_routes)).await;
         let req = actix_test::TestRequest::get()
             .uri("/v1/users/00000000-0000-0000-0000-000000000000")
             .to_request();
@@ -257,10 +249,7 @@ mod tests {
 
     #[actix_web::test]
     async fn project_list_returns_200() {
-        let app = actix_test::init_service(
-            App::new().configure(project_routes),
-        )
-        .await;
+        let app = actix_test::init_service(App::new().configure(project_routes)).await;
         let req = actix_test::TestRequest::get()
             .uri("/v1/projects")
             .to_request();
@@ -270,10 +259,7 @@ mod tests {
 
     #[actix_web::test]
     async fn task_create_returns_201() {
-        let app = actix_test::init_service(
-            App::new().configure(task_routes),
-        )
-        .await;
+        let app = actix_test::init_service(App::new().configure(task_routes)).await;
         let req = actix_test::TestRequest::post()
             .uri("/v1/tasks")
             .set_json(json!({"task_type": "translate"}))
@@ -284,13 +270,8 @@ mod tests {
 
     #[actix_web::test]
     async fn healthz_returns_200() {
-        let app = actix_test::init_service(
-            App::new().configure(healthz_routes),
-        )
-        .await;
-        let req = actix_test::TestRequest::get()
-            .uri("/healthz")
-            .to_request();
+        let app = actix_test::init_service(App::new().configure(healthz_routes)).await;
+        let req = actix_test::TestRequest::get().uri("/healthz").to_request();
         let resp = actix_test::call_service(&app, req).await;
         assert_eq!(resp.status().as_u16(), 200);
     }

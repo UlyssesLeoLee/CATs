@@ -24,13 +24,19 @@ pub struct MockRedis {
 }
 
 impl MockRedis {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// 当前 KV key 数量
-    pub fn kv_len(&self) -> usize { self.kv.lock().unwrap().len() }
+    pub fn kv_len(&self) -> usize {
+        self.kv.lock().unwrap().len()
+    }
 
     /// 当前 set key 数量
-    pub fn set_len(&self) -> usize { self.sets.lock().unwrap().len() }
+    pub fn set_len(&self) -> usize {
+        self.sets.lock().unwrap().len()
+    }
 
     // ---- KV ----
 
@@ -43,7 +49,10 @@ impl MockRedis {
     /// SET key value EX seconds
     pub fn set_ex(&self, key: impl Into<String>, value: impl Into<String>, ttl_secs: u64) {
         let mut kv = self.kv.lock().unwrap();
-        kv.insert(key.into(), (value.into(), Some(Duration::from_secs(ttl_secs))));
+        kv.insert(
+            key.into(),
+            (value.into(), Some(Duration::from_secs(ttl_secs))),
+        );
     }
 
     /// GET key
@@ -66,7 +75,9 @@ impl MockRedis {
     }
 
     /// EXISTS key
-    pub fn exists(&self, key: &str) -> bool { self.get(key).is_some() }
+    pub fn exists(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
 
     /// INCR key (key 不存在时初始化为 0)
     pub fn incr(&self, key: &str) -> i64 {
@@ -81,7 +92,9 @@ impl MockRedis {
     }
 
     /// DECR key
-    pub fn decr(&self, key: &str) -> i64 { self.incr_by(key, -1) }
+    pub fn decr(&self, key: &str) -> i64 {
+        self.incr_by(key, -1)
+    }
 
     /// INCRBY key delta
     pub fn incr_by(&self, key: &str, delta: i64) -> i64 {
@@ -113,7 +126,11 @@ impl MockRedis {
         let mut sets = self.sets.lock().unwrap();
         let s = sets.entry(key.into()).or_default();
         let m = member.into();
-        if s.insert(m.clone()) { 1 } else { 0 }
+        if s.insert(m.clone()) {
+            1
+        } else {
+            0
+        }
     }
 
     /// SMEMBERS key (sorted)
@@ -138,7 +155,12 @@ impl MockRedis {
 
     /// SCARD key
     pub fn scard(&self, key: &str) -> usize {
-        self.sets.lock().unwrap().get(key).map(|s| s.len()).unwrap_or(0)
+        self.sets
+            .lock()
+            .unwrap()
+            .get(key)
+            .map(|s| s.len())
+            .unwrap_or(0)
     }
 
     // ---- ZSET ----
@@ -146,7 +168,10 @@ impl MockRedis {
     /// ZADD key score member
     pub fn zadd(&self, key: impl Into<String>, member: impl Into<String>, score: f64) {
         let mut zsets = self.zsets.lock().unwrap();
-        zsets.entry(key.into()).or_default().insert(member.into(), score);
+        zsets
+            .entry(key.into())
+            .or_default()
+            .insert(member.into(), score);
     }
 
     /// ZSCORE key member
@@ -157,13 +182,26 @@ impl MockRedis {
     /// ZRANGE key start stop (按 score 升序)
     pub fn zrange(&self, key: &str, start: isize, stop: isize) -> Vec<String> {
         let zsets = self.zsets.lock().unwrap();
-        let Some(z) = zsets.get(key) else { return vec![] };
+        let Some(z) = zsets.get(key) else {
+            return vec![];
+        };
         let mut v: Vec<(&String, &f64)> = z.iter().collect();
         v.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
         let n = v.len() as isize;
-        let s = if start < 0 { (n + start).max(0) } else { start.min(n) } as usize;
-        let e = if stop < 0 { n + stop + 1 } else { (stop + 1).min(n) } as usize;
-        v[s..e.min(v.len())].iter().map(|(m, _)| m.to_string()).collect()
+        let s = if start < 0 {
+            (n + start).max(0)
+        } else {
+            start.min(n)
+        } as usize;
+        let e = if stop < 0 {
+            n + stop + 1
+        } else {
+            (stop + 1).min(n)
+        } as usize;
+        v[s..e.min(v.len())]
+            .iter()
+            .map(|(m, _)| m.to_string())
+            .collect()
     }
 
     /// 清空所有
@@ -177,7 +215,9 @@ impl MockRedis {
 
     /// 简化 TTL: 不真用定时器, get 时按 wall-clock 判过期
     fn is_expired(ttl: Duration) -> bool {
-        let _now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let _now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         // 这里用 "创建时已记录 ttl" 简化 — 真生产应记录插入时间戳
         // 当前用 ttl==0 视为过期, 否则未过期 (测试用)
         ttl.is_zero()

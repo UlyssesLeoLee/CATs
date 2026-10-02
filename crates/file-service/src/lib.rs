@@ -29,8 +29,8 @@ pub mod models;
 pub mod rbac;
 
 pub use models::{
-    ErrorBody, FileListResponse, FileMetadataResponse, ListFilesQuery, NewFileRecord, UploadFileRequest,
-    UploadFileResponse,
+    ErrorBody, FileListResponse, FileMetadataResponse, ListFilesQuery, NewFileRecord,
+    UploadFileRequest, UploadFileResponse,
 };
 
 /// 当前 crate 语义版本

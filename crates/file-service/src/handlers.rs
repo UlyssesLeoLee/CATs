@@ -196,7 +196,8 @@ pub async fn download_file(
     path: web::Path<String>,
 ) -> impl Responder {
     let path_str = format!("/v1/files/{}", path.as_ref());
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "GET").await {
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "GET").await
+    {
         return HttpResponse::build(status).json(body);
     }
     let id_str = path.into_inner();
@@ -252,7 +253,8 @@ pub async fn get_file_metadata(
     path: web::Path<String>,
 ) -> impl Responder {
     let path_str = format!("/v1/files/{}", path.as_ref());
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "GET").await {
+    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "GET").await
+    {
         return HttpResponse::build(status).json(body);
     }
     let id_str = path.into_inner();
@@ -291,7 +293,9 @@ pub async fn delete_file(
     path: web::Path<String>,
 ) -> impl Responder {
     let path_str = format!("/v1/files/{}", path.as_ref());
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "DELETE").await {
+    if let Err((status, body)) =
+        rbac::enforce(rbac_checker.get_ref(), &req, &path_str, "DELETE").await
+    {
         return HttpResponse::build(status).json(body);
     }
     let id_str = path.into_inner();
@@ -327,7 +331,9 @@ pub async fn list_files(
     rbac_checker: web::Data<Arc<RbacChecker>>,
     query: web::Query<crate::models::ListFilesQuery>,
 ) -> impl Responder {
-    if let Err((status, body)) = rbac::enforce(rbac_checker.get_ref(), &req, "/v1/files", "GET").await {
+    if let Err((status, body)) =
+        rbac::enforce(rbac_checker.get_ref(), &req, "/v1/files", "GET").await
+    {
         return HttpResponse::build(status).json(body);
     }
     let q = query.into_inner();

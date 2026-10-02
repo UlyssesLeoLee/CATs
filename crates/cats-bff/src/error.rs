@@ -200,10 +200,11 @@ impl ResponseError for BffError {
 
 impl From<reqwest::Error> for BffError {
     fn from(err: reqwest::Error) -> Self {
+        // 只有 timeout 单独映射；其余（connect / body / decode 等）一律
+        // DependencyUnavailable。之前 is_connect() 与 else 两个分支返回完全
+        // 相同的值，属于无意义分支（clippy::if_same_then_else）。
         if err.is_timeout() {
             BffError::DependencyTimeout
-        } else if err.is_connect() {
-            BffError::DependencyUnavailable(err.to_string())
         } else {
             BffError::DependencyUnavailable(err.to_string())
         }

@@ -13,12 +13,12 @@
 use crate::config::Config;
 use crate::error::{BffError, BffResult};
 use crate::principal::Principal;
-use crate::upstream::auth::{AuthClient, LoginRequest, RefreshRequest, LogoutRequest};
-use crate::upstream::projects::{ProjectsClient, ListProjectsQuery, CreateProjectRequest};
-use crate::upstream::tasks::{TasksClient, DispatchTaskRequest};
+use crate::upstream::auth::{AuthClient, LoginRequest, LogoutRequest, RefreshRequest};
+use crate::upstream::projects::{CreateProjectRequest, ListProjectsQuery, ProjectsClient};
+use crate::upstream::tasks::{DispatchTaskRequest, TasksClient};
 
-use cats_rbac::{Action, Resource, RbacChecker};
 use actix_web::{web, HttpRequest, HttpResponse};
+use cats_rbac::{Action, RbacChecker, Resource};
 use std::sync::Arc;
 
 // ---- POST /v1/auth/login ----

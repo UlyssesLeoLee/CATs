@@ -55,10 +55,7 @@ async fn main() -> std::io::Result<()> {
     // 构造 audit_db 连接池 (lazy connect, 不阻塞启动)
     // 若 DATABASE_URL 未设, 仍启动 HTTP 但 consumer 不能落档
     let pool = match env::var("DATABASE_URL").ok() {
-        Some(url) => match PgPoolOptions::new()
-            .max_connections(10)
-            .connect_lazy(&url)
-        {
+        Some(url) => match PgPoolOptions::new().max_connections(10).connect_lazy(&url) {
             Ok(p) => Some(p),
             Err(e) => {
                 error!(error = %e, "audit_db pool build failed; consumer disabled, HTTP only");

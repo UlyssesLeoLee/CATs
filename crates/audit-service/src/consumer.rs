@@ -89,8 +89,8 @@ struct RestRecordGroup {
 ///
 /// 错误返回 `Result<i64, String>` (字符串错误, 不依赖 cats_common::CatsError)
 pub async fn process_event(pool: &PgPool, payload: &[u8]) -> Result<i64, String> {
-    let ev: KafkaAuditEvent = serde_json::from_slice(payload)
-        .map_err(|e| format!("invalid audit event payload: {e}"))?;
+    let ev: KafkaAuditEvent =
+        serde_json::from_slice(payload).map_err(|e| format!("invalid audit event payload: {e}"))?;
 
     // IP 解析: 字符串 → PG INET (用 ::inet 转换), 失败置 None
     // 不依赖 sqlx::types::ipnetwork (feature 未开), 让 PG 自己做类型转换
@@ -223,7 +223,12 @@ async fn consume_response(pool: &PgPool, body: RestRecordsResponse) -> usize {
             };
             match process_event(pool, &payload).await {
                 Ok(id) => {
-                    info!(audit_log_id = id, partition = rec.partition, offset = rec.offset, "audit event ingested");
+                    info!(
+                        audit_log_id = id,
+                        partition = rec.partition,
+                        offset = rec.offset,
+                        "audit event ingested"
+                    );
                     ok_count += 1;
                 }
                 Err(e) => {

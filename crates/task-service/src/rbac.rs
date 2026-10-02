@@ -132,25 +132,21 @@ pub fn route_to_resource_action(path: &str, method: &str) -> Option<(Resource, A
 /// RBAC 校验失败时构造 ErrorBody + HTTP 状态码
 pub fn rbac_error_to_response(err: &RbacError) -> (actix_web::http::StatusCode, ErrorBody) {
     use actix_web::http::StatusCode;
-    let status = StatusCode::from_u16(err.http_status())
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status =
+        StatusCode::from_u16(err.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = match err {
         RbacError::Unauthenticated => ErrorBody::new(
             "missing_authorization",
             "Authorization header missing or invalid",
         ),
-        RbacError::InvalidCredentials => {
-            ErrorBody::new("invalid_credentials", "invalid token")
-        }
+        RbacError::InvalidCredentials => ErrorBody::new("invalid_credentials", "invalid token"),
         RbacError::UserInactive => ErrorBody::new("user_inactive", "user is inactive"),
         RbacError::Forbidden {
             required_role,
             actual_role,
         } => ErrorBody::new(
             "operation_not_permitted",
-            format!(
-                "operation requires {required_role:?}, actual {actual_role:?}"
-            ),
+            format!("operation requires {required_role:?}, actual {actual_role:?}"),
         ),
         RbacError::NotFound(p) => ErrorBody::new("resource_not_found", p.clone()),
     };
@@ -168,9 +164,7 @@ pub async fn enforce(
 ) -> Result<(), (actix_web::http::StatusCode, ErrorBody)> {
     let auth = extract_user_roles(req);
     let (resource, action) = route_to_resource_action(path, method)
-        .ok_or_else(|| {
-            rbac_error_to_response(&RbacError::NotFound(path.to_string()))
-        })?;
+        .ok_or_else(|| rbac_error_to_response(&RbacError::NotFound(path.to_string())))?;
     match checker.check_roles(&auth.roles, resource, action).await {
         Ok(()) => Ok(()),
         Err(e) => Err(rbac_error_to_response(&e)),
@@ -195,10 +189,7 @@ mod tests {
     #[test]
     fn extract_multiple_roles() {
         let req = TestRequest::default()
-            .insert_header((
-                header::AUTHORIZATION,
-                "Bearer cats-role:User,QualityLead",
-            ))
+            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User,QualityLead"))
             .to_http_request();
         let auth = extract_user_roles(&req);
         assert_eq!(auth.roles, vec![Role::User, Role::QualityLead]);

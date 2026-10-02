@@ -19,7 +19,9 @@
 //! ④ 3 业务 endpoint (GET list / PATCH mark read / WS stream) 落地
 
 use actix_web::{test as actix_test, web, App};
-use notification_service::{CreateNotificationRequest, EventBus, NotificationListResponse, NotificationResponse};
+use notification_service::{
+    CreateNotificationRequest, EventBus, NotificationListResponse, NotificationResponse,
+};
 use serde_json::json;
 use sqlx::PgPool;
 use std::env;
@@ -70,7 +72,10 @@ fn make_app(
     App::new()
         .app_data(pool_data)
         .app_data(bus_data)
-        .route("/healthz", web::get().to(notification_service::handlers::healthz))
+        .route(
+            "/healthz",
+            web::get().to(notification_service::handlers::healthz),
+        )
         .route(
             "/v1/notifications",
             web::get().to(notification_service::handlers::list_notifications),
@@ -93,6 +98,7 @@ fn make_app(
 // 1. healthz
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -109,6 +115,7 @@ async fn e2e_healthz_returns_200() {
 // 2. POST /v1/notifications 创建 → 201
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_create_notification_returns_201() {
     setup_env();
     let pool = make_pool().await;
@@ -140,6 +147,7 @@ async fn e2e_create_notification_returns_201() {
 // 3. GET /v1/notifications 列表 → 200 + 包含已创建
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_list_notifications_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -180,6 +188,7 @@ async fn e2e_list_notifications_returns_200() {
 // 4. PATCH /v1/notifications/{id}/read → 200
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_mark_read_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -227,6 +236,7 @@ async fn e2e_mark_read_returns_200() {
 // 5. GET /v1/notifications/ws (SSE) → 200 + Content-Type text/event-stream
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_notification_stream_returns_sse() {
     setup_env();
     let pool = make_pool().await;
@@ -255,6 +265,7 @@ async fn e2e_notification_stream_returns_sse() {
 // 6. POST /v1/notifications 空 title → 400
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_create_empty_title_returns_400() {
     setup_env();
     let pool = make_pool().await;

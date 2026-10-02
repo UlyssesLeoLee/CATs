@@ -97,6 +97,7 @@ pub struct DownloadResponseView {
 // 1. healthz
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -113,6 +114,7 @@ async fn e2e_healthz_returns_200() {
 // 2. POST /v1/files 上传 → 201
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_upload_file_returns_201() {
     setup_env();
     let pool = make_pool().await;
@@ -150,6 +152,7 @@ async fn e2e_upload_file_returns_201() {
 // 3. GET /v1/files/{id}/metadata 命中 → 200
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_file_metadata_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -191,6 +194,7 @@ async fn e2e_get_file_metadata_returns_200() {
 // 4. GET /v1/files/{id}/metadata 不存在 → 404
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_file_metadata_not_found_returns_404() {
     setup_env();
     let pool = make_pool().await;
@@ -210,6 +214,7 @@ async fn e2e_get_file_metadata_not_found_returns_404() {
 // 5. GET /v1/files/{id} 下载 → 200 + base64 content 一致
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_download_file_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -253,6 +258,7 @@ async fn e2e_download_file_returns_200() {
 // 6. GET /v1/files 列表 → 200 + 包含已上传文件
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_list_files_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -294,6 +300,7 @@ async fn e2e_list_files_returns_200() {
 // 7. DELETE /v1/files/{id} 软删除 → 204
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_delete_file_returns_204() {
     setup_env();
     let pool = make_pool().await;
@@ -344,6 +351,7 @@ async fn e2e_delete_file_returns_204() {
 // 8. POST /v1/files 字段校验: 空 filename → 400
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_upload_empty_filename_returns_400() {
     setup_env();
     let pool = make_pool().await;

@@ -125,7 +125,11 @@ impl AuthClient {
     }
 
     /// POST /v1/auth/logout
-    pub async fn logout(&self, req: &LogoutRequest, access_token: Option<&str>) -> BffResult<LogoutResponse> {
+    pub async fn logout(
+        &self,
+        req: &LogoutRequest,
+        access_token: Option<&str>,
+    ) -> BffResult<LogoutResponse> {
         let url = format!("{}/v1/auth/logout", self.base_url());
         let mut rb = self.http().post(&url).json(req);
         if let Some(tok) = access_token {

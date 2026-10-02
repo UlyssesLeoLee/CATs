@@ -19,7 +19,11 @@ pub struct ErrorBody {
 
 impl ErrorBody {
     pub fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { error: error.into(), message: message.into(), detail: None }
+        Self {
+            error: error.into(),
+            message: message.into(),
+            detail: None,
+        }
     }
 
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
