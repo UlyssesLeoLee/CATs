@@ -1,0 +1,308 @@
+[
+  {
+    "source_term": "CATs",
+    "target_term": "CATs",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Translation Memory",
+    "target_term": "翻译记忆",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Glossary",
+    "target_term": "术语库",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "QA",
+    "target_term": "质量保证",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Tauri",
+    "target_term": "Tauri",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Svelte",
+    "target_term": "Svelte",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "API",
+    "target_term": "API",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "SDK",
+    "target_term": "SDK",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "JWT",
+    "target_term": "JWT",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "RBAC",
+    "target_term": "RBAC",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "MVP",
+    "target_term": "MVP",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "AI Gateway",
+    "target_term": "AI 网关",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "K3s",
+    "target_term": "K3s",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Kubernetes",
+    "target_term": "Kubernetes",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "PostgreSQL",
+    "target_term": "PostgreSQL",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "DDD Review",
+    "target_term": "DDD 评审",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "secret password",
+    "target_term": "***",
+    "forbidden": true,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "API key",
+    "target_term": "API 密钥",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Sprint",
+    "target_term": "Sprint",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Worktree",
+    "target_term": "Worktree",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Sprint Retro",
+    "target_term": "Sprint 复盘",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Smoke Test",
+    "target_term": "冒烟测试",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Regression Test",
+    "target_term": "回归测试",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Build",
+    "target_term": "构建",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Deploy",
+    "target_term": "部署",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Tenant",
+    "target_term": "租户",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Org",
+    "target_term": "组织",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Tauri Client",
+    "target_term": "Tauri 客户端",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Envoy",
+    "target_term": "Envoy",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Kafka",
+    "target_term": "Kafka",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Project",
+    "target_term": "项目",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Task",
+    "target_term": "任务",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "User",
+    "target_term": "用户",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Notification",
+    "target_term": "通知",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Report",
+    "target_term": "报表",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Audit Log",
+    "target_term": "审计日志",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Worker",
+    "target_term": "工作器",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Task Assignment",
+    "target_term": "任务分配",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Quality Gate",
+    "target_term": "质量门",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Source Text",
+    "target_term": "源文",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Target Text",
+    "target_term": "译文",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Placeholder",
+    "target_term": "占位符",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Tag",
+    "target_term": "标签",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Export",
+    "target_term": "导出",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Import",
+    "target_term": "导入",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Demo",
+    "target_term": "演示",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Subscription",
+    "target_term": "订阅",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Pricing",
+    "target_term": "定价",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Enterprise",
+    "target_term": "企业版",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Pro",
+    "target_term": "专业版",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "source_term": "Free",
+    "target_term": "免费版",
+    "forbidden": false,
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  }
+]
