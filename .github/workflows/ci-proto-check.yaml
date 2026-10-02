@@ -43,9 +43,14 @@ jobs:
       - name: Verify all proto files parse
         run: |
           set -e
+          # --proto_path must be the workspace root, not proto/, because the
+          # sources import each other as `import "proto/cats/v1/common.proto"`.
+          # crates/proto/build.rs sets its include path to the workspace root
+          # for exactly this reason; using proto/ here diverges from the
+          # resolution the Rust build actually performs.
           for f in $(find proto -name "*.proto"); do
             echo "=== Parsing: $f ==="
-            protoc --proto_path=proto "$f" -o /dev/null || (echo "FAIL: $f" && exit 1)
+            protoc --proto_path=. "$f" -o /dev/null || (echo "FAIL: $f" && exit 1)
           done
           echo "All $(find proto -name "*.proto" | wc -l) proto files parse OK"
 
