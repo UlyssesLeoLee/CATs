@@ -14,8 +14,8 @@ name: ci-proto-check
 on:
   push:
     branches: [main, dev, 'feature/**']
-  paths:
-    - 'proto/**'
+    paths:
+      - 'proto/**'
   pull_request:
     branches: [main, dev]
     paths:
