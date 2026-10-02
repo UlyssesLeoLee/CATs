@@ -113,9 +113,7 @@ fn test_app() -> App<
                 .route("", web::get().to(handlers::list_projects))
                 .route("", web::post().to(handlers::create_project)),
         )
-        .service(
-            web::scope("/v1/tasks").route("", web::post().to(handlers::dispatch_task)),
-        )
+        .service(web::scope("/v1/tasks").route("", web::post().to(handlers::dispatch_task)))
 }
 
 #[actix_web::test]

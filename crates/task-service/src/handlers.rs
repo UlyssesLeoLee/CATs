@@ -301,10 +301,7 @@ pub async fn update_task_status(
             ));
         }
     }
-    let output_payload = body
-        .output_payload
-        .as_ref()
-        .map(|v| Json(v.clone()));
+    let output_payload = body.output_payload.as_ref().map(|v| Json(v.clone()));
 
     let updated = match db::update_status(
         &state.pool,
@@ -627,9 +624,16 @@ mod first_frame_tests {
             occurred_at: chrono::Utc::now(),
         });
         let s = String::from_utf8_lossy(&frame);
-        assert!(s.starts_with("event:") || s.starts_with("data:"),
-                "SSE 帧必须以 'event:' 或 'data:' 起头, 实际: {:?}", s);
-        assert!(s.contains("\n\n"), "SSE 帧必须以 \\n\\n 结尾, 实际: {:?}", s);
+        assert!(
+            s.starts_with("event:") || s.starts_with("data:"),
+            "SSE 帧必须以 'event:' 或 'data:' 起头, 实际: {:?}",
+            s
+        );
+        assert!(
+            s.contains("\n\n"),
+            "SSE 帧必须以 \\n\\n 结尾, 实际: {:?}",
+            s
+        );
     }
 
     /// encode_sse_frame 不应 panic 在任意 TaskEvent 变体上 (回归: 8 态 SseTaskStatus 全部覆盖)

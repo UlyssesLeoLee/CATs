@@ -26,8 +26,8 @@ pub use handlers::{
     audit_summary, healthz, healthz_response, translation_volume, usage_report, HealthResponse,
 };
 pub use models::{
-    ActionCountRow, AuditSummary, AuditSummaryResponse, TranslationVolumeRow,
-    TranslationVolumeResponse, UsageReportItem, UsageReportResponse,
+    ActionCountRow, AuditSummary, AuditSummaryResponse, TranslationVolumeResponse,
+    TranslationVolumeRow, UsageReportItem, UsageReportResponse,
 };
 
 /// 当前 crate 语义版本

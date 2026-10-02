@@ -112,9 +112,7 @@ pub fn route_to_resource_action(path: &str, method: &str) -> Option<(Resource, A
     match (normalized, method) {
         ("/v1/notifications", "POST") => Some((Resource::Alert, Action::Create)),
         ("/v1/notifications", "GET") => Some((Resource::Alert, Action::Read)),
-        (p, "GET") if p.starts_with("/v1/notifications/") => {
-            Some((Resource::Alert, Action::Read))
-        }
+        (p, "GET") if p.starts_with("/v1/notifications/") => Some((Resource::Alert, Action::Read)),
         (p, "PATCH") if p.starts_with("/v1/notifications/") => {
             Some((Resource::Alert, Action::Update))
         }
@@ -194,10 +192,7 @@ mod tests {
     #[test]
     fn extract_user_role_multiple() {
         let req = TestRequest::default()
-            .insert_header((
-                header::AUTHORIZATION,
-                "Bearer cats-role:User,QualityLead",
-            ))
+            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User,QualityLead"))
             .to_http_request();
         let auth = extract_user_roles(&req);
         assert_eq!(auth.roles, vec![Role::User, Role::QualityLead]);

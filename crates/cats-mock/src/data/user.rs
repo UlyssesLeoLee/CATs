@@ -125,13 +125,13 @@ impl UserFactory {
             .username
             .clone()
             .unwrap_or_else(|| Username().fake::<String>());
-        let email = self
-            .email
-            .clone()
-            .unwrap_or_else(random_email);
+        let email = self.email.clone().unwrap_or_else(random_email);
         let password_hash = self.password_hash.clone().unwrap_or_else(|| {
             // 形如 argon2 占位 (不实际算, 测试不验证 hash 内容)
-            format!("$argon2id$v=19$m=19456,t=2,p=1${}${}", "fakesalt0123456789", "fakehash0123456789")
+            format!(
+                "$argon2id$v=19$m=19456,t=2,p=1${}${}",
+                "fakesalt0123456789", "fakehash0123456789"
+            )
         });
         let is_active = self.is_active.unwrap_or(true);
         let created_at = self
@@ -151,17 +151,23 @@ impl UserFactory {
     }
 
     /// 默认 count (供 lib.rs 回归测试用)
-    pub fn default_count() -> usize { 1 }
+    pub fn default_count() -> usize {
+        1
+    }
 }
 
 impl Default for UserFactory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Factory for UserFactory {
     type Output = User;
 
-    fn build(&self) -> User { self.build_one() }
+    fn build(&self) -> User {
+        self.build_one()
+    }
 
     fn build_many(&self, count: usize) -> Vec<User> {
         (0..count).map(|_| self.build_one()).collect()

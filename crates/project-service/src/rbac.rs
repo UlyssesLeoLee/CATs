@@ -112,12 +112,8 @@ pub fn route_to_resource_action(path: &str, method: &str) -> Option<(Resource, A
     match (normalized, method) {
         ("/v1/projects", "POST") => Some((Resource::Project, Action::Create)),
         ("/v1/projects", "GET") => Some((Resource::Project, Action::Read)),
-        (p, "GET") if p.starts_with("/v1/projects/") => {
-            Some((Resource::Project, Action::Read))
-        }
-        (p, "PATCH") if p.starts_with("/v1/projects/") => {
-            Some((Resource::Project, Action::Update))
-        }
+        (p, "GET") if p.starts_with("/v1/projects/") => Some((Resource::Project, Action::Read)),
+        (p, "PATCH") if p.starts_with("/v1/projects/") => Some((Resource::Project, Action::Update)),
         (p, "DELETE") if p.starts_with("/v1/projects/") => {
             Some((Resource::Project, Action::Delete))
         }
@@ -197,10 +193,7 @@ mod tests {
     #[test]
     fn extract_user_role_multiple() {
         let req = TestRequest::default()
-            .insert_header((
-                header::AUTHORIZATION,
-                "Bearer cats-role:User,QualityLead",
-            ))
+            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User,QualityLead"))
             .to_http_request();
         let auth = extract_user_roles(&req);
         assert_eq!(auth.roles, vec![Role::User, Role::QualityLead]);

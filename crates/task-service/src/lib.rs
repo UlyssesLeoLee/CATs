@@ -38,8 +38,8 @@ pub mod rbac;
 pub use events::{EventBus, SharedEventBus, Subscription, TaskState, TaskView as BusTaskView};
 pub use handlers::AppState;
 pub use models::{
-    CreateTaskRequest, ErrorBody, ListTasksQuery, ListTasksResponse, StageKind, StageMetrics,
-    StageProgressRequest, StageResultRef, StageStatus, SseTaskStatus, Task, TaskEvent, TaskStatus,
+    CreateTaskRequest, ErrorBody, ListTasksQuery, ListTasksResponse, SseTaskStatus, StageKind,
+    StageMetrics, StageProgressRequest, StageResultRef, StageStatus, Task, TaskEvent, TaskStatus,
     TaskType, TaskView, UpdateStatusRequest,
 };
 

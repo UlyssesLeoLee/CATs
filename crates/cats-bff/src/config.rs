@@ -37,8 +37,7 @@ impl Config {
     /// 从环境变量读 Config
     pub fn from_env() -> Self {
         Self {
-            bind_addr: env::var("SERVICE_BIND_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:8097".to_string()),
+            bind_addr: env::var("SERVICE_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8097".to_string()),
             auth_service_url: env::var("AUTH_SERVICE_URL")
                 .unwrap_or_else(|_| "http://localhost:8081".to_string()),
             user_service_url: env::var("USER_SERVICE_URL")

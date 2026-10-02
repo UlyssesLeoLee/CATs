@@ -18,11 +18,7 @@ use cats_bff::{
     config::Config,
     handlers,
     principal::shared_checker,
-    upstream::{
-        auth::AuthClient,
-        projects::ProjectsClient,
-        tasks::TasksClient,
-    },
+    upstream::{auth::AuthClient, projects::ProjectsClient, tasks::TasksClient},
 };
 use std::sync::Arc;
 use tracing::info;
@@ -55,12 +51,11 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::JsonConfig::default().error_handler(|err, _req| {
                 actix_web::error::InternalError::from_response(
                     err,
-                    actix_web::HttpResponse::BadRequest()
-                        .json(cats_bff::error::ErrorBody {
-                            error: cats_bff::error::ErrorCode::InvalidPayload,
-                            message: "invalid request body".to_string(),
-                            detail: None,
-                        }),
+                    actix_web::HttpResponse::BadRequest().json(cats_bff::error::ErrorBody {
+                        error: cats_bff::error::ErrorCode::InvalidPayload,
+                        message: "invalid request body".to_string(),
+                        detail: None,
+                    }),
                 )
                 .into()
             }))
@@ -78,10 +73,7 @@ async fn main() -> std::io::Result<()> {
                     .route("", web::get().to(handlers::list_projects))
                     .route("", web::post().to(handlers::create_project)),
             )
-            .service(
-                web::scope("/v1/tasks")
-                    .route("", web::post().to(handlers::dispatch_task)),
-            )
+            .service(web::scope("/v1/tasks").route("", web::post().to(handlers::dispatch_task)))
     })
     .bind(&bind_addr)?
     .run()

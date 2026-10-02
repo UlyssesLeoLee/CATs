@@ -16,8 +16,8 @@ use std::time::Duration;
 
 /// 构造 notification_db 连接池 (lazy, 不实际连 DB)
 pub async fn build_pool() -> Result<PgPool> {
-    let url = env::var("DATABASE_URL")
-        .context("DATABASE_URL env var not set (per §5.2 注入规范)")?;
+    let url =
+        env::var("DATABASE_URL").context("DATABASE_URL env var not set (per §5.2 注入规范)")?;
     let pool = PgPoolOptions::new()
         .max_connections(20)
         .acquire_timeout(Duration::from_secs(3))

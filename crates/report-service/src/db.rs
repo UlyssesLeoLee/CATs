@@ -173,10 +173,10 @@ pub async fn audit_summary_by_workspace(
     to: DateTime<Utc>,
 ) -> Result<
     (
-        i64,                // total_events
-        i64,                // distinct_actors
+        i64,                   // total_events
+        i64,                   // distinct_actors
         Option<DateTime<Utc>>, // last_event_at
-        Vec<AuditSummary>,  // top_actions (top 10 by count)
+        Vec<AuditSummary>,     // top_actions (top 10 by count)
     ),
     String,
 > {
