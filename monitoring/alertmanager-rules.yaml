@@ -1,0 +1,96 @@
+# Prometheus alertmanager rules (MVP)
+# per 启动会决议 10 + 错误码表 v1.0.1 §6.4 + 1d8926d 草稿
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: cats-observe
+data:
+  cats-business-rules.yaml: |
+    groups:
+      - name: cats-business
+        rules:
+          - alert: CatsServerErrorBurst
+            expr: sum(rate(http_requests_total{service=~"auth-service|user-service|project-service|task-service|file-service|notification-service|report-service|audit-service",code=~"5.."}[5m])) > 0.05
+            for: 5m
+            labels:
+              severity: critical
+              component: backend
+            annotations:
+              summary: "5xx 错误率 > 5% (5min)"
+              description: "服务 5xx 错误率持续超过 5%, 立即排查"
+
+          - alert: CatsDependencyDownBurst
+            expr: sum(rate(http_requests_total{code="502"}[5m])) > 0.1
+            for: 5m
+            labels:
+              severity: critical
+              component: backend
+            annotations:
+              summary: "下游依赖故障 burst (502 > 10%)"
+              description: "上游服务 502 burst, 怀疑 DB/Kafka 不可达"
+
+          - alert: CatsRateLimitedSpike
+            expr: sum(rate(http_requests_total{code="429"}[5m])) > 1
+            for: 10m
+            labels:
+              severity: warning
+              component: backend
+            annotations:
+              summary: "429 限流 spike"
+              description: "客户端触发限流, 检查是否攻击或配额配置过严"
+
+          - alert: CatsInvalidCredentialsBurstByUser
+            expr: sum(rate(http_requests_total{path="/v1/auth/login",code="401"}[5m])) by (user) > 0.5
+            for: 10m
+            labels:
+              severity: warning
+              component: security
+            annotations:
+              summary: "单用户登录失败 burst (>0.5 req/sec, 5min)"
+              description: "可能是暴力破解, 锁定该用户"
+
+  cats-infra-rules.yaml: |
+    groups:
+      - name: cats-infrastructure
+        rules:
+          - alert: CatsKafkaConsumerLag
+            expr: sum(kafka_consumer_lag) by (consumer_group) > 1000
+            for: 10m
+            labels:
+              severity: warning
+              component: messaging
+            annotations:
+              summary: "Kafka consumer 滞后 > 1000 (10min)"
+              description: "{{ $labels.consumer_group }} 消费滞后, 检查下游处理"
+
+          - alert: CatsPgReplicationLag
+            expr: pg_replication_lag_seconds > 5
+            for: 5m
+            labels:
+              severity: warning
+              component: database
+            annotations:
+              summary: "PG replica 滞后 > 5s"
+              description: "副本同步滞后, 检查网络"
+
+          - alert: CatsJwtSecretRotated
+            expr: jwt_secret_age_days > 90
+            for: 1h
+            labels:
+              severity: warning
+              component: security
+            annotations:
+              summary: "JWT secret 超过 90 天未轮换"
+              description: "per ADR-008 JWT 密钥轮换策略, 立即轮换"
+
+          - alert: CatsPodCrashLooping
+            expr: rate(kube_pod_container_status_restarts_total[15m]) > 0.1
+            for: 15m
+            labels:
+              severity: critical
+              component: platform
+            annotations:
+              summary: "Pod 频繁重启"
+              description: "{{ $labels.pod }} 15min 内重启 > 0.1/sec, 可能是配置错误或 OOM"

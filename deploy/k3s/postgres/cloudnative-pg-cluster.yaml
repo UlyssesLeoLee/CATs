@@ -1,0 +1,187 @@
+# CATs CloudNativePG Cluster (M1-Sprint 1 MVP SRE 落地)
+# 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md (commit 047dc9c) §1 "PG 18.6 + pgvector 0.8.6"
+# 引用: doc/05-其他/管理/CATs_M1-Sprint1_SRE平台独立估算_v1.0.md (commit be712dc) §4 K3s 阶段二
+# 引用: doc/02-基础设计/架构设计/CATs_微服务架构设计书_v1.0.md (commit 2910f3d) §15 PG 部署
+# 引用: doc/05-其他/管理/CATs_错误码表_v1.0.1.md (commit a4d8b86) §6.5 "PG 18.6 + pgvector 0.8.6 StatefulSet"
+# 引用: doc/03-详细设计/数据库设计/CATs_数据库设计书_v2.0.md pgvector 0.8.6 16 域 db schemas
+# 引用: 启动会决议 6 SRE 估算 v1.0 + 决议 10 Kafka + 错误码闭环
+#
+# MVP 范围: 1 实例 Master (per 任务边界 "至少声明 1 实例"), Master + Replica 留 Sprint 3
+# pgvector 0.8.6 启用 (per 技术基线 §1)
+# Secret 占位 (db-credentials / cats-ai-gateway-keys), 真实凭据走 env 注入 per 守门 #5 8/27 11:06 JST hard ban
+# PVC: local-path 100Gi (per SRE 估算 v1.0 §4)
+#
+# 部署前置:
+#   1. helm repo add cnpg https://cloudnative-pg.github.io/charts
+#   2. helm install cnpg cnpg/cloudnative-pg --namespace cats-data --create-namespace
+#   3. kubectl apply -f deploy/k3s/secrets/db-credentials.yaml
+#   4. kubectl apply -f deploy/k3s/postgres/cloudnative-pg-cluster.yaml
+#   5. kubectl apply -f deploy/k3s/postgres/pgvector-config.yaml
+#
+# 守门合规: 0 env 打印 + 0 写真实密码 (stringData placeholder) + #14 v3 代签
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: cats-data
+  labels:
+    app: cats-postgres
+    app.kubernetes.io/part-of: cats-platform
+type: Opaque
+stringData:
+  # 占位: 真实密码由 SRE 平台 Lead 真人到位后用 sealed-secrets 或 external-secrets 注入
+  # per 守门 #5 8/27 11:06 JST hard ban (0 env 打印)
+  username: "TBD-by-sealed-secrets-or-external-secrets"
+  password: "TBD-by-sealed-secrets-or-external-secrets"
+  # 留 audit log: 2026-09-19 SRE worker 落地, 真人到位后追溯
+  _rotation_metadata: "rotate-90d per ADR-008 (per 错误码表 §6.4 JWT secret rotation 类比)"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cats-ai-gateway-keys
+  namespace: cats-data
+  labels:
+    app: cats-ai-gateway
+    app.kubernetes.io/part-of: cats-platform
+type: Opaque
+stringData:
+  # 占位: AI gateway 凭据 (e.g. OpenAI / Anthropic API keys)
+  # 真实凭据由 SRE 平台 Lead 真人到位后用 sealed-secrets 注入
+  openai-api-key: "TBD-by-sealed-secrets-or-external-secrets"
+  anthropic-api-key: "TBD-by-sealed-secrets-or-external-secrets"
+---
+# CloudNativePG Cluster (per cnpg/v1 API)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cats-postgres
+  namespace: cats-data
+  labels:
+    app: cats-postgres
+    app.kubernetes.io/name: cats-postgres
+    app.kubernetes.io/part-of: cats-platform
+    app.kubernetes.io/component: relational-database
+    app.kubernetes.io/version: "18.6"
+spec:
+  # MVP: 1 instance (Master only), Replica 留 Sprint 3
+  instances: 1
+  
+  # PostgreSQL 18.6 + pgvector 0.8.6 (per 技术基线 v1.0 §1)
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6
+  imagePullPolicy: IfNotPresent
+  
+  # pgvector 0.8.6 扩展 (per 技术基线 v1.0 §1)
+  # 启动 initdb 后自动 CREATE EXTENSION vector; (per cnpg managed extensions 文档)
+  managed:
+    roles:
+      - name: cats-app
+        ensure: present
+        inherit: false
+        login: true
+        connectionLimit: -1
+        inRoles:
+          - pg_read_all_data
+        passwordSecret:
+          name: db-credentials
+          key: password
+      - name: cats-readonly
+        ensure: present
+        inherit: false
+        login: true
+        connectionLimit: -1
+        inRoles:
+          - pg_read_all_data
+        passwordSecret:
+          name: db-credentials
+          key: password
+    extensions:
+      - name: vector
+        version: "0.8.6"  # pgvector 0.8.6 (per 技术基线 v1.0 §1)
+        ensure: present
+  
+  # Storage: local-path 100Gi (per SRE 估算 v1.0 §4)
+  storage:
+    size: 100Gi
+    storageClass: local-path
+    pvcTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Gi
+  
+  # Resource limits (per cnpg best practice)
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  
+  # PostgreSQL config tuning (per 数据库设计书 v2.0 §6 + T-04 EXPLAIN 复核报告)
+  postgresql:
+    parameters:
+      # 16 域 service 连接池 (per 错误码表 §6.7 RBAC + 接口设计书 §3.5)
+      max_connections: "200"
+      shared_buffers: "1GB"
+      effective_cache_size: "4GB"
+      maintenance_work_mem: "256MB"
+      # pgvector 0.8.6 调优 (per 数据库设计书 §6.3 HNSW 索引)
+      max_parallel_workers_per_gather: "4"
+      # 日志 (per 告警规则 v1.0 §4.3 db_query_duration_seconds)
+      log_min_duration_statement: "1000"  # 1s 阈值, 超时告警
+      log_checkpoints: "on"
+      log_connections: "on"
+      log_disconnections: "on"
+      log_lock_waits: "on"
+      # pgvector 加载
+      shared_preload_libraries: "vector"
+  
+  # 监控集成 (per 告警规则 v1.0 §4.3 + Prometheus pg exporter scrape)
+  monitoring:
+    enablePodMonitor: true
+    metrics:
+      portName: metrics
+      enabled: "?{}"
+  
+  # Bootstrap: 从 initdb 引导
+  bootstrap:
+    initdb:
+      database: cats
+      owner: cats-app
+      encoding: UTF8
+      locale: en_US.UTF-8
+      dataChecksums: true
+  
+  # 失败转移 / 高可用 (MVP 单实例, 留 Sprint 3)
+  failoverDelay: 30
+  replicaCert: ""
+  
+  # 健康检查
+  healthCheckTimeout: 10
+  
+  # Service auto-create
+  serviceTemplate:
+    metadata:
+      labels:
+        app: cats-postgres
+        app.kubernetes.io/part-of: cats-platform
+    spec:
+      type: ClusterIP
+      ports:
+        - name: postgres
+          port: 5432
+          targetPort: postgres
+        - name: metrics
+          port: 9187
+          targetPort: metrics
+  
+  # Backup / PITR (per 数据库设计书 v2.0 §9 备份恢复, Sprint 2 接 WAL-G)
+  # MVP 暂不启用, 留 known gap
+  backup:
+    retention: "7d"
+    # schedule 留 SRE 平台 Lead 真人到位后配

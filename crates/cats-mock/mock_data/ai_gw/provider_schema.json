@@ -1,0 +1,28 @@
+{
+  "$id": "provider_schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI Gateway Provider Mock Fixture",
+  "description": "Schema for cats-ai-gateway MVP mock provider fixtures (per 落地任务 2026-09-19). 加载方式: include_str! 编译期嵌入 cats-ai-gateway binary.",
+  "type": "object",
+  "required": ["provider", "default_model", "cost_per_1k_tokens_usd", "responses"],
+  "properties": {
+    "provider":                 { "type": "string", "enum": ["openai", "anthropic", "gemini", "deepseek"] },
+    "description":              { "type": "string" },
+    "default_model":            { "type": "string" },
+    "cost_per_1k_tokens_usd":   { "type": "number", "minimum": 0 },
+    "responses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["prompt_substring", "content", "prompt_tokens", "completion_tokens", "latency_ms"],
+        "properties": {
+          "prompt_substring":  { "type": "string" },
+          "content":           { "type": "string" },
+          "prompt_tokens":     { "type": "integer", "minimum": 0 },
+          "completion_tokens": { "type": "integer", "minimum": 0 },
+          "latency_ms":        { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
