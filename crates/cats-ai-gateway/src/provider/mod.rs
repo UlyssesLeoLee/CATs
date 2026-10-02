@@ -35,22 +35,22 @@ impl ProviderName {
     /// 转字符串
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::OpenAi    => "openai",
+            Self::OpenAi => "openai",
             Self::Anthropic => "anthropic",
-            Self::Gemini    => "gemini",
-            Self::DeepSeek  => "deepseek",
-            Self::Local     => "local",
+            Self::Gemini => "gemini",
+            Self::DeepSeek => "deepseek",
+            Self::Local => "local",
         }
     }
 
     /// 从字符串解析
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "openai"    => Some(Self::OpenAi),
+            "openai" => Some(Self::OpenAi),
             "anthropic" => Some(Self::Anthropic),
-            "gemini"    => Some(Self::Gemini),
-            "deepseek"  => Some(Self::DeepSeek),
-            "local"     => Some(Self::Local),
+            "gemini" => Some(Self::Gemini),
+            "deepseek" => Some(Self::DeepSeek),
+            "local" => Some(Self::Local),
             _ => None,
         }
     }
@@ -82,8 +82,12 @@ pub struct ChatRequest {
     pub idempotency_key: String,
 }
 
-fn default_temperature() -> f32 { 0.7 }
-fn default_max_tokens() -> u32 { 1024 }
+fn default_temperature() -> f32 {
+    0.7
+}
+fn default_max_tokens() -> u32 {
+    1024
+}
 
 /// 单条 chat 消息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,27 +185,35 @@ impl MockProvider {
         self.responses
             .iter()
             .find(|r| r.prompt_substring != "default" && prompt.contains(&r.prompt_substring))
-            .or_else(|| self.responses.iter().find(|r| r.prompt_substring == "default"))
+            .or_else(|| {
+                self.responses
+                    .iter()
+                    .find(|r| r.prompt_substring == "default")
+            })
             .expect("fixture should contain a 'default' response")
     }
 }
 
 #[async_trait]
 impl AiProvider for MockProvider {
-    fn name(&self) -> ProviderName { self.name }
+    fn name(&self) -> ProviderName {
+        self.name
+    }
 
     fn supported_models(&self) -> &[&str] {
         // MVP: 每个 provider 仅 1 个 model
         match self.name {
-            ProviderName::OpenAi    => &["gpt-4o-mini"],
+            ProviderName::OpenAi => &["gpt-4o-mini"],
             ProviderName::Anthropic => &["claude-3-5-sonnet"],
-            ProviderName::Gemini    => &["gemini-1.5-flash"],
-            ProviderName::DeepSeek  => &["deepseek-chat"],
-            ProviderName::Local     => &["qwen2.5-7b-instruct-awq"],
+            ProviderName::Gemini => &["gemini-1.5-flash"],
+            ProviderName::DeepSeek => &["deepseek-chat"],
+            ProviderName::Local => &["qwen2.5-7b-instruct-awq"],
         }
     }
 
-    fn cost_per_1k_tokens(&self) -> f64 { self.cost_per_1k_tokens }
+    fn cost_per_1k_tokens(&self) -> f64 {
+        self.cost_per_1k_tokens
+    }
 
     async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
         // 拼接 prompt (mock 简化: 取最后一条 user 消息的 content)
@@ -235,29 +247,45 @@ impl AiProvider for MockProvider {
 
 // fixture 文件编译期嵌入 (per 落地任务: mock_data 在 crates/cats-mock/mock_data/ai_gw/)
 // 路径: src/provider/mod.rs → 上 3 层 → crates/ → cats-mock/mock_data/ai_gw/
-const OPENAI_FIXTURE: &str    = include_str!("../../../cats-mock/mock_data/ai_gw/openai_responses.json");
-const ANTHROPIC_FIXTURE: &str = include_str!("../../../cats-mock/mock_data/ai_gw/anthropic_responses.json");
-const GEMINI_FIXTURE: &str    = include_str!("../../../cats-mock/mock_data/ai_gw/gemini_responses.json");
-const DEEPSEEK_FIXTURE: &str  = include_str!("../../../cats-mock/mock_data/ai_gw/deepseek_responses.json");
+const OPENAI_FIXTURE: &str =
+    include_str!("../../../cats-mock/mock_data/ai_gw/openai_responses.json");
+const ANTHROPIC_FIXTURE: &str =
+    include_str!("../../../cats-mock/mock_data/ai_gw/anthropic_responses.json");
+const GEMINI_FIXTURE: &str =
+    include_str!("../../../cats-mock/mock_data/ai_gw/gemini_responses.json");
+const DEEPSEEK_FIXTURE: &str =
+    include_str!("../../../cats-mock/mock_data/ai_gw/deepseek_responses.json");
 
 /// 构造 OpenAI mock provider
 pub fn openai() -> Arc<dyn AiProvider> {
-    Arc::new(MockProvider::from_fixture(ProviderName::OpenAi, OPENAI_FIXTURE))
+    Arc::new(MockProvider::from_fixture(
+        ProviderName::OpenAi,
+        OPENAI_FIXTURE,
+    ))
 }
 
 /// 构造 Anthropic mock provider
 pub fn anthropic() -> Arc<dyn AiProvider> {
-    Arc::new(MockProvider::from_fixture(ProviderName::Anthropic, ANTHROPIC_FIXTURE))
+    Arc::new(MockProvider::from_fixture(
+        ProviderName::Anthropic,
+        ANTHROPIC_FIXTURE,
+    ))
 }
 
 /// 构造 Gemini mock provider
 pub fn gemini() -> Arc<dyn AiProvider> {
-    Arc::new(MockProvider::from_fixture(ProviderName::Gemini, GEMINI_FIXTURE))
+    Arc::new(MockProvider::from_fixture(
+        ProviderName::Gemini,
+        GEMINI_FIXTURE,
+    ))
 }
 
 /// 构造 DeepSeek mock provider
 pub fn deepseek() -> Arc<dyn AiProvider> {
-    Arc::new(MockProvider::from_fixture(ProviderName::DeepSeek, DEEPSEEK_FIXTURE))
+    Arc::new(MockProvider::from_fixture(
+        ProviderName::DeepSeek,
+        DEEPSEEK_FIXTURE,
+    ))
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -273,17 +301,20 @@ pub struct CompositeMockProvider {
 impl CompositeMockProvider {
     /// 构造默认 4 mock (主用 OpenAI)
     pub fn default_4() -> Self {
-        let openai    = openai();
+        let openai = openai();
         let anthropic = anthropic();
-        let gemini    = gemini();
-        let deepseek  = deepseek();
+        let gemini = gemini();
+        let deepseek = deepseek();
         let mut by_model = HashMap::new();
         for p in [&openai, &anthropic, &gemini, &deepseek] {
             for m in p.supported_models() {
                 by_model.insert((*m).to_string(), p.clone());
             }
         }
-        Self { by_model, default: openai }
+        Self {
+            by_model,
+            default: openai,
+        }
     }
 
     /// 自定义 4 provider 注入 (测试用, e.g. 用 failing stub 替换某一 provider)
@@ -307,14 +338,18 @@ impl CompositeMockProvider {
 
 #[async_trait]
 impl AiProvider for CompositeMockProvider {
-    fn name(&self) -> ProviderName { ProviderName::OpenAi } // 复合体名义默认 OpenAI
+    fn name(&self) -> ProviderName {
+        ProviderName::OpenAi
+    } // 复合体名义默认 OpenAI
 
     fn supported_models(&self) -> &[&str] {
         // 复合体返回所有 model (拼接), 但 Rust 不支持拼接静态切片 — 简化: 返回空
         &[]
     }
 
-    fn cost_per_1k_tokens(&self) -> f64 { self.default.cost_per_1k_tokens() }
+    fn cost_per_1k_tokens(&self) -> f64 {
+        self.default.cost_per_1k_tokens()
+    }
 
     async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
         let provider = self
@@ -359,13 +394,19 @@ mod tests {
     #[tokio::test]
     async fn openai_mock_returns_echo() {
         let p = openai();
-        let resp = p.chat(&ChatRequest {
-            model: "gpt-4o-mini".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "translate hello".into() }],
-            temperature: 0.7,
-            max_tokens: 1024,
-            idempotency_key: "".into(),
-        }).await.unwrap();
+        let resp = p
+            .chat(&ChatRequest {
+                model: "gpt-4o-mini".into(),
+                messages: vec![ChatMessage {
+                    role: "user".into(),
+                    content: "translate hello".into(),
+                }],
+                temperature: 0.7,
+                max_tokens: 1024,
+                idempotency_key: "".into(),
+            })
+            .await
+            .unwrap();
         assert_eq!(resp.provider, "openai");
         assert!(resp.content.starts_with("[mock-openai]"));
         assert!(resp.total_tokens > 0);
@@ -374,13 +415,19 @@ mod tests {
     #[tokio::test]
     async fn anthropic_mock_picks_translate_branch() {
         let p = anthropic();
-        let resp = p.chat(&ChatRequest {
-            model: "claude-3-5-sonnet".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "Please translate".into() }],
-            temperature: 0.7,
-            max_tokens: 1024,
-            idempotency_key: "".into(),
-        }).await.unwrap();
+        let resp = p
+            .chat(&ChatRequest {
+                model: "claude-3-5-sonnet".into(),
+                messages: vec![ChatMessage {
+                    role: "user".into(),
+                    content: "Please translate".into(),
+                }],
+                temperature: 0.7,
+                max_tokens: 1024,
+                idempotency_key: "".into(),
+            })
+            .await
+            .unwrap();
         assert_eq!(resp.provider, "anthropic");
         assert!(resp.content.contains("High-quality translation"));
     }
@@ -389,18 +436,24 @@ mod tests {
     async fn composite_routes_by_model_field() {
         let c = CompositeMockProvider::default_4();
         for (model, expected_provider) in [
-            ("gpt-4o-mini",          "openai"),
-            ("claude-3-5-sonnet",    "anthropic"),
-            ("gemini-1.5-flash",     "gemini"),
-            ("deepseek-chat",        "deepseek"),
+            ("gpt-4o-mini", "openai"),
+            ("claude-3-5-sonnet", "anthropic"),
+            ("gemini-1.5-flash", "gemini"),
+            ("deepseek-chat", "deepseek"),
         ] {
-            let resp = c.chat(&ChatRequest {
-                model: model.into(),
-                messages: vec![ChatMessage { role: "user".into(), content: "hello".into() }],
-                temperature: 0.5,
-                max_tokens: 512,
-                idempotency_key: "".into(),
-            }).await.unwrap();
+            let resp = c
+                .chat(&ChatRequest {
+                    model: model.into(),
+                    messages: vec![ChatMessage {
+                        role: "user".into(),
+                        content: "hello".into(),
+                    }],
+                    temperature: 0.5,
+                    max_tokens: 512,
+                    idempotency_key: "".into(),
+                })
+                .await
+                .unwrap();
             assert_eq!(resp.provider, expected_provider, "model={model}");
         }
     }
@@ -408,13 +461,19 @@ mod tests {
     #[tokio::test]
     async fn composite_falls_back_to_default_for_unknown_model() {
         let c = CompositeMockProvider::default_4();
-        let resp = c.chat(&ChatRequest {
-            model: "unknown-model-xyz".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
-            temperature: 0.5,
-            max_tokens: 512,
-            idempotency_key: "".into(),
-        }).await.unwrap();
+        let resp = c
+            .chat(&ChatRequest {
+                model: "unknown-model-xyz".into(),
+                messages: vec![ChatMessage {
+                    role: "user".into(),
+                    content: "hi".into(),
+                }],
+                temperature: 0.5,
+                max_tokens: 512,
+                idempotency_key: "".into(),
+            })
+            .await
+            .unwrap();
         // unknown model falls back to default (openai)
         assert_eq!(resp.provider, "openai");
     }

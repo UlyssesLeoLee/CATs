@@ -1,22 +1,22 @@
 {
-  "candidates": [
+  "provider": "gemini",
+  "description": "cats-ai-gateway mock provider fixture for Gemini. Schema: provider_schema.json.",
+  "default_model": "gemini-1.5-flash",
+  "cost_per_1k_tokens_usd": 0.000075,
+  "responses": [
     {
-      "content": {
-        "parts": [
-          {
-            "text": "Mock Gemini response"
-          }
-        ],
-        "role": "model"
-      },
-      "finishReason": "STOP",
-      "index": 0
+      "prompt_substring": "translate",
+      "content": "Translation via gemini-1.5-flash: hello -> 你好",
+      "prompt_tokens": 11,
+      "completion_tokens": 7,
+      "latency_ms": 0
+    },
+    {
+      "prompt_substring": "default",
+      "content": "Mock Gemini response",
+      "prompt_tokens": 9,
+      "completion_tokens": 15,
+      "latency_ms": 0
     }
-  ],
-  "modelVersion": "gemini-1.5-pro",
-  "usageMetadata": {
-    "promptTokenCount": 10,
-    "candidatesTokenCount": 20,
-    "totalTokenCount": 30
-  }
+  ]
 }

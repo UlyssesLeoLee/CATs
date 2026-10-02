@@ -50,16 +50,25 @@ pub struct ChatMessageDto {
 
 impl From<ChatMessageDto> for ChatMessage {
     fn from(dto: ChatMessageDto) -> Self {
-        ChatMessage { role: dto.role, content: dto.content }
+        ChatMessage {
+            role: dto.role,
+            content: dto.content,
+        }
     }
 }
 
 /// POST /v1/llm/chat 响应体 (复用 ChatResponse)
 pub type ChatResponseDto = ChatResponse;
 
-fn default_temperature() -> f32 { 0.7 }
-fn default_max_tokens() -> u32 { 1024 }
-fn default_compliance() -> String { "cloud".to_string() }
+fn default_temperature() -> f32 {
+    0.7
+}
+fn default_max_tokens() -> u32 {
+    1024
+}
+fn default_compliance() -> String {
+    "cloud".to_string()
+}
 
 /// GET /v1/llm/usage 响应
 #[derive(Debug, Serialize)]
@@ -160,7 +169,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::get().uri("/healthz").to_request();
         let resp = test::call_service(&app, req).await;
@@ -174,7 +184,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::post()
             .uri("/v1/llm/chat")
@@ -189,7 +200,10 @@ mod tests {
         assert!(resp.status().is_success());
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["provider"], "openai");
-        assert!(body["content"].as_str().unwrap().starts_with("[mock-openai]"));
+        assert!(body["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("[mock-openai]"));
     }
 
     #[actix_web::test]
@@ -200,7 +214,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::post()
             .uri("/v1/llm/chat")
@@ -224,7 +239,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::get()
             .uri("/v1/llm/usage?org_id=org-test")
