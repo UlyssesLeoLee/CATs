@@ -43,9 +43,10 @@ pub trait Factory: Sized + Clone {
 // =====================================================================
 
 /// 项目状态 (per project-service 状态机)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectStatus {
+    #[default]
     Draft,
     Active,
     Archived,
@@ -69,14 +70,11 @@ impl ProjectStatus {
     }
 }
 
-impl Default for ProjectStatus {
-    fn default() -> Self { Self::Draft }
-}
-
 /// 任务状态 (per task-service 状态机)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
+    #[default]
     Pending,
     Queued,
     Running,
@@ -109,16 +107,14 @@ impl TaskStatus {
     }
 }
 
-impl Default for TaskStatus {
-    fn default() -> Self { Self::Pending }
-}
-
 // =====================================================================
 // 通用工具: 随机时间戳 / 边界值
 // =====================================================================
 
 /// 当前 UTC 时间 (便于在测试中重写 mock)
-pub fn now_utc() -> DateTime<Utc> { Utc::now() }
+pub fn now_utc() -> DateTime<Utc> {
+    Utc::now()
+}
 
 /// 随机过去 N 天内的时间戳
 pub fn random_past_within_days(days: i64) -> DateTime<Utc> {
@@ -137,12 +133,12 @@ pub fn pick_random<T: Clone>(items: &[T]) -> T {
 /// 边界 email (用于校验失败场景)
 pub fn invalid_emails() -> &'static [&'static str] {
     &[
-        "",                  // empty
-        "no-at-sign",        // 0 @s
-        "no-domain",         // 0 @s
-        "no-domain@",        // 1 @, 但空 domain (用 RFC 简化校验)
-        "double@@at.com",    // 2 @s
-        "triple@@@at.com",   // 3 @s
+        "",                // empty
+        "no-at-sign",      // 0 @s
+        "no-domain",       // 0 @s
+        "no-domain@",      // 1 @, 但空 domain (用 RFC 简化校验)
+        "double@@at.com",  // 2 @s
+        "triple@@@at.com", // 3 @s
     ]
 }
 
@@ -187,7 +183,8 @@ mod tests {
             let has_space = e.contains(' ');
             let starts_with_at = e.starts_with('@');
             let ends_with_at = e.ends_with('@');
-            let is_invalid = e.is_empty() || at_count != 1 || has_space || starts_with_at || ends_with_at;
+            let is_invalid =
+                e.is_empty() || at_count != 1 || has_space || starts_with_at || ends_with_at;
             assert!(is_invalid, "expected invalid, got: {e}");
         }
     }

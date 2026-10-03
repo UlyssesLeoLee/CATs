@@ -1,0 +1,72 @@
+[
+  {
+    "id": "00000001-0000-0000-0000-000000000001",
+    "email": "ulysses@cats.local",
+    "name": "Ulysses",
+    "role": "sponsor",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000002-0000-0000-0000-000000000002",
+    "email": "arch@cats.local",
+    "name": "Architect Lead",
+    "role": "architect_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000003-0000-0000-0000-000000000003",
+    "email": "rust@cats.local",
+    "name": "Rust Lead",
+    "role": "rust_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000004-0000-0000-0000-000000000004",
+    "email": "dba@cats.local",
+    "name": "DBA",
+    "role": "database_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000005-0000-0000-0000-000000000005",
+    "email": "qa@cats.local",
+    "name": "Quality Lead",
+    "role": "quality_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000006-0000-0000-0000-000000000006",
+    "email": "platform@cats.local",
+    "name": "Platform Lead",
+    "role": "platform_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000007-0000-0000-0000-000000000007",
+    "email": "review@cats.local",
+    "name": "Review Lead",
+    "role": "review_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000008-0000-0000-0000-000000000008",
+    "email": "project@cats.local",
+    "name": "Project Lead",
+    "role": "project_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000009-0000-0000-0000-000000000009",
+    "email": "sre@cats.local",
+    "name": "SRE Lead",
+    "role": "sre_lead",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  },
+  {
+    "id": "00000010-0000-0000-0000-000000000010",
+    "email": "demo@cats.local",
+    "name": "Demo User",
+    "role": "user",
+    "tenant_id": "11111111-1111-1111-1111-111111111111"
+  }
+]

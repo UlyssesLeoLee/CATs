@@ -1,0 +1,41 @@
+# ArgoCD Application CRD - CATs MVP 商业版
+# per 微服务架构 v1.0 §15 GitOps
+# 引用: deploy/k3s/ 同仓 (per 启动会决议 1-10 实质完成路径)
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cats-mvp
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: cats
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/cats-internal/cats-monorepo
+    targetRevision: main
+    path: deploy/k3s/
+    directory:
+      recurse: false
+      include: '{cats-core,cats-edge,kafka,postgres,namespaces}.{yaml,yml}'
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cats-core
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

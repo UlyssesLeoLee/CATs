@@ -62,15 +62,26 @@ impl MockServer {
         drop(listener); // 释放, 让 actix_web 重新 bind 同一端口
 
         let server = HttpServer::new(move || {
-            App::new()
-                .configure(|cfg| {
-                    if config.include_auth { super::routes::auth_routes(cfg); }
-                    if config.include_user { super::routes::user_routes(cfg); }
-                    if config.include_project { super::routes::project_routes(cfg); }
-                    if config.include_task { super::routes::task_routes(cfg); }
-                    if config.include_audit { super::routes::audit_routes(cfg); }
-                    if config.include_healthz { super::routes::healthz_routes(cfg); }
-                })
+            App::new().configure(|cfg| {
+                if config.include_auth {
+                    super::routes::auth_routes(cfg);
+                }
+                if config.include_user {
+                    super::routes::user_routes(cfg);
+                }
+                if config.include_project {
+                    super::routes::project_routes(cfg);
+                }
+                if config.include_task {
+                    super::routes::task_routes(cfg);
+                }
+                if config.include_audit {
+                    super::routes::audit_routes(cfg);
+                }
+                if config.include_healthz {
+                    super::routes::healthz_routes(cfg);
+                }
+            })
         })
         .bind(addr.clone())?
         .run();
@@ -89,10 +100,14 @@ impl MockServer {
     }
 
     /// base URL (e.g. "http://127.0.0.1:54321")
-    pub fn base_url(&self) -> String { format!("http://{}", self.addr) }
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
 
     /// addr
-    pub fn addr(&self) -> &str { &self.addr }
+    pub fn addr(&self) -> &str {
+        &self.addr
+    }
 }
 
 #[cfg(test)]

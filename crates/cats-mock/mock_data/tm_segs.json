@@ -1,0 +1,202 @@
+[
+  {
+    "tm_id": "tm-0001",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Hello",
+    "target_text": "你好",
+    "approved": true,
+    "created_at": "2026-09-01T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0002",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Welcome to CATs",
+    "target_text": "欢迎使用 CATs",
+    "approved": true,
+    "created_at": "2026-09-02T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0003",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Save",
+    "target_text": "保存",
+    "approved": true,
+    "created_at": "2026-09-03T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0004",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Open",
+    "target_text": "打开",
+    "approved": true,
+    "created_at": "2026-09-04T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0005",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Continue",
+    "target_text": "继续",
+    "approved": true,
+    "created_at": "2026-09-05T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0006",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Game Over",
+    "target_text": "游戏结束",
+    "approved": true,
+    "created_at": "2026-09-06T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0007",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "ja-JP",
+    "source_text": "Hello",
+    "target_text": "こんにちは",
+    "approved": true,
+    "created_at": "2026-09-07T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0008",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "ja-JP",
+    "source_text": "Welcome",
+    "target_text": "ようこそ",
+    "approved": true,
+    "created_at": "2026-09-08T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0009",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "ja-JP",
+    "source_text": "Save",
+    "target_text": "セーブ",
+    "approved": true,
+    "created_at": "2026-09-09T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0010",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "ko-KR",
+    "source_text": "Hello",
+    "target_text": "안녕하세요",
+    "approved": true,
+    "created_at": "2026-09-10T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0011",
+    "tenant_id": "11111111-1111-1111-1111-111111111111",
+    "source_lang": "en-US",
+    "target_lang": "ko-KR",
+    "source_text": "Continue",
+    "target_text": "계속",
+    "approved": true,
+    "created_at": "2026-09-11T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0012",
+    "tenant_id": "22222222-2222-2222-2222-222222222222",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Press START",
+    "target_text": "按 START 开始",
+    "approved": true,
+    "created_at": "2026-09-12T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0013",
+    "tenant_id": "22222222-2222-2222-2222-222222222222",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Press A to jump",
+    "target_text": "按 A 键跳跃",
+    "approved": true,
+    "created_at": "2026-09-13T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0014",
+    "tenant_id": "22222222-2222-2222-2222-222222222222",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Score",
+    "target_text": "得分",
+    "approved": true,
+    "created_at": "2026-09-14T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0015",
+    "tenant_id": "33333333-3333-3333-3333-333333333333",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Subtitle",
+    "target_text": "字幕",
+    "approved": true,
+    "created_at": "2026-09-15T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0016",
+    "tenant_id": "33333333-3333-3333-3333-333333333333",
+    "source_lang": "en-US",
+    "target_lang": "ja-JP",
+    "source_text": "Subtitle",
+    "target_text": "字幕",
+    "approved": true,
+    "created_at": "2026-09-16T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0017",
+    "tenant_id": "33333333-3333-3333-3333-333333333333",
+    "source_lang": "en-US",
+    "target_lang": "ko-KR",
+    "source_text": "Subtitle",
+    "target_text": "자막",
+    "approved": true,
+    "created_at": "2026-09-17T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0018",
+    "tenant_id": "33333333-3333-3333-3333-333333333333",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Settings",
+    "target_text": "设置",
+    "approved": true,
+    "created_at": "2026-09-18T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0019",
+    "tenant_id": "44444444-4444-4444-4444-444444444444",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "OK",
+    "target_text": "确定",
+    "approved": true,
+    "created_at": "2026-09-19T10:00:00Z"
+  },
+  {
+    "tm_id": "tm-0020",
+    "tenant_id": "55555555-5555-5555-5555-555555555555",
+    "source_lang": "en-US",
+    "target_lang": "zh-CN",
+    "source_text": "Subscribe",
+    "target_text": "订阅",
+    "approved": true,
+    "created_at": "2026-09-19T10:01:00Z"
+  }
+]

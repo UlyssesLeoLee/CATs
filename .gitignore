@@ -54,6 +54,13 @@ deploy/helm/**/*.tgz
 **/*.pb.go
 **/*_grpc.pb.go
 
+# === vercelserver/ Vercel 部署套件 ===
+# 内部 src/cats-client/ 是构建产物 (npm run build 产出), 不入仓
+# 内部 src/web-console-mock/ 和 src/media-pipeline-mock/ 是 commit-once 副本
+#   (build.sh 重新生成时覆盖, 但默认状态从仓复制, 保证 vercelserver/ 独立可复用)
+vercelserver/src/cats-client/
+vercelserver/src/node_modules/
+
 # Worker 临时文件（不入仓）
 _worker-tmp/
 _tpl/

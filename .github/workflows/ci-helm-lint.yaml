@@ -1,0 +1,95 @@
+# CATs M0 Helm Lint CI
+# 引用: deploy/helm/* 18 chart
+# 引用: 完成判据 5（helm chart 骨架不需要 helm 验证，只需 YAML 语法 OK）
+# 注: M0 阶段不强制安装 helm；M1 阶段启用完整 helm lint + kubeconform
+
+name: ci-helm-lint
+
+on:
+  push:
+    branches: [main, dev, 'feature/**']
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  yaml-syntax:
+    name: YAML syntax (all charts)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # M0 阶段：仅做 YAML 语法 sanity check（不需要 helm）
+      # 注意: deploy/helm/*/templates/ 下是 Helm Go 模板（{{ ... }}），不是纯 YAML，
+      # 直接喂给 yq 必然报 "did not find expected node content"。模板的语法由
+      # 下面的 helm lint job 负责（helm 会做模板渲染 + schema 校验），因此这里
+      # 只校验非模板的纯 YAML 文件（Chart.yaml / values.yaml 等）。
+      - name: Install yq
+        run: sudo snap install yq || sudo apt-get install -y yq
+
+      - name: Verify all YAML parses
+        run: |
+          set -e
+          files=$(find deploy/helm \( -name "*.yaml" -o -name "*.yml" \) -not -path "*/templates/*")
+          for f in $files; do
+            echo "Checking: $f"
+            yq eval 'true' "$f" > /dev/null || (echo "FAIL: $f" && exit 1)
+          done
+          echo "All $(echo "$files" | wc -l) non-template YAML files parse OK"
+
+      - name: "Sanity: templates are Helm, not plain YAML"
+        run: |
+          set -e
+          count=$(find deploy/helm -path "*/templates/*" \( -name "*.yaml" -o -name "*.yml" \) | wc -l)
+          echo "$count Helm template files deferred to the helm lint job"
+          if [ "$count" -eq 0 ]; then
+            echo "WARN: no templates found - is deploy/helm still populated?"
+          fi
+
+  helm-lint:
+    name: helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Build dependencies
+        run: |
+          # 遍历全部 chart，不只是 cats-*。此前 glob 只命中 cats-bff / cats-common
+          # 两个 chart，16 个 service chart（asr-service / worker-service / ...）
+          # 的 helm lint 从未在 CI 里跑过。
+          for chart in deploy/helm/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              echo "=== $chart ==="
+              helm dependency build "$chart" || true
+            fi
+          done
+
+      - name: Lint all charts
+        run: |
+          failed=0
+          count=0
+          for chart in deploy/helm/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              count=$((count+1))
+              echo "=== Lint $chart ==="
+              helm lint "$chart" || failed=$((failed+1))
+            fi
+          done
+          echo "Linted $count charts, $failed failed"
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: no charts found under deploy/helm" && exit 1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "ERROR: $failed chart(s) failed helm lint" && exit 1
+          fi
