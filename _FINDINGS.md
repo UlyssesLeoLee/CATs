@@ -119,6 +119,57 @@ POST/PATCH/DELETE -> Sponsor (Create / Update / Delete)
 管不了 Project 资源，业务上是否合理？若不合理，该修的是权限矩阵，
 而不是这个测试。我没有擅自放宽。
 
+### file / notification：同一个 500 根因，掩盖成"只有 healthz 能过"
+
+这两个 service 的表现极具迷惑性：
+
+```
+running 8 tests
+test e2e_healthz_returns_200 ... ok
+test e2e_upload_file_returns_201 ... FAILED
+... 其余 7 个全 FAILED（且整个 run 只花 0.06s）
+```
+
+**"healthz 过、业务全挂"是一条强信号**：healthz 是唯一一个不注入
+`web::Data<Arc<RbacChecker>>` 的 handler。业务 handler 全都注入它，
+而两个测试的 `make_app` 都只注册了 `pool` / `bus`，于是 actix 的
+extractor 取不到，返回
+
+```
+500 "Requested application data is not configured correctly"
+```
+
+失败得**极快**（0.02–0.06s）也是线索：真连库失败的请求会卡在连接或
+事务上，不会瞬间结束。
+
+补 `rbac_data` 后，第二个坑立刻露出来：请求**完全不带 `Authorization`**，
+于是全部 401。所以每个文件要改两处，不是一处。
+
+> 这一类三次都栽在同一个地方（auth 缺 AppState、project 缺 rbac_data、
+> file/notification 缺 rbac_data），说明"测试的 App 装配与 `main.rs` 漂移"
+> 是个系统性问题，不是三处独立的笔误。真正的解法是让 `make_app` 复用
+> `main.rs` 的注册代码，而不是每个测试文件手抄一遍——手抄就一定会漂移。
+
+### 角色分配：必须查矩阵，不能凭角色名猜
+
+三处都靠猜角色名踩了坑，而实际矩阵与名字的对应关系很反直觉：
+
+| service | 资源 | 写操作授权角色 | 读操作授权角色 |
+|---|---|---|---|
+| project | `Resource::Project` | **仅 Sponsor** | User / ArchitectLead / DatabaseLead / QualityLead |
+| file | `Resource::File` | **仅 Sponsor** | User / ArchitectLead / DatabaseLead / QualityLead |
+| notification | `Resource::Alert` | SRELead / Sponsor | SRELead / ArchitectLead / QualityLead / Sponsor |
+
+反直觉的三点：
+
+1. `Role::ProjectLead`（枚举注释写"PMO Lead"）**在 Project 上没有任何权限**。
+   不查矩阵只看名字，会一直以为"Project Lead 当然能管 Project"。
+2. `Resource::File` 的写权限也只有 Sponsor——File 和 Project 待遇一致。
+3. notification 走的是 `Resource::Alert`（不是 `Resource::Notification`），
+   且 **User 对 Alert 连 Read 都没有**（User 的 Read 列表是
+   User/Task/Project/File/Translation，不含 Alert）。
+   给它套用 project/file 的 "User 读、Sponsor 写" 会 403。
+
 ## 二之二、CI 自身的两个缺陷（run 37112321110 实证）
 
 把 e2e 接进 CI 后，第一次 run 就暴露了两个**与测试无关**的 CI 缺陷：
@@ -156,14 +207,22 @@ Connection refused
 "IF NOT EXISTS 静默跳过 → 后面报列不存在"的成因。注释比代码更危险，
 因为它是后来者唯一会读的文档。
 
-## 三、已验证结果
+## 三、已验证结果（真实 PG 18.6 / pgvector/pgvector:pg18）
 
-| service | 修复前 | 修复后 |
-|---|---|---|
-| auth-service (`e2e_auth`) | 1 passed / 7 failed（全部 500） | **8 passed / 0 failed** |
-| user-service (`e2e_t02`) | migration 无法初始化 | **5 passed / 0 failed** |
-| project-service (`integration`) | 1 passed / 6 failed | 见下方"待补" |
-| file / notification | migration 无法初始化 | 待跑 |
+**45 个 e2e 全部执行并通过，此前它们一次都没跑过。**
+
+| service | 测试文件 | 修复前 | 修复后 | 改了什么 |
+|---|---|---|---|---|
+| auth-service | `e2e_auth.rs` | 1 passed / 7 failed | **8 / 0** | `make_app` 补 `AppState` |
+| auth-service | `e2e_t01.rs` | 从未执行 | **11 / 0** | **零修改**（装配本来就对） |
+| user-service | `e2e_t02.rs` | migration 起不来 | **5 / 0** | 修 migration |
+| project-service | `integration.rs` | 1 passed / 6 failed | **7 / 0** | `rbac_data` + 认证头 + 角色 |
+| file-service | `integration.rs` | 1 passed / 7 failed | **8 / 0** | `rbac_data` + 认证头 + 角色 |
+| notification-service | `integration.rs` | 1 passed / 5 failed | **6 / 0** | `rbac_data` + 认证头 + 角色 |
+| **合计** | 6 个文件 | — | **45 passed / 0 failed** | |
+
+注意 `e2e_t01.rs`（11 个）**一行没改就过了**。这说明缺陷不是均匀分布的，
+而是集中在少数文件的装配上——不能因为"某个文件能过"就推断"这类都没问题"。
 
 ## 四、为什么这些缺陷能存活到现在
 
