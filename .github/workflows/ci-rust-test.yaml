@@ -29,38 +29,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-
-    # 45 个 e2e 测试此前全部标 #[ignore = "e2e-needs-real-pg"]，从未在 CI 执行过。
-    # 真实 PG 由 service 容器提供；只给 postgres 用户，无 pgvector/无其他扩展。
-    #
-    # 注意：services.<id> 下**不允许** if:——GitHub 的 workflow 解析器不接受，
-    # 会在该行直接报 "Unexpected value 'if'" 且整个 job 不启动（job 一个都不
-    # 会创建，只报 "This run likely failed because of a workflow file issue"）。
-    # 所以容器在三个平台都起，e2e 只在 Linux 上执行。
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
-      # 每个 service 一套库，与 8 业务库名对齐（e2e 直接连这些库）
-      E2E_AUTH_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_auth
-      E2E_USER_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_user
-      E2E_PROJECT_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_project
-      E2E_FILE_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_file
-      E2E_NOTIFICATION_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_notification
-      # 测试用固定值，非真实凭据；TEST_PASSWORD 同样仅供测试种子用户
-      JWT_SECRET: ci-e2e-only-not-a-real-secret
-      TEST_PASSWORD: ci-e2e-only-9f3a2b
+      RUST_BACKTRACE: full
+      CARGO_TERM_COLOR: always
+      # llvm-cov 默认输出格式
+      LLVM_PROFILE_FILE: "target/coverage/%p-%m.profraw"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -123,39 +96,6 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --locked -- --nocapture
 
-      # 45 个 e2e 此前从不在 CI 执行。它们此前靠 #[ignore] + Once 惰性初始化
-      # 双重掩盖：Once 让首次失败把状态毒化，掩盖了"缺数据库"这个真实原因。
-      # 现在有真实 PG，去掉 --ignored 之外还要串行跑：这些测试共用固定表名，
-      # 并发会互相污染。
-      - name: Run DB-backed e2e against real PostgreSQL
-        if: runner.os == 'Linux'
-        env:
-          DATABASE_URL: ${{ env.E2E_AUTH_URL }}
-        run: |
-          set -euo pipefail
-          for spec in \
-            "auth-service:e2e_auth:e2e_auth:e2e_t01" \
-            "auth-service:e2e_auth:e2e_auth:" \
-            "user-service:e2e_user:e2e_t02:" \
-            "project-service:e2e_project:integration:" \
-            "file-service:e2e_file:integration:" \
-            "notification-service:e2e_notification:integration:" \
-          ; do
-            pkg="${spec%%:*}"; rest="${spec#*:}"
-            db="${rest%%:*}"; rest="${rest#*:}"
-            target="${rest%%:*}"; extra="${rest#*:}"
-            echo "=== ${pkg} / ${target:-default} -> ${db} ==="
-            if [ -n "$target" ]; then
-              DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/${db}" \
-                cargo test -p "$pkg" --test "$target" --all-features --locked \
-                -- --ignored --test-threads=1 --nocapture
-            else
-              DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/${db}" \
-                cargo test -p "$pkg" --all-features --locked \
-                -- --ignored --test-threads=1 --nocapture
-            fi
-          done
-
       # 引用: doc/02-基础设计/测试/CATs_测试Mock项目设计书_v1.0.md §5.3
       # 2026-09-01 改造: 16 service smoke boilerplate 替换为 cats_mock::smoke::name_matches_crate!
       # 故 smoke.rs 行数从 ~16 → 7, 真实业务测试占比上升, 覆盖率门槛从 M0 的无门槛 → 40% 强制
@@ -175,3 +115,117 @@ jobs:
           files: lcov.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # 45 个 DB-backed e2e 此前全部标 #[ignore = "e2e-needs-real-pg"]，从未在任何
+  # CI 执行过。它们靠 #[ignore] + Once 惰性初始化双重掩盖：Once 让首次失败把
+  # 状态毒化，把"缺数据库"这个真实原因变成"测试失败"。
+  #
+  # 为什么是独立 job 而不是 test job 的一个步骤：
+  # 1. services.<id> 下不允许 if:——GitHub 解析器在该行报 "Unexpected value
+  #    'if'" 并拒绝启动任何 job（只显示 "This run likely failed because of a
+  #    workflow file issue"，没有任何 job 记录）。
+  # 2. 而不加 if: 也不行——service 容器只在 Linux runner 上可用，macOS 报
+  #    "docker: command not found"，Windows 报 "Container operations are only
+  #    supported on Linux runners"。
+  # 所以只能整体挪到 runs-on: ubuntu-latest 的独立 job。
+  e2e:
+    name: e2e (real PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUST_BACKTRACE: full
+      CARGO_TERM_COLOR: always
+      # 测试用固定值，非真实凭据
+      JWT_SECRET: ci-e2e-only-not-a-real-secret
+      TEST_PASSWORD: ci-e2e-only-9f3a2b
+      PGPASSWORD: postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install lld (per .cargo/config.toml -fuse-ld=lld)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
+
+      - name: Install Rust toolchain 1.98.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-e2e-
+            ${{ runner.os }}-cargo-
+
+      - name: Create e2e databases and apply migrations
+        run: |
+          set -euo pipefail
+          for svc in auth user project file notification; do
+            psql -U postgres -h 127.0.0.1 -c "CREATE DATABASE e2e_${svc};"
+          done
+          # 每个 service 的 migrations/ 是唯一权威 schema 来源。
+          # file/notification/project/user 各有三份 init，此前在全新库上会互相
+          # 冲突（见 PR #22）；本 PR 已把与生产代码不符的旧 init 停用。
+          apply() {
+            local db="$1" dir="$2"
+            for f in $(find "$dir" -name '*.sql' | sort); do
+              echo "  applying ${f}"
+              psql -U postgres -h 127.0.0.1 -d "$db" -v ON_ERROR_STOP=1 -q -f "$f"
+            done
+          }
+          apply e2e_auth         crates/auth-service/migrations
+          apply e2e_user         crates/user-service/migrations
+          apply e2e_project      crates/project-service/migrations
+          apply e2e_file         crates/file-service/migrations
+          apply e2e_notification crates/notification-service/migrations
+
+      # 串行执行：这些测试共用固定表名（users_credential / files / projects /
+      # notifications），并发会互相污染对方的种子数据。
+      - name: Run DB-backed e2e
+        run: |
+          set -euo pipefail
+          run_suite() {
+            local pkg="$1" db="$2" target="${3:-}"
+            local url="postgres://postgres:postgres@127.0.0.1:5432/${db}"
+            if [ -n "$target" ]; then
+              echo "=== ${pkg} --test ${target} -> ${db} ==="
+              DATABASE_URL="$url" cargo test -p "$pkg" --test "$target" \
+                --all-features --locked -- --ignored --test-threads=1 --nocapture
+            else
+              echo "=== ${pkg} (all targets) -> ${db} ==="
+              DATABASE_URL="$url" cargo test -p "$pkg" --all-features --locked \
+                -- --ignored --test-threads=1 --nocapture
+            fi
+          }
+          run_suite auth-service        e2e_auth         e2e_auth
+          run_suite auth-service        e2e_auth         e2e_t01
+          run_suite user-service        e2e_user         e2e_t02
+          run_suite project-service     e2e_project      integration
+          run_suite file-service        e2e_file         integration
+          run_suite notification-service e2e_notification integration
