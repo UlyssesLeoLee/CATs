@@ -158,6 +158,36 @@ extractor 取不到，返回
 > 是个系统性问题，不是三处独立的笔误。真正的解法是让 `make_app` 复用
 > `main.rs` 的注册代码，而不是每个测试文件手抄一遍——手抄就一定会漂移。
 
+### 全仓 app_data 漂移审计：还有没有同类隐患
+
+既然这是一个 bug 类，就把 16 个 service 逐个比对了 `main.rs` 的
+`app_data` 与其测试 `make_app` 的 `app_data`：
+
+| service | `main.rs` 注册 | 测试注册 | 结论 |
+|---|---|---|---|
+| auth | `AppState` | `AppState` | 已修（本次） |
+| project | pool + rbac | pool + rbac | 已修（本次） |
+| file | pool + rbac | pool + rbac | 已修（本次） |
+| notification | pool + bus + rbac | pool + bus + rbac | 已修（本次） |
+| user | pool | pool | 一致（5/5 通过） |
+| cats-bff | cfg + 4 client + rbac + JsonConfig | cfg + 4 client + rbac | 一致（`bff_smoke.rs` 全数注册） |
+| task | `AppState` + `Arc<Config>` | `AppState` | 见下 |
+| cats-ai-gateway | `svc_data` | **测试不建 actix App** | 无此风险 |
+| report / worker / asr / ocr / subtitle / ingestion / office-converter / render-writer / translation-core | 仅 `App::new().route("/healthz")` | 仅 smoke.rs | 无此风险 |
+
+**结论：修完之后，全仓已无"测试缺注册导致 500"的同类隐患。**
+
+task-service 那条需要说明白，因为看起来像隐患其实不是：`main.rs:114`
+注册了 `web::Data::new(Arc::new(cfg_log))`，测试没有。但逐个查过
+`handlers.rs` 的 8 个 handler，签名全是 `web::Data<AppState>`，
+且该 crate 没有 `wrap_fn` / `Transform` / `ReqData`——
+**没有任何消费者**，所以测试不需要它。生产端这是一段无人读取的注册，
+属可清理的死代码，不是测试陷阱。
+
+> 这里特意没有把 task-service 记成"隐患"。第一反应是"测试少注册了一项 =
+> 潜在 bug"，但查了消费者才确认它没人用。**"看起来不一致"和"真的不一致"
+> 是两件事，前者必须查到底再下结论。**
+
 ### 角色分配：必须查矩阵，不能凭角色名猜
 
 三处都靠猜角色名踩了坑，而实际矩阵与名字的对应关系很反直觉：
