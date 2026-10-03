@@ -43,30 +43,10 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create e2e databases and apply migrations
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          # service 容器只建了默认库；这里按 service 建库并灌各自 migration。
-          # 每个 service 的 migrations/ 目录是唯一权威 schema 来源——
-          # 其中 file/notification/project/task/user 各有三份 init，
-          # 但版本号递增且都用 IF NOT EXISTS，顺序应用不会冲突。
-          for svc in auth user project file notification; do
-            db="e2e_${svc}"
-            psql -U postgres -h 127.0.0.1 -c "CREATE DATABASE ${db};"
-          done
-          apply_migrations() {
-            local db="$1" dir="$2"
-            for f in $(find "$dir" -name '*.sql' | sort); do
-              echo "  applying ${f}"
-              psql -U postgres -h 127.0.0.1 -d "$db" -v ON_ERROR_STOP=1 -q -f "$f"
-            done
-          }
-          apply_migrations e2e_auth        crates/auth-service/migrations
-          apply_migrations e2e_user        crates/user-service/migrations
-          apply_migrations e2e_project     crates/project-service/migrations
-          apply_migrations e2e_file        crates/file-service/migrations
-          apply_migrations e2e_notification crates/notification-service/migrations
+      # 注: 本 job 不建库也不灌 migration——DB-backed e2e 全部在下面的 `e2e`
+      # job 里跑。此处曾留过一个 "Create e2e databases and apply migrations"
+      # 步骤，但它所在 job 没有任何 Postgres service，psql 直接
+      # "Connection refused"（run 37112321110 ubuntu 失败实证），属于死代码。
 
       - name: Install lld (Linux, per .cargo/config.toml -fuse-ld=lld)
         if: runner.os == 'Linux'
@@ -133,7 +113,12 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18
+        # 必须是 pgvector 镜像而非官方 postgres:18——project-service 的
+        # 20260919_0001_init.sql 执行 `CREATE EXTENSION IF NOT EXISTS vector`
+        # （per 技术选型 ADR-30 + 技术基线 v1.0 §1），官方镜像没有 pgvector，
+        # 会以 "extension \"vector\" is not available" 失败
+        # （run 37112321110 e2e 失败实证）。本机 e2e 用的也是 pg18 变体。
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

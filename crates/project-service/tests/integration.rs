@@ -81,6 +81,27 @@ fn make_app(
 }
 
 // =====================================================================
+// 角色分配依据 (per 权限矩阵 v1.0 §3, 实现在 crates/cats-rbac/src/lib.rs
+// 的 default_permissions())
+//
+// 写操作 (POST/PATCH/DELETE → Action::Create/Update/Delete) 一律用 Sponsor：
+// 在当前权限矩阵里 Resource::Project 的写权限**只有 Sponsor 一人**。
+// 其余角色对 Project 最多只有 Read——ArchitectLead / DatabaseLead /
+// QualityLead / User 都是 Read，Guest 连 Read 都没有。
+//
+// 原先这里用的是 ProjectLead，5 个 e2e 全部 403。查权限矩阵发现
+// Role::ProjectLead（枚举注释写的是"PMO Lead"）的权限只覆盖
+// Sprint / Decision / Risk / Gap 四个资源，根本不含 Project。
+// 按"实现是权威，测试是过时的"原则改测试，不动生产权限矩阵。
+//
+// ⚠ 顺带记录一条**待 Ulysses 拍板的产品问题**（见 _FINDINGS.md）：
+// 一个叫"PMO Lead"的角色管不了 Project 资源，在业务上是否合理？
+// 若不合理，该修的是权限矩阵（放宽 Project），而不是本测试。
+//
+// 读操作用 User：User 对 Project 有 Read，够用且比 Sponsor 更贴近真实场景。
+// =====================================================================
+
+// =====================================================================
 // 1. healthz
 // =====================================================================
 #[actix_web::test]
@@ -112,7 +133,7 @@ async fn e2e_create_project_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:ProjectLead"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "ULYS-150 Test Project".to_string(),
@@ -153,7 +174,7 @@ async fn e2e_get_project_by_id_returns_200() {
     // 先 create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:ProjectLead"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Get Test".to_string(),
@@ -229,7 +250,7 @@ async fn e2e_list_projects_with_workspace_filter() {
     for i in 0..2 {
         let req = actix_test::TestRequest::post()
             .uri("/v1/projects")
-            .insert_header(("Authorization", "Bearer cats-role:ProjectLead"))
+            .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
             .set_json(CreateProjectRequest {
                 workspace_id,
                 name: format!("B-1 List Test {i}"),
@@ -299,7 +320,7 @@ async fn e2e_patch_project_partial_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:ProjectLead"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Patch Original".to_string(),
@@ -315,7 +336,7 @@ async fn e2e_patch_project_partial_returns_200() {
     // patch 部分字段 (name + target_lang)
     let patch_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/projects/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:ProjectLead"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(UpdateProjectRequest {
             name: Some("B-1 Patch Updated".to_string()),
             source_lang: None,
@@ -355,7 +376,7 @@ async fn e2e_delete_project_soft_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:ProjectLead"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Delete Test".to_string(),
@@ -371,7 +392,7 @@ async fn e2e_delete_project_soft_returns_200() {
     // delete (软删除 → status='archived')
     let del_req = actix_test::TestRequest::delete()
         .uri(&format!("/v1/projects/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:ProjectLead"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .to_request();
     let del_resp = actix_test::call_service(&app, del_req).await;
     assert_eq!(del_resp.status().as_u16(), 200);
