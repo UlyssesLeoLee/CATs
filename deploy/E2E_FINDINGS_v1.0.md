@@ -209,20 +209,45 @@ Connection refused
 
 ## 三、已验证结果（真实 PG 18.6 / pgvector/pgvector:pg18）
 
-**45 个 e2e 全部执行并通过，此前它们一次都没跑过。**
+**CI run 37113777361 实证：e2e job 45 passed / 0 failed，test 三平台全绿。**
 
-| service | 测试文件 | 修复前 | 修复后 | 改了什么 |
-|---|---|---|---|---|
-| auth-service | `e2e_auth.rs` | 1 passed / 7 failed | **8 / 0** | `make_app` 补 `AppState` |
-| auth-service | `e2e_t01.rs` | 从未执行 | **11 / 0** | **零修改**（装配本来就对） |
-| user-service | `e2e_t02.rs` | migration 起不来 | **5 / 0** | 修 migration |
-| project-service | `integration.rs` | 1 passed / 6 failed | **7 / 0** | `rbac_data` + 认证头 + 角色 |
-| file-service | `integration.rs` | 1 passed / 7 failed | **8 / 0** | `rbac_data` + 认证头 + 角色 |
-| notification-service | `integration.rs` | 1 passed / 5 failed | **6 / 0** | `rbac_data` + 认证头 + 角色 |
-| **合计** | 6 个文件 | — | **45 passed / 0 failed** | |
+| service | 测试文件 | 修复前 | 修复后 |
+|---|---|---|---|
+| auth-service | `e2e_auth.rs` | 1 passed / 7 failed | **8 / 0** |
+| auth-service | `e2e_t01.rs` | 从未执行 | **11 / 0**（零修改） |
+| user-service | `e2e_t02.rs` | migration 起不来 | **5 / 0** |
+| project-service | `integration.rs` | 1 passed / 6 failed | **7 / 0** |
+| file-service | `integration.rs` | 1 passed / 7 failed | **8 / 0** |
+| notification-service | `integration.rs` | 1 passed / 5 failed | **6 / 0** |
+| **合计** | 6 个文件 | — | **45 passed / 0 failed** |
 
-注意 `e2e_t01.rs`（11 个）**一行没改就过了**。这说明缺陷不是均匀分布的，
-而是集中在少数文件的装配上——不能因为"某个文件能过"就推断"这类都没问题"。
+`e2e_t01.rs` 当时是**一行没改就过了 11/11**。缺陷并非均匀分布，而是集中在
+少数文件的 App 装配上——不能因为「某个文件能过」就推断「这类都没问题」。
+
+### 事后订正：这 45 个里有 2 个本来就不该被 ignore
+
+`e2e_t01.rs` 的 11 个中有 2 个是**纯静态源码断言**：
+
+```rust
+fn e2e_t01_build_audit_must_not_use_spawn()   // include_str! + substring
+fn e2e_t01_build_audit_still_awaits_emit()    // include_str! + substring
+```
+
+它们不建连接、不跑 migration，却被批量标 `#[ignore = "e2e-needs-real-pg"]`
+一并盖住，理由与事实不符。代价是实的：这两条守护 ULYS-46 的 INVIOLABLE 约束，
+标了 ignore 就只在 Linux 的 e2e job 里被检查，macOS / Windows 常规门禁全漏。
+
+解除后本地实测（**刻意不设 `DATABASE_URL`**）：`2 passed / 9 ignored`。
+
+所以准确的口径是：
+
+- **43 个** 真正需要数据库的 e2e → 全部在 e2e job 里对真实 PG 执行并通过
+- **2 个** 静态源码断言 → 归位到常规 `cargo test --workspace`，三平台都跑
+
+> 顺带一个自差点：统计 `#[ignore]` 数量时用 `git grep '#\[ignore'`，
+> 结果把我自己新写的**注释里提到的 `#[ignore` 字样**也数了进去
+> （e2e_t01 报 11 而非 9）。改用 `^\s*#\[ignore` 精确匹配才得到正确的 43。
+> 验证手段本身出错时，报出的数字和被验证的对象一样有欺骗性。
 
 ## 四、为什么这些缺陷能存活到现在
 
