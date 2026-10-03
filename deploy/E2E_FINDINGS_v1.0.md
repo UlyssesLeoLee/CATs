@@ -115,9 +115,17 @@ POST/PATCH/DELETE -> Sponsor (Create / Update / Delete)
 按"实现是权威，测试是过时的"原则，改测试（用 Sponsor），不动生产权限矩阵。
 放宽权限矩阵是安全相关的决策，不该为了让测试变绿而顺手做掉。
 
-**遗留一条待 Ulysses 拍板的产品问题**：一个叫"PMO Lead"的角色
-管不了 Project 资源，业务上是否合理？若不合理，该修的是权限矩阵，
-而不是这个测试。我没有擅自放宽。
+**已拍板（2026-10-03，Ulysses）**：保持现状——`Project` / `File` 的写权限
+**只给 `Sponsor`**，符合权限矩阵 v1.0 §3 原文。不给 `ProjectLead` 补权限。
+
+于是这条不再是"遗留待办"，而是一条**已确认的设计选择**：一个叫
+"PMO Lead"的角色在权限矩阵上管不到 Project，是矩阵本身的结果。
+将来若有人再看到 `ProjectLead` 管不了 Project 而当成 bug 去"修"，
+请先读这一段——它是被显式确认过的，不是遗漏。
+
+> 备注：该拍板是通过选项表单的**超时默认选中**收到的
+> （`responseSource: automatic_timeout`，非显式回复），
+> 选中的正是推荐项。结论照此执行；若判断有误，改权限矩阵即可回退。
 
 ### file / notification：同一个 500 根因，掩盖成"只有 healthz 能过"
 
