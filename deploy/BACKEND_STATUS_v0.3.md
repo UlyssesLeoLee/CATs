@@ -192,13 +192,59 @@ windows-latest 上 FAILED，差异只有调度时机。已改用
 | 项 | 性质 | 现状 |
 |---|---|---|
 | **Tauri 客户端不受任何 CI 门禁覆盖，且当前无法编译** | 🔴 P0 | 维持 v0.2 §4.1 判定。2026-10-03 拍板：**暂不引入客户端**，先把后端收干净 |
-| `docker compose up` 14 service 未执行 | 🔴 P0 | 仍未执行；binary 能编译 ≠ 服务能起来 |
 | 真实 AI provider 接 OpenAI/Anthropic | 🔴 P0 | 未做，当前只有 mock provider |
 | 真实 secret 注入 (Vault) | 🟡 P1 | 未做 |
 | translation-core 接真 project_db + pgvector | 🟡 P1 | 未做 |
 | 真 mTLS 服务间通信 (per ADR-009) | 🟡 P1 | 未做 |
 | `cats-bff` 三个未接入文件 | 🟡 P1 | 依赖的 4 个 `Config` API 在当前版本不存在，接入前需先适配改造 |
-| ~~45 个 e2e 需真实 PostgreSQL~~ | ~~🔴 P0~~ | **已关闭**（§1）。PR #22 落地后 `dev` 将首次在 CI 内含真实数据库 |
+| ~~`docker compose up` 14 service 未执行~~ | ~~🔴 P0~~ | **已关闭**，见 §5.4 |
+| ~~45 个 e2e 需真实 PostgreSQL~~ | ~~🔴 P0~~ | **已关闭**（§1） |
+
+## §5.4 `docker compose up`：从"没验证过"到"跑通了" 🔴→✅
+
+v0.2 §4 记的是「`docker compose up` 14 service 未执行；binary 能编译 ≠
+服务能起来」。2026-10-04 真的执行了。真实状态比"未执行"更糟：
+**这条路径此前 0 可用性**，累计 **12 处缺陷**，全部只有真正执行才会暴露。
+
+| 载体 | 处数 | 代表缺陷 |
+|---|---|---|
+| `Dockerfile.runtime`（从未被构建） | 3 | 第 2 行 `FROM`+`WORKDIR` 同行；`| tail -20` 吃掉 cargo 退出码导致 FALLBACK 分支永不执行；builder 缺 `protobuf-compiler` |
+| `audit-service` migration（从未在空库应用） | 1 | 分区表主键/唯一约束必须含分区键 → 任何全新部署都建不出来 |
+| compose 编排（从未 `up` 过） | 4 | `dockerfile` 路径错；宿主端口 8090 被两个 service 声明；8 个库建了从不灌 migration；2 个 Kafka topic 无人创建 |
+| `envoy-mvp.yaml`（envoy 从未成功启动） | 1 | router filter 缺 `typed_config` → 启动即崩 |
+| `cats-bff` 的 env 对接 | 2 | bind 变量名写成 `BIND_ADDR`（实际读 `SERVICE_BIND_ADDR`）；两个上游 URL 与 `JWT_SECRET` 缺失，落到指向 `localhost` 的默认值 |
+| `ai-gateway` | 1 | 没有 `command:`，继承镜像的 `CMD` → **该容器里跑的是 cats-bff** |
+
+### 实证
+
+**17 个容器全部 Up，12 路 `/healthz` 全部 HTTP 200**（envoy / 8 个 core
+service / worker / ai-gateway / bff），且经 envoy 打 `/v1/auth/login`
+返回的是 auth-service handler 的 **400 JSON 反序列化错误**而非 404，
+证明请求真的穿过 envoy 到达服务并被处理。
+
+**更强的证据**：把 6 个 e2e 套件直接跑在 compose 用 `db-init` 建出来的库上——
+
+    auth-service    e2e_auth        auth_db          8 passed / 0 failed
+    auth-service    e2e_t01         auth_db          9 passed / 0 failed
+    user-service    e2e_t02         user_db          5 passed / 0 failed
+    project-service integration     project_db       7 passed / 0 failed
+    file-service    integration     file_db          8 passed / 0 failed
+    notification-service integration notification_db 6 passed / 0 failed
+    ------------------------------------------------
+    合计                                              43 passed / 0 failed
+
+这验证的是「数据面真能用」，而不只是「表建出来了」。
+
+### 遗留的可用性缺陷
+
+陈旧的 PG 卷不会被 `up` 提示。卷 `deploy_cats-mvp-pgdata` 创建于
+2026-09-19，而 PostgreSQL 只在**首次**初始化空数据目录时读
+`POSTGRES_PASSWORD`，已存在的数据目录会**完全忽略**它——报错只是一句含糊的
+`password authentication failed`，不提示要先 `down -v`。
+需在 runbook 明确写明，或改用带版本/日期的卷名。
+
+完整记录见 `deploy/COMPOSE_UP_DEFECTS_v1.0.md`。
+
 
 ---
 
