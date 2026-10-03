@@ -247,9 +247,9 @@ async fn e2e_list_projects_with_workspace_filter() {
     // 列表查询 — workspace_id 过滤
     let list_req = actix_test::TestRequest::get()
         .uri(&format!(
-        .insert_header(("Authorization", "Bearer cats-role:User"))
             "/v1/projects?workspace_id={workspace_id}&page=1&page_size=10"
         ))
+        .insert_header(("Authorization", "Bearer cats-role:User"))
         .to_request();
     let list_resp = actix_test::call_service(&app, list_req).await;
     assert_eq!(list_resp.status().as_u16(), 200);
