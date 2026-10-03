@@ -160,17 +160,18 @@ services:
     environment:
       RUST_LOG: info
       GRPC_BIND_ADDR: 0.0.0.0:50051
-      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/project_db"
-      AI_GATEWAY_URL: "http://ai-gateway:8090"
     ports:
       - "127.0.0.1:50051:50051"
+    # 本服务目前是 M0 占位：只暴露 /healthz，不连库也不碰 Kafka。
+    # 所以既没有 DATABASE_URL 也不依赖 db-init / kafka —— 依赖图里不该出现
+    # 对它没有意义的前置条件（同 ai-gateway 的处理）。
+    # 下面这两个变量曾经在这里，源码里却没有任何 env::var 读过它们：
+    #   DATABASE_URL   —— 要接 project_db + pgvector 才能用（见 v0.3 §6 未接项）
+    #   AI_GATEWAY_URL —— 真实 provider 接入时才需要（见 v0.3 §6 未接项）
+    # 留着它们的后果是"看起来配了"，实际被静默忽略。
     depends_on:
-      postgres: { condition: service_healthy }
-      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
-      # 少了它，服务能起、healthz 能过，第一个业务请求就是
-      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
-      db-init: { condition: service_completed_successfully }
-      kafka: { condition: service_healthy }
+      # 保留这一条：translation-core 是 AI gateway 的调用方（架构书 §4.1），
+      # 等真实 provider 接入时这条依赖立刻就有用了。
       ai-gateway: { condition: service_started }
 
   # ============================================================
@@ -265,11 +266,11 @@ services:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/file_db"
-      FILES_DIR: "/var/lib/cats/files"
+      # FILES_DIR 与它挂的 cats-mvp-files 卷都已移除：本服务的源码里没有任何
+      # env::var 读过 FILES_DIR，文件内容存储尚未实现（元数据在 PG）。
+      # 挂一个无人读取的卷只会让人误以为 blob 已经落盘。
     ports:
       - "127.0.0.1:8085:8080"
-    volumes:
-      - cats-mvp-files:/var/lib/cats/files
     depends_on:
       postgres: { condition: service_healthy }
       # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
@@ -278,7 +279,7 @@ services:
       db-init: { condition: service_completed_successfully }
 
   # ============================================================
-  # 10. notification-service (Kafka consumer)
+  # 10. notification-service
   # ============================================================
   notification-service:
     <<: *cargo-base
@@ -288,8 +289,10 @@ services:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/notification_db"
-      KAFKA_BROKER: "kafka:9092"
-      KAFKA_NOTIFICATIONS_TOPIC: "cats.notifications.v1"
+      # KAFKA_BROKER / KAFKA_NOTIFICATIONS_TOPIC 已移除：本服务当前**没有任何
+      # Kafka 代码**（src 下无 env::var 读过它们，也没有 consumer）。
+      # Kafka 消费接入前，这里保持"不假装自己是 consumer"——原来的写法会让
+      # depends_on 看起来理直气壮，实际上没有任何进程会去消费那个 topic。
     ports:
       - "127.0.0.1:8086:8080"
     depends_on:
@@ -298,10 +301,6 @@ services:
       # 少了它，服务能起、healthz 能过，第一个业务请求就是
       # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
       db-init: { condition: service_completed_successfully }
-      kafka: { condition: service_healthy }
-      # KAFKA_AUTO_CREATE_TOPICS_ENABLE=false，topic 必须显式建。
-      # 不建的话 consumer 连得上 broker 然后永远收不到消息
-      kafka-init: { condition: service_completed_successfully }
 
   # ============================================================
   # 11. report-service
@@ -334,7 +333,14 @@ services:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/audit_db"
-      KAFKA_BROKER: "kafka:9092"
+      # KAFKA_BROKER 已移除：consumer 走的是 REST proxy（源码只读
+      # KAFKA_REST_URL / KAFKA_CONSUMER_GROUP / KAFKA_AUDIT_TOPIC），
+      # 从来不读 KAFKA_BROKER。给一个只认 REST proxy 的 consumer 配 broker
+      # 地址，是"看起来接了 Kafka"但实际一行都没连上的典型。
+      #
+      # 仍未闭合的缺口：KAFKA_REST_URL 没有对应的 REST proxy 容器，所以
+      # consumer 会退化成 30s 心跳 no-op —— topic 建了但没人消费。
+      # 要真正接通需要在栈里加 REST proxy（见 v0.3 §6 未接项）。
       KAFKA_AUDIT_TOPIC: "cats.audit.v1"
     ports:
       - "127.0.0.1:8088:8080"
@@ -349,7 +355,7 @@ services:
       kafka-init: { condition: service_completed_successfully }
 
   # ============================================================
-  # 13. worker-service (周期 scheduler)
+  # 13. worker-service
   # ============================================================
   worker-service:
     <<: *cargo-base
@@ -358,16 +364,15 @@ services:
     environment:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
-      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/task_db"
+      # DATABASE_URL 已移除：本服务的 main.rs 目前是 M0 占位（只注册
+      # /healthz），从不构造 PgPool、从不启动 run_scheduler_loop ——
+      # src/scheduler.rs / state.rs / handlers.rs 都没有被任何 mod 声明
+      # 引入，根本没进编译。配上 DATABASE_URL 会让人以为调度器在跑。
+      # 接线方案见 v0.4 §未接项。
       TRANSLATION_CORE_URL: "http://translation-core:50051"
     ports:
       - "127.0.0.1:8089:8080"
     depends_on:
-      postgres: { condition: service_healthy }
-      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
-      # 少了它，服务能起、healthz 能过，第一个业务请求就是
-      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
-      db-init: { condition: service_completed_successfully }
       translation-core: { condition: service_started }
 
   # ============================================================
@@ -430,4 +435,4 @@ services:
 
 volumes:
   cats-mvp-pgdata: {}
-  cats-mvp-files: {}
+  # cats-mvp-files 已移除：file-service 不再有 FILES_DIR，也就不该有卷。

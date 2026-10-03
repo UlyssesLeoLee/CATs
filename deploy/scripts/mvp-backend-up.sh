@@ -83,20 +83,76 @@ probe() {
   fi
 }
 
-# 端口表与 docker-compose-mvp.yml 的 ports 声明一一对应。
-# envoy 是客户端统一入口，走 8080（原先映射在 10000，与注释和本文档都不符）。
-probe "envoy (客户端入口)"      8080
-probe "auth-service"            8081
-probe "user-service"            8082
-probe "project-service"         8083
-probe "task-service"            8084
-probe "file-service"            8085
-probe "notification-service"    8086
-probe "report-service"          8087
-probe "audit-service"           8088
-probe "worker-service"          8089
-probe "cats-ai-gateway"         8090
-probe "cats-bff"                8091
+# 探针清单**从 compose 编排里推导**，不再手写。
+#
+# 真实事故（2026-10-04）: 这份清单原先是手写的 12 行，漏掉了
+# translation-core —— 而它恰好是当时唯一坏掉的 service（实际监听 8090，
+# 而所有依赖方都指着 50051）。12 路全 200 与"17 容器 Up"并排写在同一节里，
+# 读起来像覆盖了全部目标，其实没有。
+#
+# 手写清单的失败模式是**静默的**：漏掉一个目标不会让脚本失败，只会让
+# 报告少一行。所以清单必须由编排本身生成，并且和 lint-compose.py 的
+# MUST_DECLARE_COMMAND 用同一份 service 名单。
+#
+# 端口取 compose 里每个 service 的**宿主端口**（ports 声明的倒数第二段），
+# 改端口时不必再回来改这个脚本。
+probe_all() {
+  # service  ->  宿主端口
+  "${COMPOSE[@]}" config --format json 2>/dev/null \
+  | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+svcs = doc.get("services") or {}
+
+def serves_healthz(name, s):
+    """只有真的提供 HTTP /healthz 的才探。
+
+    postgres / kafka 也声明了 ports，但它们不提供 /healthz —— 一并探会
+    让脚本永远失败，而那不是"服务坏了"，是探针问错了对象。
+    判据用「command 指向 /usr/local/bin/<binary>」（即 12 个应用 service）
+    外加 envoy（它的 /healthz 是 direct_response）。
+    """
+    if name == "envoy":
+        return True
+    cmd = s.get("command") or []
+    if isinstance(cmd, str):
+        cmd = [cmd]
+    return any(str(c).startswith("/usr/local/bin/") for c in cmd)
+
+rows = []
+for name, s in svcs.items():
+    if not serves_healthz(name, s):
+        continue
+    ports = s.get("ports") or []
+    if not ports:
+        continue
+    p = ports[0]
+    if isinstance(p, dict):
+        p = "%s:%s:%s" % (p.get("host_ip", ""), p.get("published", ""),
+                           p.get("target", ""))
+    parts = str(p).split(":")
+    if len(parts) < 2 or not parts[-2].isdigit():
+        continue
+    rows.append((name, int(parts[-2])))
+for name, port in sorted(rows, key=lambda r: r[1]):
+    print("%s\t%d" % (name, port))
+' 2>/dev/null
+}
+
+probed=0
+while IFS=$'\t' read -r pname pport; do
+  [ -n "$pport" ] || continue
+  probed=$((probed + 1))
+  probe "$pname" "$pport"
+done <<< "$(probe_all)"
+
+if [ "$probed" -eq 0 ]; then
+  echo "!! 一个 service 都没探到 —— 探针清单推导失败，不要把'0 失败'当成通过" >&2
+  exit 1
+fi
+
+echo ""
+echo "  （共探活 ${probed} 个 service，宿主端口来自 compose 编排）"
 
 echo ""
 if [ "$fail" -ne 0 ]; then

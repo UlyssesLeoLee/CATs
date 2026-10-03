@@ -223,3 +223,116 @@ handler 的 **400 JSON 反序列化错误**（`missing field username`），说�
 - 1 处只在 `ai-gateway`（没有 command）
 
 `MVP_BACKEND_RUNBOOK.md` 描述的"一键启动"路径此前 **0 可用性**。
+
+---
+
+## 三之四、给检查加了"env 变量名交叉"之后，又挖出 3 类（2026-10-04 追加）
+
+> 本节是**追加**，不回改上面任何结论。
+> 但下面第一条要求对 §四 的验证方式做一次**显式更正**，理由见 §更正。
+
+### 缺陷 13：translation-core 实际监听 8090，而全链路都指着 50051（🔴 P0）
+
+compose 与架构书 §4.1 给的都是 `GRPC_BIND_ADDR=0.0.0.0:50051`，端口映射
+`127.0.0.1:50051:50051`。而 `crates/translation-core/src/main.rs` 只读
+`BIND_ADDR`，默认值 `0.0.0.0:8090`。
+
+**实证**（用 `cats-runtime:latest` 里的真实二进制 + compose 的 env）：
+
+```
+$ docker run --rm -e GRPC_BIND_ADDR=0.0.0.0:50051 ... \
+      cats-runtime:latest /usr/local/bin/translation-core
+INFO translation_core: starting translation-core bind_addr=0.0.0.0:8090
+INFO actix_web::server: starting service: "actix-web-service-0.0.0.0:8090" ...
+```
+
+即：容器里监听 8090，**50051 上什么都没有**。而 `worker-service` 与
+`cats-bff` 的 `TRANSLATION_CORE_URL` 都写着 `http://translation-core:50051`。
+
+**影响**：`translation-core` 在 compose 部署下**完全不可达**。它恰好是
+"看起来最像已经接通"的那个——它有 healthcheck 友好的 /healthz、有端口映射、
+有依赖关系，唯独没人真的连过它。
+
+**修法**：改源码而不是改配置。`resolve_bind_addr(grpc, legacy)` 取
+`GRPC_BIND_ADDR` > `BIND_ADDR` > 架构书默认 `0.0.0.0:50051`。保留 `BIND_ADDR`
+是为了不打断可能存在的旧部署；默认值从 8090 改成 50051，是因为 8090 是
+ai-gateway 的端口，留着它等于给这个服务埋第二个同类 bug。配 3 个单测
+（优先级 / 兼容回退 / 默认值），因为直接改 process env 在并行测试里是全局竞态。
+
+**同类已修**：`cats-bff` 的 `BIND_ADDR` vs `SERVICE_BIND_ADDR`（缺陷 11）。
+两处是同一个错：变量名对不上属于拼写级错误，后果却是整条链路静默不通。
+
+### 缺陷 14：5 个 service 配了 7 个源码从不读取的环境变量
+
+| service | 死变量 | 源码实际读的 |
+|---|---|---|
+| audit-service | `KAFKA_BROKER` | `KAFKA_REST_URL` / `KAFKA_CONSUMER_GROUP` / `KAFKA_AUDIT_TOPIC` |
+| file-service | `FILES_DIR` | `DATABASE_URL` / `BIND_ADDR`（无 blob 存储实现） |
+| notification-service | `KAFKA_BROKER`、`KAFKA_NOTIFICATIONS_TOPIC` | `DATABASE_URL` / `BIND_ADDR`（**无任何 Kafka 代码**） |
+| translation-core | `DATABASE_URL`、`AI_GATEWAY_URL` | 仅 `BIND_ADDR`（M0 占位） |
+| worker-service | `DATABASE_URL` | `BIND_ADDR` / `TRANSLATION_CORE_URL` |
+
+`file-service` 还挂了一个 `cats-mvp-files` 卷到 `/var/lib/cats/files`，
+而没有任何进程读写那个目录——挂一个无人读取的卷只会让人以为 blob 已落盘。
+卷声明与挂载一并移除。
+
+**为什么这类最难自查**：变量写错不会报错、不会告警、不会让容器起不来。
+它只是**安静地不生效**。`notification-service` 声明了 topic 还 `depends_on`
+`kafka-init`，整份编排读起来非常像"Kafka 已经接通"，而实际上没有任何进程
+会去消费那个 topic。
+
+**修法**：删掉死变量，并让编排不再假装自己是 consumer。
+
+### 缺陷 15：12 个 crate 共 5731 行 .rs 从未被编译
+
+Rust 2018 起必须显式 `mod` 声明才会进编译。这一批 crate 的 `lib.rs` 只
+声明了 `version()` / `name()`，磁盘上却躺着一整套业务实现：
+
+| crate | 未编译行数 | 内容 |
+|---|---|---|
+| cats-mock | 2899 | 12 个文件；`lib.rs` 文档宣称提供 `http`/`db`/`infra`/`data` 四个模块 |
+| cats-bff | 809 | `routes.rs` / `upstream_*.rs` / `grpc_clients.rs`（依赖 4 个不存在的 Config API，v0.3 §6 已记） |
+| common | 550 | `error.rs`；而 `lib.rs` 里另有一份 inline 的 `CatsError` |
+| translation-core | 550 | `service.rs`(174 行编排逻辑) / `qa.rs` / `db.rs` / `tm.rs` / `glossary.rs` / `ai_gateway.rs` |
+| 其余 8 个 crate | 423 | 各自的 `state.rs` / `models.rs` / `consumer.rs` 等 |
+
+**实证**（不是推断）：往 `crates/common/src/error.rs` 注入一行语法错误后，
+
+```
+$ cargo check -p cats-common
+    Checking cats-common v0.1.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.55s
+PROBE_EXIT=0
+```
+
+rustc 完全没看这个文件。它若真被编译，必然报错。
+
+**后果**：`translation-core` 和 `worker-service` 的 `main.rs` 至今是 M0 占位
+（只注册 `/healthz`），从不构造 `PgPool`、从不启动 `run_scheduler_loop`。
+`worker-service` 的 `scheduler.rs` 里有完整的抢占→派发→回写逻辑，一行没跑过。
+
+**为什么 487 个测试和 12 路 healthz 全绿都发现不了**：因为这些代码根本没进
+编译。**绿色的检查在错误的位置给信心，比红色的检查更危险。**
+
+**修法**：加 lint 规则 7 做死文件检测，已知存量列入 `ORPHAN_BASELINE`，
+新增即 FAIL（gate new violations，不假装存量不存在）。清债方案待拍板。
+
+### §更正：上面 §四 那张 12 行 healthz 表，漏掉了唯一坏掉的那个 service
+
+§四 的表头写"全部 17 容器 Up"，表体只有 12 行，逐行是
+envoy / auth / user / project / task / file / notification / report /
+audit / worker / ai-gateway / cats-bff。
+
+**`translation-core` 不在这 12 行里。** 12 路全 200 这个结论本身没错——
+那 12 路当时确实都返回 200——但它**不覆盖** `translation-core`，而
+`translation-core` 正是当时唯一坏掉的 service。表头把"17 容器 Up"和
+"12 行探测"并排放着，读者合理地会以为后者覆盖前者。
+
+这属于**验证手段本身的覆盖漏洞**：探针清单是手写的，漏了一个目标，
+而漏掉的恰好是坏的那个。修法不是"以后仔细点"，是把
+`translation-core` 补进 `mvp-backend-up.sh` 的 probe 列表，让清单与
+`MUST_DECLARE_COMMAND` 同源推导。
+
+> 与本文档 §缺陷 10（ai-gateway 容器里跑的是 cats-bff）同族：
+> 两次都是"检查通过了，但它没在看那一个"。
+
