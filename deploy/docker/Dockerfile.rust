@@ -29,6 +29,15 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo ./.cargo
 COPY rust-toolchain.toml ./
 
+# 复制 proto 定义（必须！）
+# crates/proto/build.rs 用 include path = workspace root (../..) 调用 protoc，
+# 并以 "proto/cats/v1/common.proto" 这样的根相对路径引用互相 import。
+# 漏掉这一层会让 build.rs 报：
+#   protoc failed: Could not make proto path relative:
+#   proto/cats/v1/common.proto: No such file or directory
+# 放在 crates 之前：proto 变动频率远低于 crate 源码，便于分层缓存。
+COPY proto ./proto
+
 # 复制所有 crate 源码（注意：tonic-build 在 cats-proto/build.rs 中调用）
 COPY crates ./crates
 
