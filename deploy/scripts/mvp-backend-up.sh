@@ -10,19 +10,55 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-COMPOSE=(docker compose -f "${REPO_ROOT}/deploy/docker-compose-mvp.yml")
+COMPOSE_FILE="${REPO_ROOT}/deploy/docker-compose-mvp.yml"
+# compose 的 project 名决定命名卷的前缀（<project>_cats-mvp-pgdata）。
+# 显式固定，避免"在不同目录下跑同名文件得到不同卷"这种隐式差异。
+PROJECT="${CATS_COMPOSE_PROJECT:-cats-mvp}"
+COMPOSE=(docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}")
 HOST="127.0.0.1"
 
-echo "==> [1/4] 检查 docker + docker compose"
+echo "==> [1/5] 检查 docker + docker compose"
 docker --version
 docker compose version
 
-# 原脚本写成 `cd "$(dirname "$0")/.."` 然后用 `deploy/docker-compose-mvp.yml`，
-# 路径会解析成 deploy/deploy/... —— 那个文件不存在。改为直接算仓库根。
-echo "==> [2/4] 构建 runtime 镜像（首次较慢，Rust 全量 release）"
+# ---------------------------------------------------------------------
+# 预检：PG 数据卷是不是陈旧的
+# ---------------------------------------------------------------------
+# PostgreSQL **只在首次初始化空数据目录时**读 POSTGRES_PASSWORD。一旦卷
+# 里已经有数据目录，它会被完全忽略——于是 compose 里写的密码不生效，
+# 报错只剩一句含糊的：
+#   FATAL:  password authentication failed for user "postgres"
+# 没有任何线索提示"是你的卷太旧了"。实测踩过：卷 deploy_cats-mvp-pgdata
+# 创建于 2026-09-19，换了 compose 密码后 up 就再也连不上。
+#
+# 所以这里提前检查并给出可执行的提示，而不是让人对着一句认证失败猜。
+# ---------------------------------------------------------------------
+echo "==> [2/5] 预检 PG 数据卷（project=${PROJECT}）"
+PGVOL="${PROJECT}_cats-mvp-pgdata"
+if docker volume inspect "$PGVOL" >/dev/null 2>&1; then
+  created=$(docker volume inspect "$PGVOL" --format '{{.CreatedAt}}' 2>/dev/null || echo "unknown")
+  echo "    找到既有卷 $PGVOL (创建于 ${created})"
+  if [ -z "${CATS_FORCE_RECREATE_PG:-}" ]; then
+    echo ""
+    echo "    ⚠ 这个卷已经存在。若 $PGVOL 连不上，原因是 PostgreSQL 只在首次"
+    echo "      初始化空数据目录时读 POSTGRES_PASSWORD，已有数据目录会忽略它。"
+    echo "      数据可丢弃时用下面这条重建（会清空该卷里的所有开发数据）："
+    echo ""
+    echo "        CATS_FORCE_RECREATE_PG=1 bash deploy/scripts/mvp-backend-up.sh"
+    echo ""
+    echo "      数据要保留则跳过本脚本，手工确认卷里的密码。"
+  else
+    echo "    CATS_FORCE_RECREATE_PG 已设置 -> 重建卷（数据将丢失）"
+    "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
+  fi
+else
+  echo "    无既有卷，将新建"
+fi
+
+echo "==> [3/5] 构建 runtime 镜像（首次较慢，Rust 全量 release）"
 "${COMPOSE[@]}" build
 
-echo "==> [3/4] 启动全部 service"
+echo "==> [4/5] 启动全部 service"
 # db-init / kafka-init 是 compose 里的一等 oneshot service，会被自动拉起并
 # 按 depends_on 顺序等待完成：
 #   db-init    -> 建 8 个 logical database + 逐个应用 migrations + 探针校验
@@ -31,7 +67,7 @@ echo "==> [3/4] 启动全部 service"
 # relation does not exist / consumer 永远收不到消息。
 "${COMPOSE[@]}" up -d
 
-echo "==> [4/4] 等待并逐个探活"
+echo "==> [5/5] 等待并逐个探活"
 "${COMPOSE[@]}" ps
 
 echo ""
