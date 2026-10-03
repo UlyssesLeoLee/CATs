@@ -168,27 +168,25 @@ jobs:
             ${{ runner.os }}-cargo-e2e-
             ${{ runner.os }}-cargo-
 
-      - name: Create e2e databases and apply migrations
+      # 建库 + 应用 migrations。
+      #
+      # 复用 deploy/scripts/init-databases.sh —— 与 docker compose 的
+      # db-init service 跑的是**同一份脚本**。这不只是去重：
+      #
+      # 本 PR 之前，CI 只对 5 个有 e2e 的 service 应用 migration
+      # （auth/user/project/file/notification）。audit-service 与
+      # task-service 不在任何 e2e 清单里，于是它们的 migration 从未被
+      # 任何自动化验证过。实际跑起来才发现 audit-service 的 migration
+      # 在空库上直接失败（分区表主键/唯一约束必须含分区键），
+      # 45 个 e2e + 487 个单元测试全都没发现——因为它一个 DB 测试都没有。
+      #
+      # 改成调用脚本后，任何 service 的 migration 只要在空库上跑不通，
+      # 无论它有没有 e2e，CI 都会红。
+      - name: Create databases and apply migrations (all services)
         run: |
           set -euo pipefail
-          for svc in auth user project file notification; do
-            psql -U postgres -h 127.0.0.1 -c "CREATE DATABASE e2e_${svc};"
-          done
-          # 每个 service 的 migrations/ 是唯一权威 schema 来源。
-          # file/notification/project/user 各有三份 init，此前在全新库上会互相
-          # 冲突（见 PR #22）；本 PR 已把与生产代码不符的旧 init 停用。
-          apply() {
-            local db="$1" dir="$2"
-            for f in $(find "$dir" -name '*.sql' | sort); do
-              echo "  applying ${f}"
-              psql -U postgres -h 127.0.0.1 -d "$db" -v ON_ERROR_STOP=1 -q -f "$f"
-            done
-          }
-          apply e2e_auth         crates/auth-service/migrations
-          apply e2e_user         crates/user-service/migrations
-          apply e2e_project      crates/project-service/migrations
-          apply e2e_file         crates/file-service/migrations
-          apply e2e_notification crates/notification-service/migrations
+          PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres \
+            bash deploy/scripts/init-databases.sh
 
       # 串行执行：这些测试共用固定表名（users_credential / files / projects /
       # notifications），并发会互相污染对方的种子数据。
@@ -208,9 +206,9 @@ jobs:
                 -- --ignored --test-threads=1 --nocapture
             fi
           }
-          run_suite auth-service        e2e_auth         e2e_auth
-          run_suite auth-service        e2e_auth         e2e_t01
-          run_suite user-service        e2e_user         e2e_t02
-          run_suite project-service     e2e_project      integration
-          run_suite file-service        e2e_file         integration
-          run_suite notification-service e2e_notification integration
+          run_suite auth-service         auth_db         e2e_auth
+          run_suite auth-service         auth_db         e2e_t01
+          run_suite user-service         user_db         e2e_t02
+          run_suite project-service      project_db      integration
+          run_suite file-service         file_db         integration
+          run_suite notification-service notification_db integration
