@@ -48,6 +48,23 @@ migration、**串行**执行 6 个测试套件。
 - **2 个**静态源码断言 → 归位常规 `cargo test --workspace`，三平台都跑
 - 全仓 `#[ignore]` 属性由 **45 降为 43**
 
+### §1.2 最终实证（run `37130086978`，逐套件解析）
+
+| 套件 | passed | failed | ignored |
+|---|---|---|---|
+| auth-service `e2e_auth` | 8 | 0 | 0 |
+| auth-service `e2e_t01` | **9** | 0 | 0 |
+| user-service `e2e_t02` | 5 | 0 | 0 |
+| project-service `integration` | 7 | 0 | 0 |
+| file-service `integration` | 8 | 0 | 0 |
+| notification-service `integration` | 6 | 0 | 0 |
+| **合计** | **43** | **0** | **0** |
+
+`e2e_t01` 从 11 降到 9，正是 §1.1 解除 ignore 的那 2 个静态断言
+（它们不再出现在 `-- --ignored` 的口径里，改由常规 job 执行）。
+
+该 run 的 `test` 三平台亦全绿，合计 4/4。
+
 ---
 
 ## §2 撤回 v0.2 中的两处陈述（不回溯改写 v0.2）
@@ -72,7 +89,7 @@ release artifact 6,643,798 B、§4.1 Tauri 静态判定、§5 MVP 9/9 诚实口�
 
 | 平台 | passed | failed | ignored | 证据 |
 |---|---|---|---|---|
-| macos-latest | **487** | **0** | **54** | run `37118286511` 逐 job 日志求和 |
+| macos-latest | **487** | **0** | **54** | run `37130086978` 逐 job 日志求和 |
 | ubuntu-latest | 1241 | **0** | 140 | 含 `cargo llvm-cov` 重跑一遍，计数约为两倍 |
 
 对比 v0.2 的 485 / 0 / 56：**+2 passed、−2 ignored**，正是解除的两个
