@@ -14,13 +14,18 @@
 #   - 50051 (translation-core gRPC)
 #   - 8081-8090 (各 service 直连, dev 用)
 
-version: "3.9"
+version: "3.9"   # compose v2 已废弃该字段，仅保留以兼容旧版 CLI
 
 x-cargo-base: &cargo-base
   image: cats-runtime:latest
   build:
     context: ..
-    dockerfile: deploy/docker/Dockerfile.runtime
+    # 注意: compose 的 `dockerfile` 相对 **build context** 解析。
+    # context 是 `..`(仓库根)，所以这里必须写 `deploy/Dockerfile.runtime`；
+    # 写成 `deploy/docker/Dockerfile.runtime` 会报
+    # "failed to read dockerfile: ... no such file or directory"
+    # （该目录下只有 Dockerfile.rust / Dockerfile.client）
+    dockerfile: deploy/Dockerfile.runtime
   restart: unless-stopped
 
 services:
@@ -46,8 +51,50 @@ services:
       retries: 5
 
   # ============================================================
-  # 2. Kafka (KRaft 1-broker MVP 简化)
+  # 1b. db-init (oneshot) — 建 8 个 logical database 并应用 migrations
   # ============================================================
+  # 为什么需要：compose 只建了默认库 postgres，而各 service 的 DATABASE_URL
+  # 指向 auth_db / user_db / ... 且**没有任何 service 在启动时跑 migration**
+  # （全仓 crates/*/src/main.rs 搜 "migrat" 是 0 匹配）。没有这一步，
+  # 服务能起、healthz 能过，但第一个业务请求就是 relation does not exist。
+  # 缺陷记录见 deploy/COMPOSE_UP_DEFECTS_v1.0.md
+  db-init:
+    image: pgvector/pgvector:pg18
+    container_name: cats-mvp-db-init
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: dev_only_local
+    volumes:
+      - ..:/repo:ro
+    entrypoint: ["/bin/bash", "/repo/deploy/scripts/init-databases.sh"]
+
+  # ============================================================
+  # 1c. kafka-init (oneshot) — 建 2 个 topic
+  # ============================================================
+  # KAFKA_AUTO_CREATE_TOPICS_ENABLE=false，但两个 Kafka consumer 各自
+  # 等一个 topic。不建的话 consumer 连得上 broker 然后永远收不到消息。
+  kafka-init:
+    image: apache/kafka:3.7.1
+    container_name: cats-mvp-kafka-init
+    restart: "no"
+    depends_on:
+      kafka: { condition: service_healthy }
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        for t in cats.notifications.v1 cats.audit.v1; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+            --create --if-not-exists --topic "$$t" --partitions 3 --replication-factor 1
+        done
+        echo "==> topics now:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
   kafka:
     image: apache/kafka:3.7.1
     container_name: cats-mvp-kafka
@@ -81,6 +128,14 @@ services:
   ai-gateway:
     <<: *cargo-base
     container_name: cats-mvp-ai-gateway
+    # 必须显式指定 command。本 service 原先没有 command，于是继承了
+    # Dockerfile.runtime 的 `CMD ["/usr/local/bin/cats-bff"]`——
+    # **这个叫 ai-gateway 的容器里跑的是 cats-bff**。
+    # 后果是下面 REST_BIND_ADDR / GRPC_BIND_ADDR 无人读取（cats-bff 读的是
+    # BIND_ADDR），实际监听 8097 而不是 8090，探活 8090 只会连接被拒。
+    # 实测日志：
+    #   INFO cats_bff: starting cats-bff bind_addr=0.0.0.0:8097
+    command: ["/usr/local/bin/cats-ai-gateway"]
     environment:
       RUST_LOG: info
       REST_BIND_ADDR: 0.0.0.0:8090
@@ -90,6 +145,8 @@ services:
       - "127.0.0.1:8090:8090"
       - "127.0.0.1:50061:50061"
     depends_on:
+      # ai-gateway 没有 DATABASE_URL（mock provider，不落库），
+      # 所以不依赖 db-init —— 依赖图里不该出现对它没有意义的前置条件
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
 
@@ -103,13 +160,18 @@ services:
     environment:
       RUST_LOG: info
       GRPC_BIND_ADDR: 0.0.0.0:50051
-      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/project_db"
-      AI_GATEWAY_URL: "http://ai-gateway:8090"
     ports:
       - "127.0.0.1:50051:50051"
+    # 本服务目前是 M0 占位：只暴露 /healthz，不连库也不碰 Kafka。
+    # 所以既没有 DATABASE_URL 也不依赖 db-init / kafka —— 依赖图里不该出现
+    # 对它没有意义的前置条件（同 ai-gateway 的处理）。
+    # 下面这两个变量曾经在这里，源码里却没有任何 env::var 读过它们：
+    #   DATABASE_URL   —— 要接 project_db + pgvector 才能用（见 v0.3 §6 未接项）
+    #   AI_GATEWAY_URL —— 真实 provider 接入时才需要（见 v0.3 §6 未接项）
+    # 留着它们的后果是"看起来配了"，实际被静默忽略。
     depends_on:
-      postgres: { condition: service_healthy }
-      kafka: { condition: service_healthy }
+      # 保留这一条：translation-core 是 AI gateway 的调用方（架构书 §4.1），
+      # 等真实 provider 接入时这条依赖立刻就有用了。
       ai-gateway: { condition: service_started }
 
   # ============================================================
@@ -128,6 +190,10 @@ services:
       - "127.0.0.1:8081:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
 
   # ============================================================
   # 6. user-service
@@ -144,6 +210,10 @@ services:
       - "127.0.0.1:8082:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
 
   # ============================================================
   # 7. project-service
@@ -160,6 +230,10 @@ services:
       - "127.0.0.1:8083:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
 
   # ============================================================
   # 8. task-service
@@ -176,6 +250,10 @@ services:
       - "127.0.0.1:8084:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
 
   # ============================================================
   # 9. file-service
@@ -188,16 +266,20 @@ services:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/file_db"
-      FILES_DIR: "/var/lib/cats/files"
+      # FILES_DIR 与它挂的 cats-mvp-files 卷都已移除：本服务的源码里没有任何
+      # env::var 读过 FILES_DIR，文件内容存储尚未实现（元数据在 PG）。
+      # 挂一个无人读取的卷只会让人误以为 blob 已经落盘。
     ports:
       - "127.0.0.1:8085:8080"
-    volumes:
-      - cats-mvp-files:/var/lib/cats/files
     depends_on:
       postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
 
   # ============================================================
-  # 10. notification-service (Kafka consumer)
+  # 10. notification-service
   # ============================================================
   notification-service:
     <<: *cargo-base
@@ -207,13 +289,18 @@ services:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/notification_db"
-      KAFKA_BROKER: "kafka:9092"
-      KAFKA_NOTIFICATIONS_TOPIC: "cats.notifications.v1"
+      # KAFKA_BROKER / KAFKA_NOTIFICATIONS_TOPIC 已移除：本服务当前**没有任何
+      # Kafka 代码**（src 下无 env::var 读过它们，也没有 consumer）。
+      # Kafka 消费接入前，这里保持"不假装自己是 consumer"——原来的写法会让
+      # depends_on 看起来理直气壮，实际上没有任何进程会去消费那个 topic。
     ports:
       - "127.0.0.1:8086:8080"
     depends_on:
       postgres: { condition: service_healthy }
-      kafka: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
 
   # ============================================================
   # 11. report-service
@@ -230,6 +317,10 @@ services:
       - "127.0.0.1:8087:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
 
   # ============================================================
   # 12. audit-service (Kafka consumer)
@@ -242,16 +333,29 @@ services:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
       DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/audit_db"
-      KAFKA_BROKER: "kafka:9092"
+      # KAFKA_BROKER 已移除：consumer 走的是 REST proxy（源码只读
+      # KAFKA_REST_URL / KAFKA_CONSUMER_GROUP / KAFKA_AUDIT_TOPIC），
+      # 从来不读 KAFKA_BROKER。给一个只认 REST proxy 的 consumer 配 broker
+      # 地址，是"看起来接了 Kafka"但实际一行都没连上的典型。
+      #
+      # 仍未闭合的缺口：KAFKA_REST_URL 没有对应的 REST proxy 容器，所以
+      # consumer 会退化成 30s 心跳 no-op —— topic 建了但没人消费。
+      # 要真正接通需要在栈里加 REST proxy（见 v0.3 §6 未接项）。
       KAFKA_AUDIT_TOPIC: "cats.audit.v1"
     ports:
       - "127.0.0.1:8088:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，服务能起、healthz 能过，第一个业务请求就是
+      # relation "xxx" does not exist（缺陷记录见 COMPOSE_UP_DEFECTS_v1.0.md）
+      db-init: { condition: service_completed_successfully }
       kafka: { condition: service_healthy }
+      # KAFKA_AUTO_CREATE_TOPICS_ENABLE=false，topic 必须显式建
+      kafka-init: { condition: service_completed_successfully }
 
   # ============================================================
-  # 13. worker-service (周期 scheduler)
+  # 13. worker-service
   # ============================================================
   worker-service:
     <<: *cargo-base
@@ -260,12 +364,15 @@ services:
     environment:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
-      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/task_db"
+      # DATABASE_URL 已移除：本服务的 main.rs 目前是 M0 占位（只注册
+      # /healthz），从不构造 PgPool、从不启动 run_scheduler_loop ——
+      # src/scheduler.rs / state.rs / handlers.rs 都没有被任何 mod 声明
+      # 引入，根本没进编译。配上 DATABASE_URL 会让人以为调度器在跑。
+      # 接线方案见 v0.4 §未接项。
       TRANSLATION_CORE_URL: "http://translation-core:50051"
     ports:
       - "127.0.0.1:8089:8080"
     depends_on:
-      postgres: { condition: service_healthy }
       translation-core: { condition: service_started }
 
   # ============================================================
@@ -277,12 +384,27 @@ services:
     command: ["/usr/local/bin/cats-bff"]
     environment:
       RUST_LOG: info
-      BIND_ADDR: 0.0.0.0:8080
+      # ⚠ 变量名必须是 SERVICE_BIND_ADDR，不是 BIND_ADDR。
+      # cats-bff 的 config.rs 读的是 SERVICE_BIND_ADDR（默认 0.0.0.0:8097）；
+      # 原先这里写 BIND_ADDR，于是它默默用了默认值 8097，而下面的端口映射
+      # 指向容器内 8080 —— 映射到了一个没人监听的端口，探活必然失败。
+      # 实测日志：
+      #   starting cats-bff bind_addr=0.0.0.0:8097
+      SERVICE_BIND_ADDR: 0.0.0.0:8080
+      # 上游一律用**容器网络里的服务名**，不能是 localhost ——
+      # 容器里的 localhost 指向它自己。
       AUTH_SERVICE_URL: "http://auth-service:8080"
+      USER_SERVICE_URL: "http://user-service:8080"
       PROJECT_SERVICE_URL: "http://project-service:8080"
+      TASK_SERVICE_URL: "http://task-service:8080"
       TRANSLATION_CORE_URL: "http://translation-core:50051"
+      # 不设的话 principal.rs 任何带 Bearer 的请求都会返回
+      # ServerMisconfigured("JWT_SECRET env var not set")
+      JWT_SECRET: "dev-jwt-secret-rotate-in-prod"
     ports:
-      - "127.0.0.1:8090:8080"  # 客户端走这个
+      # 8081-8089 已被 8 个 core service 占满；BFF 另给 8091。
+      # 原先与 ai-gateway 同为 8090，Docker 直接报 port is already allocated
+      - "127.0.0.1:8091:8080"  # 客户端走 envoy 8080，这个是 dev 直连
     depends_on:
       auth-service: { condition: service_started }
       project-service: { condition: service_started }
@@ -298,7 +420,10 @@ services:
     volumes:
       - ./envoy-mvp.yaml:/etc/envoy/envoy.yaml:ro
     ports:
-      - "127.0.0.1:10000:8080"
+      # 客户端统一入口。原先映射到 10000，但 compose 头部注释与
+      # mvp-backend-up.sh 都写 8080 —— 三处不一致，这里以客户端入口
+      # 8080 为准（8081-8091 已被各 service 占用，8080 是唯一空闲的对外口）
+      - "127.0.0.1:8080:8080"
     depends_on:
       - auth-service
       - project-service
@@ -310,4 +435,4 @@ services:
 
 volumes:
   cats-mvp-pgdata: {}
-  cats-mvp-files: {}
+  # cats-mvp-files 已移除：file-service 不再有 FILES_DIR，也就不该有卷。

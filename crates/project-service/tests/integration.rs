@@ -58,8 +58,14 @@ fn make_app(
     >,
 > {
     let pool_data = web::Data::new(pool);
+    // 每个业务 handler 都带 `rbac_checker: web::Data<Arc<RbacChecker>>`，
+    // main.rs 也注册了它。测试漏注册时 actix 的 extractor 取不到，
+    // 表现为 500 "Requested application data is not configured correctly"，
+    // 而非业务断言失败——会让人误以为是认证/RBAC 逻辑坏了。
+    let rbac_data = web::Data::new(std::sync::Arc::new(cats_rbac::RbacChecker::new()));
     App::new()
         .app_data(pool_data)
+        .app_data(rbac_data)
         .route("/healthz", web::get().to(handlers::healthz))
         .route("/v1/projects", web::post().to(handlers::create_project))
         .route("/v1/projects", web::get().to(handlers::list_projects))
@@ -73,6 +79,27 @@ fn make_app(
             web::delete().to(handlers::delete_project),
         )
 }
+
+// =====================================================================
+// 角色分配依据 (per 权限矩阵 v1.0 §3, 实现在 crates/cats-rbac/src/lib.rs
+// 的 default_permissions())
+//
+// 写操作 (POST/PATCH/DELETE → Action::Create/Update/Delete) 一律用 Sponsor：
+// 在当前权限矩阵里 Resource::Project 的写权限**只有 Sponsor 一人**。
+// 其余角色对 Project 最多只有 Read——ArchitectLead / DatabaseLead /
+// QualityLead / User 都是 Read，Guest 连 Read 都没有。
+//
+// 原先这里用的是 ProjectLead，5 个 e2e 全部 403。查权限矩阵发现
+// Role::ProjectLead（枚举注释写的是"PMO Lead"）的权限只覆盖
+// Sprint / Decision / Risk / Gap 四个资源，根本不含 Project。
+// 按"实现是权威，测试是过时的"原则改测试，不动生产权限矩阵。
+//
+// ⚠ 顺带记录一条**待 Ulysses 拍板的产品问题**（见 _FINDINGS.md）：
+// 一个叫"PMO Lead"的角色管不了 Project 资源，在业务上是否合理？
+// 若不合理，该修的是权限矩阵（放宽 Project），而不是本测试。
+//
+// 读操作用 User：User 对 Project 有 Read，够用且比 Sponsor 更贴近真实场景。
+// =====================================================================
 
 // =====================================================================
 // 1. healthz
@@ -106,6 +133,7 @@ async fn e2e_create_project_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/projects")
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "ULYS-150 Test Project".to_string(),
@@ -146,6 +174,7 @@ async fn e2e_get_project_by_id_returns_200() {
     // 先 create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Get Test".to_string(),
@@ -162,6 +191,7 @@ async fn e2e_get_project_by_id_returns_200() {
     // 再 get by id
     let get_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/projects/{id}"))
+        .insert_header(("Authorization", "Bearer cats-role:User"))
         .to_request();
     let get_resp = actix_test::call_service(&app, get_req).await;
     assert_eq!(get_resp.status().as_u16(), 200);
@@ -193,6 +223,7 @@ async fn e2e_get_project_not_found_returns_404() {
     let non_existing = Uuid::new_v4();
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/projects/{non_existing}"))
+        .insert_header(("Authorization", "Bearer cats-role:User"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 404);
@@ -219,6 +250,7 @@ async fn e2e_list_projects_with_workspace_filter() {
     for i in 0..2 {
         let req = actix_test::TestRequest::post()
             .uri("/v1/projects")
+            .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
             .set_json(CreateProjectRequest {
                 workspace_id,
                 name: format!("B-1 List Test {i}"),
@@ -238,6 +270,7 @@ async fn e2e_list_projects_with_workspace_filter() {
         .uri(&format!(
             "/v1/projects?workspace_id={workspace_id}&page=1&page_size=10"
         ))
+        .insert_header(("Authorization", "Bearer cats-role:User"))
         .to_request();
     let list_resp = actix_test::call_service(&app, list_req).await;
     assert_eq!(list_resp.status().as_u16(), 200);
@@ -287,6 +320,7 @@ async fn e2e_patch_project_partial_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Patch Original".to_string(),
@@ -302,6 +336,7 @@ async fn e2e_patch_project_partial_returns_200() {
     // patch 部分字段 (name + target_lang)
     let patch_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/projects/{id}"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(UpdateProjectRequest {
             name: Some("B-1 Patch Updated".to_string()),
             source_lang: None,
@@ -341,6 +376,7 @@ async fn e2e_delete_project_soft_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Delete Test".to_string(),
@@ -356,6 +392,7 @@ async fn e2e_delete_project_soft_returns_200() {
     // delete (软删除 → status='archived')
     let del_req = actix_test::TestRequest::delete()
         .uri(&format!("/v1/projects/{id}"))
+        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
         .to_request();
     let del_resp = actix_test::call_service(&app, del_req).await;
     assert_eq!(del_resp.status().as_u16(), 200);

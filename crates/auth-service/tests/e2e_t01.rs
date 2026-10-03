@@ -512,8 +512,11 @@ async fn e2e_t01_audit_log_captures_refresh_rotation() {
 ///   (auth-service 已在 [dev-dependencies] 引入 actix-rt, 不需要再次检测)
 /// - 误报防护: 只对 `build_audit` 函数切片做 substring 检测, 不会误报模块
 ///   其它位置的 spawn 调用 (目前没有, 未来如有需手工维护白名单)
+// 注: 本测试是纯静态源码断言（include_str! + substring 检测），**不碰数据库**。
+// 原先被批量标 #[ignore = "e2e-needs-real-pg"]，但该理由对本测试不成立——
+// 标了 ignore 反而让这条 INVIOLABLE 约束（ULYS-46）只在 Linux e2e job 里
+// 被检查，macOS/Windows 的常规门禁完全漏掉。已解除 ignore。
 #[test]
-#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 fn e2e_t01_build_audit_must_not_use_spawn() {
     // 静态内联 handlers.rs 源码
     const HANDLERS_SRC: &str = include_str!("../src/handlers.rs");
@@ -560,8 +563,8 @@ fn e2e_t01_build_audit_must_not_use_spawn() {
 /// 与上一条互为正向/反向断言: 上一条确保无 spawn, 本条确保仍 `await`.
 /// 如有人重构把整个 emit 包到 `async { ... }` 但忘了 `.await`, 上一条仍
 /// 通过, 本条会失败。
+// 同上：纯静态源码断言，不碰数据库，解除批量 #[ignore]。
 #[test]
-#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 fn e2e_t01_build_audit_still_awaits_emit() {
     const HANDLERS_SRC: &str = include_str!("../src/handlers.rs");
     let fn_start = HANDLERS_SRC

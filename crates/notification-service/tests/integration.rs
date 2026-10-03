@@ -69,9 +69,15 @@ fn make_app(
 > {
     let pool_data = web::Data::new(pool);
     let bus_data = web::Data::new(bus);
+    // 业务 handler 都带 `rbac_checker: web::Data<Arc<RbacChecker>>`（main.rs 同样注册）。
+    // 漏注册时 actix extractor 取不到 → 500 "Requested application data is not
+    // configured correctly"，而 /healthz 不吃这个 extractor，于是表现成
+    // "healthz 过、其余全挂"，极易误判成 RBAC 逻辑坏了。
+    let rbac_data = web::Data::new(std::sync::Arc::new(cats_rbac::RbacChecker::new()));
     App::new()
         .app_data(pool_data)
         .app_data(bus_data)
+        .app_data(rbac_data)
         .route(
             "/healthz",
             web::get().to(notification_service::handlers::healthz),
@@ -123,6 +129,7 @@ async fn e2e_create_notification_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone(), EventBus::new())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
+        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
         .set_json(CreateNotificationRequest {
             user_id,
             notif_type: "task_completed".to_string(),
@@ -158,6 +165,7 @@ async fn e2e_list_notifications_returns_200() {
     for i in 0..2 {
         let req = actix_test::TestRequest::post()
             .uri("/v1/notifications")
+            .insert_header(("Authorization", "Bearer cats-role:SRELead"))
             .set_json(CreateNotificationRequest {
                 user_id,
                 notif_type: "test".to_string(),
@@ -173,6 +181,7 @@ async fn e2e_list_notifications_returns_200() {
     // list
     let list_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/notifications?user_id={user_id}&limit=10"))
+        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
         .to_request();
     let list_resp = actix_test::call_service(&app, list_req).await;
     assert_eq!(list_resp.status().as_u16(), 200);
@@ -198,6 +207,7 @@ async fn e2e_mark_read_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
+        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
         .set_json(CreateNotificationRequest {
             user_id,
             notif_type: "task_completed".to_string(),
@@ -213,6 +223,7 @@ async fn e2e_mark_read_returns_200() {
     // mark read
     let read_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/notifications/{id}/read?user_id={user_id}"))
+        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
         .to_request();
     let read_resp = actix_test::call_service(&app, read_req).await;
     assert_eq!(read_resp.status().as_u16(), 200);
@@ -223,6 +234,7 @@ async fn e2e_mark_read_returns_200() {
     // 二次 mark read → 404
     let read2_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/notifications/{id}/read?user_id={user_id}"))
+        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
         .to_request();
     let read2_resp = actix_test::call_service(&app, read2_req).await;
     assert_eq!(read2_resp.status().as_u16(), 404);
@@ -246,6 +258,7 @@ async fn e2e_notification_stream_returns_sse() {
 
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/notifications/ws?user_id={user_id}"))
+        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 200);
@@ -272,6 +285,7 @@ async fn e2e_create_empty_title_returns_400() {
     let app = actix_test::init_service(make_app(pool, EventBus::new())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
+        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
         .set_json(CreateNotificationRequest {
             user_id: Uuid::new_v4(),
             notif_type: "test".to_string(),
