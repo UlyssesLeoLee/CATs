@@ -60,6 +60,18 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt, clippy
 
+      # compose / envoy 的静态不变量。2026-10-04 修的 12 处缺陷里有好几处
+      # 读代码看不出来（ai-gateway 没写 command 会继承镜像 CMD 跑成 cats-bff；
+      # envoy filter 缺 typed_config 启动即崩），手修完没有闸门会再退化。
+      # 这个检查不需要构建镜像也不需要起容器，几秒就能跑完。
+      #
+      # 它不是橡皮章：对修复前的 compose 跑会报出 15 项违规
+      # （ai-gateway 缺 command、8090 端口冲突、9 个 service 缺 db-init、
+      #  2 个缺 kafka-init、envoy 缺 typed_config），对修复后的跑是 0 项。
+      - name: Lint docker-compose + envoy invariants
+        if: matrix.os == 'ubuntu-latest'
+        run: python deploy/scripts/lint-compose.py
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
