@@ -3,8 +3,8 @@
 **日期**: 2026-10-03
 **作者**: 架构师(Mavis 接手 agent per DEC-008)
 **取代**: `deploy/BACKEND_STATUS_v0.1.md`（2026-09-19）— v0.1 全文保留，未修改
-**基线 commit**: `5a3dc6b`（`integrate/ci-revival-dev-ff`，PR #19 → `dev`）
-**状态**: 🟢 binary 编译通过 + 8/8 CI workflow 绿 + 485 测试通过 0 失败
+**基线 commit**: `682dd67`（`integrate/ci-revival-dev-ff`，PR #19 → `dev`）
+**状态**: 🟡 binary 编译通过 + 485 测试 0 失败 + 6/7 CI workflow 绿；镜像构建与 release 门禁在本版修复后**尚待 CI 复验**
 
 ---
 
@@ -20,7 +20,10 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 并据此把"需要 rustc 2.x"写成了结论。实际情况：
 
 - 同样的 rustc 1.98.0 工具链今天编译整个 workspace **完全通过**；
-- 失败的真实原因是代码本身写错了，共 5 类（清单见 §3）；
+- 失败的真实原因是代码本身写错了，共 8 类（清单见 §3）。其中第 6、7 类
+  （Docker 漏 `proto/`、`new_with_buffer` 的 `#[cfg]` 逃逸）只在 **release
+  profile** 下暴露——而当时 CI 的任何门禁都不构建 release，所以它们既没被
+  修掉，也没人发现。
 - 没有任何一条错误信息指向 metadata 锁。v0.1 引用的
   `E0463: can't find crate for std` / `only metadata stub found for rlib` 是
   这些次生错误的连锁表象，不是根因。
@@ -77,11 +80,84 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 `ci-rust-test` 在 ubuntu 上执行 `cargo llvm-cov --workspace --all-features
 --fail-under-lines 40`（代码行覆盖率 ≥ 40% 强制门禁），**已通过**。
 
-### §2.4 CI workflow 全绿
+### §2.4 CI workflow 状态
 
-`5a3dc6b` 上 8 个 workflow 全部 success：`ci-rust-build`、`ci-rust-clippy`、
-`ci-rust-test`、`ci-rust-deny`、`ci-rust-fmt`、`ci-helm-lint`、
-`ci-docker-build`、`ci-proto-check`。
+`3bd41d0` 上：
+
+| workflow | 结果 |
+|---|---|
+| `ci-rust-build` | ✅ success |
+| `ci-rust-clippy` | ✅ success（ubuntu / macos / windows） |
+| `ci-rust-test` | ✅ success（三平台） |
+| `ci-rust-deny` | ✅ success |
+| `ci-rust-fmt` | ✅ success |
+| `ci-helm-lint` | ✅ success |
+| `ci-proto-check` | ✅ success（本次新修） |
+| `ci-docker-build` | ❌ **9 / 18 镜像失败** —— 本报告 v0.2 初稿曾误写为"全绿"，已更正，见下 |
+
+#### `ci-docker-build` 的 9 个镜像失败
+
+**这修正了本报告初稿一处不准确的表述。** 初稿写"8 个 workflow 全部
+success"，那是把 docker build 仍在 `in_progress` 时的状态当成了结果。实际
+`3bd41d0` 上 18 个镜像里有 9 个失败，错误信息完全一致：
+
+```
+error: failed to run custom build command for `cats-proto v0.1.0 (/build/crates/proto)`
+Error: Custom { kind: Other, error: "protoc failed: Could not make proto path
+relative: proto/cats/v1/common.proto: No such file or directory" }
+```
+
+失败的是 `auth-service`、`task-service`、`ingestion-service`、`translation-core`、
+`ocr-service`、`asr-service`、`subtitle-service`、`office-converter-service`、
+`render-writer-service`——凡依赖 `cats-proto` 的全挂。
+
+**根因**：`deploy/docker/Dockerfile.rust` 复制了 `Cargo.toml`、`.cargo`、
+`rust-toolchain.toml`、`crates`，唯独漏了 `proto/`。而
+`crates/proto/build.rs` 的 include path 设为 workspace 根，源文件清单写成
+`proto/cats/v1/common.proto` 这样的根相对路径——容器里 `/build/proto` 不存在，
+protoc 既解析不了源文件清单也解析不了 import。
+
+`deploy/Dockerfile.runtime` 第 7 行本来就有 `COPY proto ./proto`，证明这是
+**遗漏而非有意排除**：同一个 `build.rs` 在那里能正常工作。
+
+**修复**：`55242e5` 补上 `COPY proto ./proto`，放在 `COPY crates` 之前以利
+分层缓存。
+
+##### 修完 proto 后暴露出的第二个缺陷：CI 门禁存在盲区
+
+`55242e5` 把 9 个失败降到 **1 个**（`task-service`），错误也换了：
+
+```
+error[E0599]: no associated function or constant named `new_with_buffer`
+    found for struct `AppState` in the current scope
+```
+
+`AppState::new_with_buffer` 带着 `#[cfg(any(test, debug_assertions))]`，文档注释
+写"测试构造"——但 `main.rs` 在**生产路径**上调用它，用来把 `cfg.event_buffer`
+传进去。dev profile 的 `debug_assertions = true`，所以 `cargo test` 和
+`cargo clippy --all-targets` 都看得见这个函数、报绿；release profile 的
+`debug_assertions = false`，这个函数**根本不存在**。
+
+**没有任何测试能抓到它，因为默认门禁从不编译 release profile。** 只有跑
+`cargo build --release` 的 Docker 构建碰到了。
+
+顺着这条线还查出 `ci-rust-build` 自己的两处问题：
+
+- 它**从不传 `--release`**，而 artifact 上传却指向
+  `target/<target>/release/cats-*`——dev 构建写在 `debug/`，那个目录从来不存在，
+  于是上传**一直是空的**，而 job 照报 success。**release 产物从来没被 CI 产出过。**
+- 所以"build job 绿"与"release 可构建"之间没有任何因果关系。
+
+**修复**（`682dd67`）：
+
+1. 去掉 `new_with_buffer` 的 `#[cfg]`，并让 `new` 委托给它
+   （`Self::new_with_buffer(pool, 1024)`），消除两份可能漂移的构造函数体。
+2. `ci-rust-build` 为 Linux x86_64（头部注释写明这才是真正的部署 target）增加
+   `cargo build --workspace --release`；其余三个 matrix 项保留更快的 dev 构建。
+3. artifact 上传加 `if-no-files-found: error`——空产物从此**响亮失败**，
+   不再静默交付空包。
+
+> 这条门禁是本次加进去的，它的第一次实战就是验证本报告所述的修复。
 
 其中两个是本次新修的（此前 6 次连续全红，从未成功运行过）：
 
@@ -109,6 +185,9 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 | 3 | `auth-service/tests/integration_auth.rs` | 跟不上 ULYS-149 引入的 `roles` 字段（5×E0061 + 1×E0063） | 补字段，并补上该字段从未有过的覆盖（往返 / 空 roles / 旧 token 靠 `serde(default)` 仍可解析） |
 | 4 | `notification-service` + `report-service` 的 RBAC 测试 | 测试要求 **User 能读 Alert/Report**，即"放宽授权矩阵让测试通过"——方向反了 | 改为断言真实 403 + SRELead/DatabaseLead 对照，错误码断言 `operation_not_permitted` |
 | 5 | `cats-bff/src/upstream.rs` vs `src/upstream/mod.rs` | 两个文件争抢同一模块路径 → E0761，并级联出 14 个 never-type-fallback 错误；`cargo fmt` 因无法解析 `mod` 也一并失败 | 重命名为 `upstream_passthrough.rs`（仍不接入模块树），并在三个未接入文件头写明状态 |
+| 6 | `deploy/docker/Dockerfile.rust` | 漏 `COPY proto ./proto`，而 `cats-proto/build.rs` 以 workspace 根为 include path → 9/18 镜像构建失败 | `55242e5` 补 COPY（参照本就正确的 `Dockerfile.runtime`） |
+| 7 | `crates/task-service/src/handlers.rs` | `AppState::new_with_buffer` 带 `#[cfg(any(test, debug_assertions))]`，但 `main.rs` 在生产路径调用它 → release 构建 E0599 | `682dd67` 去掉 cfg，`new` 委托 `new_with_buffer` |
+| 8 | `.github/workflows/ci-rust-build.yaml` | 从不传 `--release`，artifact 却指向上传 `release/cats-*`（该目录由 dev 构建从不产生）→ release 产物长期为空而 job 报绿 | `682dd67` 为 Linux x86_64 增加 release 构建；上传加 `if-no-files-found: error` |
 
 其余为 clippy lint 清理（`audit-service` 删 dead 字段、`task-service` 改用
 `#[derive(Default)]`、`cats-bff/error.rs` 合并相同分支、文档缩进等）、
@@ -130,7 +209,7 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 | 真 mTLS 服务间通信 (per ADR-009) | 🟡 P1 | 未做 |
 | `cats-bff` 三个未接入文件 | 🟡 P1 | `upstream_passthrough.rs` / `routes.rs` / `grpc_clients.rs` 依赖 `Config::for_test`、`auth_service_base`、`project_service_base`、`upstream_timeout_ms`——**这 4 个 API 在当前 `Config` 上均不存在**，接入前需先适配改造 |
 
-### §4.1 Tauri 客户端：为什么"8/8 CI 全绿"不等于它能编译
+### §4.1 Tauri 客户端：为什么"CI 全绿"不等于它能编译
 
 `apps/cats-client` **不在 `Cargo.toml` 的 workspace members 里**。它自己的
 `Cargo.toml` 注释就写明了这一点：
@@ -218,7 +297,8 @@ v0.1 把"12 service binary 编译未通过"归因为**工具链缺陷**：
 | 版本 | 日期 | 修订人 | 说明 |
 |---|---|---|---|
 | v0.1 | 2026-09-19 | 架构师(Mavis 接手 agent per DEC-008) | 记录 binary 编译未通过，归因 rustc metadata bug，建议等 rustc 2.x |
-| v0.2 | 2026-10-03 | 架构师(Mavis 接手 agent per DEC-008) | **更正 v0.1 归因**：非工具链缺陷，而是 5 类代码缺陷；binary 现已编译通过，8/8 CI 绿，485 测试 0 失败；作废"等 rustc 2.x"建议；补全 MVP 9/9 的诚实口径 |
+| v0.2 | 2026-10-03 | 架构师(Mavis 接手 agent per DEC-008) | **更正 v0.1 归因**：非工具链缺陷，而是 5 类代码缺陷；binary 现已编译通过，485 测试 0 失败；作废"等 rustc 2.x"建议；补全 MVP 9/9 的诚实口径 |
+| v0.2.1 | 2026-10-03 | 架构师(Mavis 接手 agent per DEC-008) | **自查更正 v0.2 初稿的两处不准确表述**（不回溯改写，追加于本行）：①初稿头部写"8/8 CI workflow 绿"，那把 `ci-docker-build` 尚在 `in_progress` 时的状态当成了结果——实际 18 个镜像有 9 个失败；②初稿 §2 写"binary 编译通过"，未区分 profile——`cargo build --release` 当时**从未通过**。据此新增 §2.4 两节：`ci-docker-build` 的 proto 缺失与 `task-service` 的 `#[cfg]` 逃逸，并披露 `ci-rust-build` 从不构建 release、artifact 上传长期为空。修复见 `55242e5` 与 `682dd67` |
 
 > 永久代签 per 守门 #14 v3 + 9/8 第 6/7 次强化。真人到位后追溯签字覆盖修订历史。
 > v0.1 原文保留未改——本报告只向前追加，不回溯改写历史记录。
