@@ -191,7 +191,18 @@ INFO actix_web::server: starting service: "actix-web-service-0.0.0.0:50051"
 Windows 服务 `endpointService` 占用，故用 override 换端口，
 容器内端口与正式编排一致）。
 
-### §5.2 各闸门的反向验证
+### §5.2 CI
+
+run **`37157912198`**（commit `5a9a74a`）：**4/4 绿**
+
+| job | 结果 |
+|---|---|
+| test (ubuntu-latest) | success（含 `Lint docker-compose + envoy invariants` 步骤） |
+| test (macos-latest) | success |
+| test (windows-latest) | success |
+| e2e (real PostgreSQL) | success |
+
+### §5.3 各闸门的反向验证
 
 | 检查 | 反例 | 正例 |
 |---|---|---|
