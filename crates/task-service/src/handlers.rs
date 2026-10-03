@@ -61,15 +61,19 @@ pub struct AppState {
 impl AppState {
     /// 构造 AppState (default EventBus buffer = 1024)
     pub fn new(pool: PgPool) -> Self {
-        Self {
-            pool,
-            events: Arc::new(EventBus::new(1024)),
-            rbac: Arc::new(RbacChecker::new()),
-        }
+        Self::new_with_buffer(pool, 1024)
     }
 
-    /// 测试构造: 自定义 EventBus buffer
-    #[cfg(any(test, debug_assertions))]
+    /// 自定义 EventBus buffer
+    ///
+    /// 之所以不标 `#[cfg(any(test, debug_assertions))]`：`main.rs` 在生产路径上
+    /// 直接用它构造 AppState，以传入 `cfg.event_buffer`。原先它被限定为
+    /// test/debug 可见，于是 dev profile（`debug_assertions = true`）下
+    /// `cargo test` 与 `cargo clippy` 一切正常，而 `cargo build --release`
+    /// （`debug_assertions = false`）编译 task-service 直接报
+    /// `error[E0599]: no associated function ... new_with_buffer`，
+    /// 导致 18 个镜像里的 task-service 构建失败。CI 此前从不构建 release，
+    /// 所以这个差异一直逃过门禁。
     pub fn new_with_buffer(pool: PgPool, buffer: usize) -> Self {
         Self {
             pool,
