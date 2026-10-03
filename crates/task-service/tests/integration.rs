@@ -595,7 +595,17 @@ fn update_status_request_round_trip() {
 // ⑩ timeout helper usage smoke (确保不依赖 future 兼容问题)
 // =====================================================================
 
-#[tokio::test]
+// `start_paused = true` 启用 tokio 虚拟时间：运行时在 future idle 时自动推进
+// 时钟，"10ms 超时 vs 20ms sleep"的先后关系变成确定的，不依赖 runner 调度。
+//
+// 原写法用真实墙钟、只有 10ms 余量，在繁忙的 CI runner 上会假失败：
+// `tokio::time::timeout` 是**先 poll 内层 future、再检查自己的定时器**，
+// 线程一旦被挂起超过 20ms，醒来时 sleep 的 deadline 也已过、立即返回 Ready，
+// timeout 于是返回 Ok(…)，`assert!(result.is_err())` 挂掉。
+//
+// 实证：同一份代码在 CI run `37118286511` 全绿、在 run `37118658229` 的
+// windows-latest 上 FAILED。差异只有调度时机，与代码无关。
+#[tokio::test(start_paused = true)]
 async fn smoke_timeout_helper() {
     // 测试 timeout helper 可用 (per ULYS-45 e2e_t07_sse.rs 使用模式)
     let result = timeout(Duration::from_millis(10), async {
