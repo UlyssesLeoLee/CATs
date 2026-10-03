@@ -128,6 +128,14 @@ services:
   ai-gateway:
     <<: *cargo-base
     container_name: cats-mvp-ai-gateway
+    # 必须显式指定 command。本 service 原先没有 command，于是继承了
+    # Dockerfile.runtime 的 `CMD ["/usr/local/bin/cats-bff"]`——
+    # **这个叫 ai-gateway 的容器里跑的是 cats-bff**。
+    # 后果是下面 REST_BIND_ADDR / GRPC_BIND_ADDR 无人读取（cats-bff 读的是
+    # BIND_ADDR），实际监听 8097 而不是 8090，探活 8090 只会连接被拒。
+    # 实测日志：
+    #   INFO cats_bff: starting cats-bff bind_addr=0.0.0.0:8097
+    command: ["/usr/local/bin/cats-ai-gateway"]
     environment:
       RUST_LOG: info
       REST_BIND_ADDR: 0.0.0.0:8090
@@ -371,10 +379,23 @@ services:
     command: ["/usr/local/bin/cats-bff"]
     environment:
       RUST_LOG: info
-      BIND_ADDR: 0.0.0.0:8080
+      # ⚠ 变量名必须是 SERVICE_BIND_ADDR，不是 BIND_ADDR。
+      # cats-bff 的 config.rs 读的是 SERVICE_BIND_ADDR（默认 0.0.0.0:8097）；
+      # 原先这里写 BIND_ADDR，于是它默默用了默认值 8097，而下面的端口映射
+      # 指向容器内 8080 —— 映射到了一个没人监听的端口，探活必然失败。
+      # 实测日志：
+      #   starting cats-bff bind_addr=0.0.0.0:8097
+      SERVICE_BIND_ADDR: 0.0.0.0:8080
+      # 上游一律用**容器网络里的服务名**，不能是 localhost ——
+      # 容器里的 localhost 指向它自己。
       AUTH_SERVICE_URL: "http://auth-service:8080"
+      USER_SERVICE_URL: "http://user-service:8080"
       PROJECT_SERVICE_URL: "http://project-service:8080"
+      TASK_SERVICE_URL: "http://task-service:8080"
       TRANSLATION_CORE_URL: "http://translation-core:50051"
+      # 不设的话 principal.rs 任何带 Bearer 的请求都会返回
+      # ServerMisconfigured("JWT_SECRET env var not set")
+      JWT_SECRET: "dev-jwt-secret-rotate-in-prod"
     ports:
       # 8081-8089 已被 8 个 core service 占满；BFF 另给 8091。
       # 原先与 ai-gateway 同为 8090，Docker 直接报 port is already allocated
