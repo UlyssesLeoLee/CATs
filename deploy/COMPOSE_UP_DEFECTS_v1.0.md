@@ -27,6 +27,24 @@ build context 解析**，所以这里解析到 `<repo>/deploy/docker/Dockerfile.
 注意 Dockerfile 本身没毛病——v0.2 补的 `COPY proto ./proto` 就在第 7 行。
 坏的只是引用它的那个路径。
 
+## 一之二、路径修好后，下一层又炸：Dockerfile 一行挤了两条指令
+
+```
+Dockerfile.runtime:2
+   1 |     # Multi-stage build: 编译所有 service binary,然后放到 runtime image
+   2 | >>> FROM rust:1.98.0 AS builder WORKDIR /app
+      |
+dockerfile parse error on line 2: FROM requires either one or three arguments
+```
+
+`FROM` 和 `WORKDIR` 是两条独立指令，Dockerfile 一行只能有一条。已拆成两行。
+
+**所以 `deploy/Dockerfile.runtime` 此前也从没被成功构建过。** 这条 P0 的
+真实状态是：一层套一层，每修一层才露出下一层，从来没有人走到过能构建
+成功的那一步。
+
+已全仓扫描所有 `Dockerfile*`，无第二处"一行多指令"。
+
 ## 二、就算构建过了，`up` 也会立刻失败
 
 ### 2.1 宿主端口 8090 被两个 service 声明

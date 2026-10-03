@@ -1,5 +1,12 @@
 # Multi-stage build: 编译所有 service binary,然后放到 runtime image
-FROM rust:1.98.0 AS builder WORKDIR /app
+# 注意: Dockerfile 一行只能有一条指令。原先这里是
+#   FROM rust:1.98.0 AS builder WORKDIR /app
+# 两���指令挤在一行，解析直接失败：
+#   dockerfile parse error on line 2: FROM requires either one or three arguments
+# 本文件此前从未被成功构建过——compose 的 dockerfile 路径先失败，
+# 修好路径后才暴露出这个。
+FROM rust:1.98.0 AS builder
+WORKDIR /app
 
 # Pre-build common deps
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
