@@ -5,38 +5,26 @@
 -- MVP 范围:
 -- - files 元数据表 (id, org_id, name, content_type, size, sha256, storage_path, status)
 -- - 本地落盘路径: ./var/files/{org_id}/{file_id} (per brief §1 file-service)
+--
+-- ---------------------------------------------------------------------
+-- 已停用 (per 2026-10-03 真实 PG 验证)
+--
+-- 本文件是 org_id / project_id / name / uploaded_by 租户模型；
+-- file-service 实际代码用的是 workspace_id / owner_user_id / filename 模型
+-- (src/db.rs 的 INSERT 明确写 workspace_id, owner_user_id, filename)。
+-- 权威 schema 是 20260920_0001_init.sql。
+--
+-- 本文件版本号最小、最先执行，会抢先建出 org_id 模型的 files 表，
+-- 权威版的 CREATE TABLE 被静默跳过，随后其索引
+-- ON files (workspace_id, status) 引用不存在的列而失败：
+--     ERROR: column "workspace_id" does not exist
+-- 即在全新数据库上 file_db 的 schema 初始化无法完成，生产首次部署同样会踩到。
+--
+-- 处理：不再建表与相关索引，权威 schema 见 20260920_0001_init.sql。
+-- ---------------------------------------------------------------------
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
-CREATE TABLE IF NOT EXISTS files (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id        UUID NOT NULL,                          -- 多租户隔离
-    project_id    UUID,                                    -- 关联 project (nullable, 跨项目共享文件)
-    task_id       UUID,                                    -- 关联 task (nullable)
-    name          TEXT NOT NULL,                            -- 原始文件名
-    content_type  TEXT,
-    size_bytes    BIGINT NOT NULL DEFAULT 0,
-    sha256        TEXT,
-    storage_path  TEXT NOT NULL,                           -- 本地路径 (per brief §1 file-service)
-    status        TEXT NOT NULL DEFAULT 'uploaded',         -- uploaded / processing / ready / deleted
-    uploaded_by   UUID NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_files_org_id ON files (org_id);
-CREATE INDEX IF NOT EXISTS idx_files_project_id ON files (project_id);
-CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files (sha256);
-
-CREATE OR REPLACE FUNCTION trg_set_updated_at() RETURNS trigger AS $$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS files_set_updated_at ON files;
-CREATE TRIGGER files_set_updated_at
-    BEFORE UPDATE ON files
-    FOR EACH ROW
-    EXECUTE FUNCTION trg_set_updated_at();
+-- 故意留空：权威 schema 见 20260920_0001_init.sql
+-- （updated_at trigger 已随该表一并停用——权威版自带等价 trigger，
+--   此处保留会在表尚未建出时因 relation "files" does not exist 而失败）

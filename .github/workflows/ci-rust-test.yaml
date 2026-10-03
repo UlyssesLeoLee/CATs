@@ -29,6 +29,35 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+
+    # 45 个 e2e 测试此前全部标 #[ignore = "e2e-needs-real-pg"]，从未在 CI 执行过。
+    # 真实 PG 由 service 容器提供；只给 postgres 用户，无 pgvector/无其他扩展。
+    # 限定 Linux：e2e 用 --test-threads=1 串行跑，且只需在一个平台证明 DB 行为。
+    services:
+      postgres:
+        if: runner.os == 'Linux'
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 每个 service 一套库，与 8 业务库名对齐（e2e 直接连这些库）
+      E2E_AUTH_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_auth
+      E2E_USER_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_user
+      E2E_PROJECT_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_project
+      E2E_FILE_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_file
+      E2E_NOTIFICATION_URL: postgres://postgres:postgres@127.0.0.1:5432/e2e_notification
+      # 测试用固定值，非真实凭据；TEST_PASSWORD 同样仅供测试种子用户
+      JWT_SECRET: ci-e2e-only-not-a-real-secret
+      TEST_PASSWORD: ci-e2e-only-9f3a2b
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,6 +66,31 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create e2e databases and apply migrations
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # service 容器只建了默认库；这里按 service 建库并灌各自 migration。
+          # 每个 service 的 migrations/ 目录是唯一权威 schema 来源——
+          # 其中 file/notification/project/task/user 各有三份 init，
+          # 但版本号递增且都用 IF NOT EXISTS，顺序应用不会冲突。
+          for svc in auth user project file notification; do
+            db="e2e_${svc}"
+            psql -U postgres -h 127.0.0.1 -c "CREATE DATABASE ${db};"
+          done
+          apply_migrations() {
+            local db="$1" dir="$2"
+            for f in $(find "$dir" -name '*.sql' | sort); do
+              echo "  applying ${f}"
+              psql -U postgres -h 127.0.0.1 -d "$db" -v ON_ERROR_STOP=1 -q -f "$f"
+            done
+          }
+          apply_migrations e2e_auth        crates/auth-service/migrations
+          apply_migrations e2e_user        crates/user-service/migrations
+          apply_migrations e2e_project     crates/project-service/migrations
+          apply_migrations e2e_file        crates/file-service/migrations
+          apply_migrations e2e_notification crates/notification-service/migrations
 
       - name: Install lld (Linux, per .cargo/config.toml -fuse-ld=lld)
         if: runner.os == 'Linux'
@@ -65,6 +119,39 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --all-features --locked -- --nocapture
+
+      # 45 个 e2e 此前从不在 CI 执行。它们此前靠 #[ignore] + Once 惰性初始化
+      # 双重掩盖：Once 让首次失败把状态毒化，掩盖了"缺数据库"这个真实原因。
+      # 现在有真实 PG，去掉 --ignored 之外还要串行跑：这些测试共用固定表名，
+      # 并发会互相污染。
+      - name: Run DB-backed e2e against real PostgreSQL
+        if: runner.os == 'Linux'
+        env:
+          DATABASE_URL: ${{ env.E2E_AUTH_URL }}
+        run: |
+          set -euo pipefail
+          for spec in \
+            "auth-service:e2e_auth:e2e_auth:e2e_t01" \
+            "auth-service:e2e_auth:e2e_auth:" \
+            "user-service:e2e_user:e2e_t02:" \
+            "project-service:e2e_project:integration:" \
+            "file-service:e2e_file:integration:" \
+            "notification-service:e2e_notification:integration:" \
+          ; do
+            pkg="${spec%%:*}"; rest="${spec#*:}"
+            db="${rest%%:*}"; rest="${rest#*:}"
+            target="${rest%%:*}"; extra="${rest#*:}"
+            echo "=== ${pkg} / ${target:-default} -> ${db} ==="
+            if [ -n "$target" ]; then
+              DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/${db}" \
+                cargo test -p "$pkg" --test "$target" --all-features --locked \
+                -- --ignored --test-threads=1 --nocapture
+            else
+              DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/${db}" \
+                cargo test -p "$pkg" --all-features --locked \
+                -- --ignored --test-threads=1 --nocapture
+            fi
+          done
 
       # 引用: doc/02-基础设计/测试/CATs_测试Mock项目设计书_v1.0.md §5.3
       # 2026-09-01 改造: 16 service smoke boilerplate 替换为 cats_mock::smoke::name_matches_crate!

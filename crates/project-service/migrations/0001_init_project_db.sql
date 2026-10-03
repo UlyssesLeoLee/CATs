@@ -10,39 +10,21 @@
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
-CREATE TABLE IF NOT EXISTS projects (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id      UUID NOT NULL,                -- 多租户隔离 (per §14)
-    name        TEXT NOT NULL,
-    description TEXT,
-    status      TEXT NOT NULL DEFAULT 'active',  -- active / archived
-    source_lang TEXT,                         -- BCP-47 (per 接口设计 §6.3.5)
-    target_lang TEXT,
-    created_by  UUID NOT NULL,                -- user_id
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects (org_id);
-CREATE INDEX IF NOT EXISTS idx_projects_created_by ON projects (created_by);
-
--- updated_at 自动维护 trigger (per auth-service/migrations/0001 复用)
-CREATE OR REPLACE FUNCTION trg_set_updated_at() RETURNS trigger AS $$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS projects_set_updated_at ON projects;
-CREATE TRIGGER projects_set_updated_at
-    BEFORE UPDATE ON projects
-    FOR EACH ROW
-    EXECUTE FUNCTION trg_set_updated_at();
+-- projects 表已停用，权威 schema 见 20260920_0001_init.sql。
+-- 本文件的 projects 用 org_id 多租户隔离，而 project-service 代码只用
+-- workspace_id（src/db.rs 中出现 18 次，org_id 零引用）。
+-- 本文件版本号最小、最先执行，会抢先建表，导致权威版被静默跳过、
+-- 其索引 ON projects (workspace_id, ...) 报 column "workspace_id" does not exist。
+-- 即在全新数据库上 project_db 初始化无法完成，生产首次部署同样会踩到。
+-- 下方 project_members 不与权威版冲突，保留。
+-- updated_at trigger 与 projects 一并停用：权威版 20260920_0001_init.sql
+-- 自带等价 trigger，此处保留会在表尚未建出时报 relation "projects" does not exist。
 
 -- project_members (per 接口设计 §6.3.5)
+-- projects(id) 由 20260920_0001_init.sql 建立（版本号更大、更晚执行），
+-- 故此处不能用内联 REFERENCES；等权威版建出 projects 后再补外键。
 CREATE TABLE IF NOT EXISTS project_members (
-    project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id  UUID NOT NULL,
     user_id     UUID NOT NULL,
     role        TEXT NOT NULL DEFAULT 'member',  -- owner / lead / member / viewer
     added_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -50,3 +32,16 @@ CREATE TABLE IF NOT EXISTS project_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members (user_id);
+
+DO $fk$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'projects')
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_constraint WHERE conname = 'project_members_project_id_fkey'
+       ) THEN
+        ALTER TABLE project_members
+            ADD CONSTRAINT project_members_project_id_fkey
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
+    END IF;
+END
+$fk$;
