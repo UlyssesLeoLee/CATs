@@ -32,10 +32,13 @@ jobs:
 
     # 45 个 e2e 测试此前全部标 #[ignore = "e2e-needs-real-pg"]，从未在 CI 执行过。
     # 真实 PG 由 service 容器提供；只给 postgres 用户，无 pgvector/无其他扩展。
-    # 限定 Linux：e2e 用 --test-threads=1 串行跑，且只需在一个平台证明 DB 行为。
+    #
+    # 注意：services.<id> 下**不允许** if:——GitHub 的 workflow 解析器不接受，
+    # 会在该行直接报 "Unexpected value 'if'" 且整个 job 不启动（job 一个都不
+    # 会创建，只报 "This run likely failed because of a workflow file issue"）。
+    # 所以容器在三个平台都起，e2e 只在 Linux 上执行。
     services:
       postgres:
-        if: runner.os == 'Linux'
         image: postgres:18
         env:
           POSTGRES_USER: postgres
