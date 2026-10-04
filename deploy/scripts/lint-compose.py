@@ -307,16 +307,18 @@ ORPHAN_BASELINE = {
                   "data/user.rs", "db/fixture.rs", "db/schema.rs", "db/seed.rs",
                   "http/response.rs", "http/routes.rs", "http/server.rs",
                   "infra/kafka.rs", "infra/redis.rs"],
-    "cats-rbac": ["service_helpers.rs"],
-    "common": ["error.rs"],
     "file-service": ["state.rs", "storage.rs"],
     "notification-service": ["consumer.rs", "state.rs"],
     "project-service": ["state.rs"],
     "report-service": ["state.rs"],
     "task-service": ["state.rs"],
-    "translation-core": ["ai_gateway.rs", "db.rs", "glossary.rs", "qa.rs",
-                         "service.rs", "tm.rs"],
-    "worker-service": ["handlers.rs", "scheduler.rs", "state.rs"],
+    # 已于 2026-10-04 接线、因此从基线移除的有 4 个 crate:
+    #   common            error.rs（550 行共享错误体系）
+    #   cats-rbac         service_helpers.rs（178 行）
+    #   translation-core  6 个模块（550 行，含 4 个 RPC 的 gRPC 实现）
+    #   worker-service    3 个模块（170 行，含抢占→派发→回写调度器）
+    # 合计约 1450 行从"写在磁盘上"变成"真的在编译"。
+    # 它们若再次掉出编译，规则 7 会重新 FAIL —— 这正是基线的用法。
 }
 
 MOD_RE = re.compile(r'^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;', re.M)

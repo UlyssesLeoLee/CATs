@@ -73,15 +73,6 @@ echo "==> [5/5] 等待并逐个探活"
 echo ""
 echo "==> 端到端 smoke（每个 service 自己的 /healthz）"
 fail=0
-probe() {
-  local name="$1" port="$2"
-  if curl -sf --max-time 5 "http://${HOST}:${port}/healthz" >/dev/null 2>&1; then
-    printf '  %-24s OK   (127.0.0.1:%s)\n' "$name" "$port"
-  else
-    printf '  %-24s FAIL (127.0.0.1:%s)\n' "$name" "$port"
-    fail=1
-  fi
-}
 
 # 探针清单**从 compose 编排里推导**，不再手写。
 #
@@ -123,28 +114,49 @@ rows = []
 for name, s in svcs.items():
     if not serves_healthz(name, s):
         continue
-    ports = s.get("ports") or []
-    if not ports:
-        continue
-    p = ports[0]
-    if isinstance(p, dict):
-        p = "%s:%s:%s" % (p.get("host_ip", ""), p.get("published", ""),
-                           p.get("target", ""))
-    parts = str(p).split(":")
-    if len(parts) < 2 or not parts[-2].isdigit():
-        continue
-    rows.append((name, int(parts[-2])))
-for name, port in sorted(rows, key=lambda r: r[1]):
+    for p in (s.get("ports") or []):
+        if isinstance(p, dict):
+            p = "%s:%s" % (p.get("host_ip", ""), p.get("published", ""))
+        parts = str(p).split(":")
+        if len(parts) < 2 or not parts[-1].isdigit():
+            continue
+        rows.append((name, int(parts[-1])))
+for name, port in sorted(rows, key=lambda r: (r[0], r[1])):
     print("%s\t%d" % (name, port))
 ' 2>/dev/null
 }
 
 probed=0
+declare -A svc_ok=()
+declare -A svc_port=()
+declare -a svc_order=()
+
+# 一个 service 可能声明多个端口（translation-core 就有 gRPC + HTTP 两个）。
+# /healthz 只在 HTTP 那个口上，所以**任一端口应答即算该 service 探活通过**；
+# 但如果所有端口都不通，那个 service 就是 FAIL —— 不会因为"有一个口在"
+# 就掩盖另一个口真的坏了。
 while IFS=$'\t' read -r pname pport; do
   [ -n "$pport" ] || continue
-  probed=$((probed + 1))
-  probe "$pname" "$pport"
+  if [ -z "${svc_ok[$pname]+set}" ]; then
+    svc_ok[$pname]=0
+    svc_port[$pname]=$pport
+    svc_order+=("$pname")
+    probed=$((probed + 1))
+  fi
+  if curl -sf --max-time 5 "http://${HOST}:${pport}/healthz" >/dev/null 2>&1; then
+    svc_ok[$pname]=1
+    svc_port[$pname]=$pport
+  fi
 done <<< "$(probe_all)"
+
+for name in "${svc_order[@]}"; do
+  if [ "${svc_ok[$name]}" = "1" ]; then
+    printf '  %-24s OK   (127.0.0.1:%s)\n' "$name" "${svc_port[$name]}"
+  else
+    printf '  %-24s FAIL\n' "$name"
+    fail=1
+  fi
+done
 
 if [ "$probed" -eq 0 ]; then
   echo "!! 一个 service 都没探到 —— 探针清单推导失败，不要把'0 失败'当成通过" >&2
@@ -152,7 +164,7 @@ if [ "$probed" -eq 0 ]; then
 fi
 
 echo ""
-echo "  （共探活 ${probed} 个 service，宿主端口来自 compose 编排）"
+echo "  （共探活 ${probed} 个 service，端口来自 compose 编排）"
 
 echo ""
 if [ "$fail" -ne 0 ]; then

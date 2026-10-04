@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use actix_web::{web, HttpResponse, Responder};
-use cats_common::{cats_error_to_response, CatsError, ErrorCode};
+use cats_common::error::cats_error_to_response;
 use cats_rbac::service_helpers::{extract_user_id_and_roles, require_roles};
 use cats_rbac::{Action, Resource, Role};
 use serde::Serialize;

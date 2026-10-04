@@ -4,7 +4,7 @@
 //! - 术语强制: target_text 必须包含所有 expected_terms.target_term
 //! - 标签保护: 任何 `{...}` / `<...>` 占位符必须原样保留
 
-use cats_proto::cats::v1::{QAViolation, TermItem};
+use cats_proto::cats::v1::{QaViolation, TermItem};
 
 pub struct QaEngine;
 
@@ -15,13 +15,13 @@ impl QaEngine {
         source_text: &str,
         target_text: &str,
         expected_terms: &[TermItem],
-    ) -> Vec<QAViolation> {
+    ) -> Vec<QaViolation> {
         let mut violations = vec![];
 
         // 1. 术语强制 (expected_terms 必含)
         for term in expected_terms {
             if term.forbidden && target_text.contains(&term.target_term) {
-                violations.push(QAViolation {
+                violations.push(QaViolation {
                     rule_id: "glossary.forbidden".into(),
                     rule_category: "glossary".into(),
                     message: format!("forbidden term appears: {}", term.target_term),
@@ -32,7 +32,7 @@ impl QaEngine {
                 });
             }
             if !term.forbidden && !term.target_term.is_empty() && !target_text.contains(&term.target_term) {
-                violations.push(QAViolation {
+                violations.push(QaViolation {
                     rule_id: "glossary.missing".into(),
                     rule_category: "glossary".into(),
                     message: format!("expected term missing: {}", term.target_term),
@@ -54,7 +54,7 @@ impl QaEngine {
             let opens = source_text.matches(open_char).count();
             let closes = target_text.matches(close_char).count();
             if opens != closes {
-                violations.push(QAViolation {
+                violations.push(QaViolation {
                     rule_id: format!("placeholder.{}", open_char),
                     rule_category: "placeholder".into(),
                     message: format!(

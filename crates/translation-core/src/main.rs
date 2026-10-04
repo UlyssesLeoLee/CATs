@@ -1,48 +1,55 @@
 //! `translation-core` 入口
 //!
-//! M0 阶段：actix-web 4 健康检查占位，端口与绑定地址走环境变量。
-//! 业务 endpoint 在 M1 阶段按微服务架构书 §4.1 + OpenAPI v1 落地。
+//! 两个监听端口（per 微服务架构设计书 §4.1 + 技术基线 §1）：
+//!
+//! - `GRPC_BIND_ADDR`（默认 `0.0.0.0:50051`）：tonic gRPC server，
+//!   承载 `TranslationCoreServiceImpl` 的 4 个 RPC。
+//! - `BIND_ADDR`（默认 `0.0.0.0:8080`）：HTTP `/healthz`，
+//!   与本仓其余 11 个 service 的约定一致，让探活/监控可以统一走 HTTP。
+//!
+//! 两个端口用**各自的 runtime**：gRPC 跑在 tokio 上，healthz 跑在
+//! 独立线程的 actix `System` 上。把 actix 的 HttpServer 和 tonic 塞进
+//! 同一个 runtime 是常见的踩坑点（actix-rt 的 LocalSet 与 tonic 的
+//! spawn 要求会打架），隔离开最省事也最稳。
+//!
+//! 2026-10-04：本文件此前是只注册 `/healthz` 的 M0 占位，而
+//! `service.rs` / `qa.rs` / `db.rs` / `ai_gateway.rs` 等 550 行
+//! 因为 `lib.rs` 没有 `mod` 声明**从未被编译**——于是服务对外只表现为
+//! 一个 healthz 探针，4 个 RPC 一个都没实现。
+
+use std::net::SocketAddr;
 
 use actix_web::{web, App, HttpResponse, HttpServer};
 use cats_common::AppMeta;
 use serde::Serialize;
 use std::env;
-use tracing::info;
+use tonic::transport::Server;
+use tracing::{error, info};
 
-/// 架构书 §4.1 给 translation-core 的端口
-const DEFAULT_BIND: &str = "0.0.0.0:50051";
+use cats_proto::cats::v1::translation_core_service_server::TranslationCoreServiceServer;
+use translation_core::service::TranslationCoreServiceImpl;
 
-/// 业务配置（M0 占位：从 env 读取；M1 替换为结构化 config）
+/// 架构书 §4.1 给 translation-core 的 gRPC 端口
+const DEFAULT_GRPC_BIND: &str = "0.0.0.0:50051";
+/// HTTP `/healthz` 端口，与其余 service 的 `BIND_ADDR` 同义
+const DEFAULT_HTTP_BIND: &str = "0.0.0.0:8080";
+
+/// 业务配置
 #[derive(Debug, Clone)]
 struct Config {
-    bind_addr: String,
+    grpc_bind_addr: String,
+    http_bind_addr: String,
 }
 
 impl Config {
     fn from_env() -> Self {
         Self {
-            bind_addr: resolve_bind_addr(
-                env::var("GRPC_BIND_ADDR").ok(),
-                env::var("BIND_ADDR").ok(),
-            ),
+            grpc_bind_addr: env::var("GRPC_BIND_ADDR")
+                .unwrap_or_else(|_| DEFAULT_GRPC_BIND.to_string()),
+            http_bind_addr: env::var("BIND_ADDR")
+                .unwrap_or_else(|_| DEFAULT_HTTP_BIND.to_string()),
         }
     }
-}
-
-/// 绑定地址的取值优先级：`GRPC_BIND_ADDR` > `BIND_ADDR` > 架构书默认端口。
-///
-/// 拆成纯函数是为了能测：直接改 process env 在 `cargo test` 的并行线程里
-/// 是全局竞态，测出来的顺序不可信。
-///
-/// 真实事故（2026-10-04）：本文件原先只读 `BIND_ADDR`（默认 0.0.0.0:8090），
-/// 而 compose 与架构书给的都是 `GRPC_BIND_ADDR=0.0.0.0:50051`——于是容器里
-/// 实际监听 8090，宿主 50051 映射到的端口上什么都没有，而 `worker-service`
-/// 和 `cats-bff` 都把 `TRANSLATION_CORE_URL` 指向 `translation-core:50051`。
-/// 变量名对不上属于拼写级错误，后果却是整条跨服务链路静默不通。
-fn resolve_bind_addr(grpc: Option<String>, legacy: Option<String>) -> String {
-    grpc
-        .or(legacy)
-        .unwrap_or_else(|| DEFAULT_BIND.to_string())
 }
 
 /// 健康检查响应
@@ -60,42 +67,66 @@ async fn healthz() -> HttpResponse {
     })
 }
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cats_common::init_tracing();
     let cfg = Config::from_env();
-    info!(bind_addr = %cfg.bind_addr, "starting translation-core");
 
-    HttpServer::new(|| App::new().route("/healthz", web::get().to(healthz)))
-        .bind(&cfg.bind_addr)?
-        .run()
-        .await
+    // HTTP /healthz 独立线程 + 独立 actix runtime
+    {
+        let http_bind_addr = cfg.http_bind_addr.clone();
+        std::thread::Builder::new()
+            .name("translation-core-healthz".into())
+            .spawn(move || {
+                actix_web::rt::System::new().block_on(async move {
+                    let srv = HttpServer::new(|| {
+                        App::new().route("/healthz", web::get().to(healthz))
+                    })
+                    .bind(&http_bind_addr);
+                    match srv {
+                        Ok(s) => {
+                            info!(addr = %http_bind_addr, "healthz listening");
+                            if let Err(e) = s.run().await {
+                                error!(error = %e, "healthz server stopped");
+                            }
+                        }
+                        Err(e) => error!(addr = %http_bind_addr, error = %e, "healthz bind failed"),
+                    }
+                });
+            })
+            .map_err(|e| std::io::Error::other(e.to_string()))?;    }
+
+    let grpc_addr: SocketAddr = cfg.grpc_bind_addr.parse()?;
+    info!(
+        grpc = %grpc_addr,
+        healthz = %cfg.http_bind_addr,
+        "starting translation-core"
+    );
+
+    Server::builder()
+        .add_service(TranslationCoreServiceServer::new(
+            TranslationCoreServiceImpl::default(),
+        ))
+        .serve(grpc_addr)
+        .await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn s(v: &str) -> Option<String> {
-        Some(v.to_string())
+    #[test]
+    fn defaults_match_architectured_ports() {
+        // gRPC 50051 是架构书 §4.1 的值；8090（曾经在这里）会让本服务
+        // 与 ai-gateway 撞语义，是 2026-10-04 那个 P0 的同一个坑。
+        assert_eq!(Config::from_env().grpc_bind_addr, DEFAULT_GRPC_BIND);
     }
 
     #[test]
-    fn grpc_bind_addr_beats_legacy() {
-        assert_eq!(
-            resolve_bind_addr(s("0.0.0.0:50051"), s("0.0.0.0:8090")),
-            "0.0.0.0:50051"
-        );
-    }
-
-    #[test]
-    fn legacy_bind_addr_still_accepted() {
-        assert_eq!(resolve_bind_addr(None, s("0.0.0.0:9999")), "0.0.0.0:9999");
-    }
-
-    #[test]
-    fn falls_back_to_architectured_port() {
-        // 两条事故的共同根因：这个默认值以前是 8090（= ai-gateway 的端口）
-        assert_eq!(resolve_bind_addr(None, None), "0.0.0.0:50051");
+    fn grpc_port_parses_as_socket_addr() {
+        let a: SocketAddr = DEFAULT_GRPC_BIND.parse().unwrap();
+        assert_eq!(a.port(), 50051);
     }
 }

@@ -628,11 +628,14 @@ dependencies = [
 name = "cats-common"
 version = "0.1.0"
 dependencies = [
+ "actix-web",
  "anyhow",
  "serde",
  "serde_json",
+ "sqlx 0.8.6",
  "thiserror 2.0.21",
  "tokio",
+ "tonic 0.13.1",
  "tracing",
  "tracing-subscriber",
 ]
@@ -693,6 +696,7 @@ dependencies = [
 name = "cats-rbac"
 version = "0.1.0"
 dependencies = [
+ "actix-web",
  "anyhow",
  "async-trait",
  "cats-common",
@@ -702,6 +706,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -3819,6 +3824,7 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "anyhow",
+ "async-trait",
  "cats-common",
  "cats-mock",
  "cats-proto",
@@ -3829,6 +3835,7 @@ dependencies = [
  "tokio",
  "tonic 0.13.1",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4300,12 +4307,14 @@ dependencies = [
  "anyhow",
  "cats-common",
  "cats-mock",
+ "cats-rbac",
  "serde",
  "serde_json",
  "sqlx 0.8.6",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

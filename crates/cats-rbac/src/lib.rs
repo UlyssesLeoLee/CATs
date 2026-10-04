@@ -13,6 +13,11 @@
 
 #![allow(missing_docs)]
 
+// 2026-10-04 接线：`service_helpers.rs`（178 行，HttpRequest 层的 RBAC
+// 辅助函数）此前从未被编译，`cats_rbac::service_helpers` 在整个仓库里
+// 都不可用 —— 唯一想用它的是 worker-service 的 handlers.rs。
+pub mod service_helpers;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 

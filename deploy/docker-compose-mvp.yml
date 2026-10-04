@@ -159,15 +159,21 @@ services:
     command: ["/usr/local/bin/translation-core"]
     environment:
       RUST_LOG: info
+      # gRPC（架构书 §4.1）
       GRPC_BIND_ADDR: 0.0.0.0:50051
+      # HTTP /healthz，与其余 service 的 BIND_ADDR 同义
+      BIND_ADDR: 0.0.0.0:8080
     ports:
       - "127.0.0.1:50051:50051"
-    # 本服务目前是 M0 占位：只暴露 /healthz，不连库也不碰 Kafka。
+      - "127.0.0.1:8092:8080"
+    # 本服务目前不连库也不碰 Kafka（M0：gRPC 4 个 RPC 走 mock AI 网关），
     # 所以既没有 DATABASE_URL 也不依赖 db-init / kafka —— 依赖图里不该出现
     # 对它没有意义的前置条件（同 ai-gateway 的处理）。
     # 下面这两个变量曾经在这里，源码里却没有任何 env::var 读过它们：
-    #   DATABASE_URL   —— 要接 project_db + pgvector 才能用（见 v0.3 §6 未接项）
-    #   AI_GATEWAY_URL —— 真实 provider 接入时才需要（见 v0.3 §6 未接项）
+    #   DATABASE_URL   —— db.rs 的 TM/glossary 查询要接 project_db + pgvector
+    #                     才能用（见 v0.4 §4.1 未接项）
+    #   AI_GATEWAY_URL —— ai_gateway.rs 目前只有 MockAiGateway，
+    #                     真实 provider 接入时才需要（见 v0.4 §4.1 未接项）
     # 留着它们的后果是"看起来配了"，实际被静默忽略。
     depends_on:
       # 保留这一条：translation-core 是 AI gateway 的调用方（架构书 §4.1），
@@ -364,15 +370,17 @@ services:
     environment:
       RUST_LOG: info
       BIND_ADDR: 0.0.0.0:8080
-      # DATABASE_URL 已移除：本服务的 main.rs 目前是 M0 占位（只注册
-      # /healthz），从不构造 PgPool、从不启动 run_scheduler_loop ——
-      # src/scheduler.rs / state.rs / handlers.rs 都没有被任何 mod 声明
-      # 引入，根本没进编译。配上 DATABASE_URL 会让人以为调度器在跑。
-      # 接线方案见 v0.4 §未接项。
+      # 2026-10-04 恢复：worker-service 接线后 main.rs 真正构造 PgPool 并启动
+      # run_scheduler_loop，所以这个变量不再是死的。缺它服务会 fail-fast 退出。
+      DATABASE_URL: "postgres://postgres:dev_only_local@postgres:5432/task_db"
       TRANSLATION_CORE_URL: "http://translation-core:50051"
     ports:
       - "127.0.0.1:8089:8080"
     depends_on:
+      postgres: { condition: service_healthy }
+      # 8 个 logical database + migrations 由这个 oneshot 建好后才允许起服务。
+      # 少了它，调度器起来第一条 UPDATE tasks 就是 relation does not exist。
+      db-init: { condition: service_completed_successfully }
       translation-core: { condition: service_started }
 
   # ============================================================

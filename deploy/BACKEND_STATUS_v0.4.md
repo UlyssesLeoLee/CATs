@@ -119,17 +119,50 @@ rustc 根本没看这个文件。
 
 ## §4 仍未达成（诚实披露）
 
-### §4.1 孤儿代码的清债方案待拍板
+### §4.1 孤儿代码：已接线 4 个 crate，剩 8 个待拍板
 
-| 选项 | 代价 | 收益 |
+> 2026-10-04 更新：§3.3 里那张表里最要紧的几项已经处理，原「拍板选项」
+> 里的 **B（接 translation-core + worker-service）已执行**。下面先说做了什么，
+> 再说剩下的。
+
+#### 已接线（约 1450 行从"写在磁盘上"变成"真的在编译"）
+
+| crate | 行数 | 接线时暴露的真实问题 |
 |---|---|---|
-| A. 只保留闸门，先不接线 | 0 | 债务可见、不再扩大 |
-| B. 接 translation-core + worker-service | 中（需定 HTTP/gRPC 传输形态、DB 接入） | 两个 service 从"只有 healthz"变成真服务 |
-| C. 接全部 12 个 crate | 大 | `cats-mock` 2899 行复活，e2e 可用 mock 层 |
+| `common` | 550 | `error.rs` 依赖 `actix-web` / `tonic` / `sqlx`，Cargo.toml 三个都没有；且全仓 `use cats_common::CatsError` 的**每一个**使用者都在未编译模块里 |
+| `cats-rbac` | 178 | `service_helpers.rs` 依赖 `actix-web` / `uuid`，同样没声明 |
+| `translation-core` | 550 | 依赖缺 `async-trait` / `uuid`；**proto 类型名全错**（见下） |
+| `worker-service` | 170 | 依赖缺 `cats-rbac` / `uuid`；`tick` 是私有函数但 `handlers.rs` 要调它；`mark_qa_blocked` 返回类型与声明不符 |
 
-`cats-bff` 809 行卡在 4 个不存在的 `Config` API 上（v0.3 §6），
-`common/error.rs` 550 行与 `lib.rs` inline 版本重复，**改代码的人很容易去改
-那份不参与编译的**——这是当前最实际的风险。
+**最值得记的一条：prost 会把 proto3 类型名规范化。**
+`TMMatchItem` 生成成 `TmMatchItem`、`MatchTMRequest` → `MatchTmRequest`、
+`QAViolation` → `QaViolation`、`RunQARequest` → `RunQaRequest`。
+而那段代码是照着 **`.proto` 里的名字**写的，不是照着 **prost 生成的名字**写的。
+这类错误在"代码写完但没编译"的仓库里可以潜伏任意久 —— 它只在
+`cargo build` 的那一刻存在。
+
+第二类：prost 把 proto3 枚举字段生成为 `i32`，而代码把
+`req.source_lang` 当成 `LanguageCode` 枚举直接用（4 处类型不匹配）。
+现在用一个显式 `lang(i32) -> LanguageCode` 转换。
+
+第三类：`CatsError` 上没有 `error_code()` 方法，实际叫 `code()`。
+
+**这一切只有真正去编译才会暴露。** 从「接线」到「编译通过」中间是
+9 → 1 → 0 的三轮，每一轮都是新信息。
+
+#### 剩余（8 crate / 4283 行）
+
+| crate | 行数 | 状态 |
+|---|---|---|
+| cats-mock | 2899 | `lib.rs` 文档宣称提供 http/db/infra/data 四模块，实际一个都没声明 |
+| cats-bff | 809 | 依赖 4 个不存在的 `Config` API（v0.3 §6 已记），需先补 API |
+| 其余 6 个 | 575 | audit/file/notification/project/report/task 的 `state.rs` 等 |
+
+> **最实际的风险**：`common/src/error.rs` 接线之后，audit / file /
+> notification 的 `db.rs`·`handlers.rs`·`consumer.rs` 仍然在基线里。
+> 它们引用 `cats_common::CatsError` 的方式现在**能编译了**，但仍没人调用。
+> 下一个改错误处理的人会遇到"类型明明存在却找不到引用"。
+
 
 ### §4.2 audit consumer 仍是 no-op
 
@@ -224,19 +257,45 @@ run **`37157912198`**（commit `5a9a74a`）：**4/4 绿**
 
 ---
 
-## §6 修订历史
+## §6 拍板记录（2026-10-04）
+
+| 事项 | 决议 | 依据与后果 |
+|---|---|---|
+| 5731 行孤儿代码怎么处理 | **接 translation-core + worker-service** | 已执行，见 §4.1。实测发现真正的根因是 `common/src/error.rs`（共享错误体系）从未被打开，必须先接它 |
+| audit-service 取消按月分区是否符合设计意图 | **接受降级，保持现状** | schema 迁就代码，优先保证 Kafka 至少一次投递的幂等键正确。恢复分区需先拆一张非分区去重表，属独立变更。**这是显式降级，不是遗漏** |
+| PR #19 审批 | Ulysses 本人执行 | `dev` 要求 1 人审批且 `enforce_admins`，admin 无法自批 |
+
+> 拍板选项均以 `(推荐)` 标注推荐项，3 项均选中推荐项。
+
+## §7 修订历史
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v0.1 | — | 初始启动状态 |
 | v0.2 | — | 45 个测试未执行的根因分析 |
 | v0.3 | — | 45 个 e2e 首次跑通；`docker compose up` 从 0 可用性到跑通（12 处缺陷） |
-| **v0.4** | **2026-10-04** | 撤回 v0.3 §4 的"12 路 healthz 全绿"覆盖表述；新增 lint 规则 6/7；抓出 translation-core P0 + 7 处死 env + 5731 行未编译代码 |
+| **v0.4** | **2026-10-04** | 撤回 v0.3 §4 的"12 路 healthz 全绿"覆盖表述；新增 lint 规则 6/7；抓出 translation-core P0 + 7 处死 env + 5731 行未编译代码；**接线 4 个 crate（约 1450 行），根因是共享错误体系从未打开** |
 
 ## 附：本轮新增/修改
 
-- `deploy/scripts/lint-compose.py` — 新增规则 6（env 变量名交叉，含 path 依赖）、规则 7（死文件 + 基线）；失败路径也输出提醒；支持位置参数以便对历史版本做双向验证
-- `deploy/scripts/mvp-backend-up.sh` — 探针清单改为从 compose 推导，闭合覆盖漏洞
-- `deploy/docker-compose-mvp.yml` — 删 7 个死变量 + 1 个无人读���的卷；清掉对已删变量无意义的 `depends_on`
-- `crates/translation-core/src/main.rs` — 修 `GRPC_BIND_ADDR` P0 + 3 个单测
+**闸门**
+- `deploy/scripts/lint-compose.py` — 新增规则 6（env 变量名交叉，含仓内 path 依赖）、规则 7（死文件 + 基线）；失败路径也输出提醒；支持位置参数以便对历史版本做双向验证
+- `deploy/scripts/mvp-backend-up.sh` — 探针清单改为从 compose 推导，闭合覆盖漏洞；支持多端口 service
+
+**编排**
+- `deploy/docker-compose-mvp.yml` — 删 7 个死变量 + 1 个无人读取的卷；translation-core 补 HTTP healthz 端口；worker-service 恢复 `DATABASE_URL`（接线后它真的读了）
+- `.github/workflows/ci-rust-test.yaml` — lint 步骤注释更新为 7 条规则各自的实证口径
+
+**接线（本次新活）**
+- `crates/common/src/lib.rs` — 加 `pub mod error;` + 根路径 re-export
+- `crates/common/Cargo.toml` — 加 `actix-web` / `tonic` / `sqlx`
+- `crates/cats-rbac/src/lib.rs` — 加 `pub mod service_helpers;`
+- `crates/cats-rbac/Cargo.toml` — 加 `actix-web` / `uuid`
+- `crates/translation-core/` — `lib.rs` 声明 6 个模块；`main.rs` 改为 tonic gRPC(50051) + HTTP healthz(8080) 双监听；`Cargo.toml` 加 `async-trait` / `uuid`
+- `crates/translation-core/src/{service,qa,ai_gateway}.rs` — 修 prost 类型名、枚举 i32 转换、`code()` 方法名、一个 move-after-borrow
+- `crates/worker-service/` — `lib.rs` 声明 3 个模块；`main.rs` 改为建池 + 启动调度器 + 注册 3 条路由；`Cargo.toml` 加 `cats-rbac` / `uuid`
+
+**文档**
 - `deploy/COMPOSE_UP_DEFECTS_v1.0.md` — 追加缺陷 13/14/15 与 §更正
+- `deploy/BACKEND_STATUS_v0.4.md` — 本文件
+

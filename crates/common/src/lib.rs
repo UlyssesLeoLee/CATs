@@ -6,6 +6,25 @@
 //! M0 阶段：本 crate 仅暴露 `version()` 与基础配置读取器占位。
 //! 真正的共享类型 / 错误体系 / tracing 初始化器将在 M1 阶段按 Rust 选型书落地。
 
+// 2026-10-04 接线：本文件原先没有这一行，`error.rs`（550 行的
+// `ErrorCode` / `CatsError` / `Result` / `ErrorBody` + HTTP/gRPC 映射）
+// **从未被编译**。后果不是"少了个模块"，而是全仓的错误模型分裂：
+// 凡是用 `cats_common::{CatsError, ErrorCode}` 的文件都在未编译的
+// 模块里（audit/file/notification 的 db.rs·handlers.rs·consumer.rs、
+// translation-core 的 service.rs·db.rs·ai_gateway.rs、
+// cats-rbac 的 service_helpers.rs、worker-service 的 scheduler.rs），
+// 而真正在编译的服务（auth/user/project/task/report/bff/ai-gateway）
+// 各自内联了一套错误处理，没有共享类型。
+pub mod error;
+
+// 根路径 re-export。仓库里两种写法都在用:
+//   use cats_common::{CatsError, ErrorCode};              （audit/file/notification/…）
+//   use cats_common::error::{CatsError, ErrorCode};       （worker-service）
+// 两个都留着, 不要求调用方统一改写 —— 共享库加 re-export 的成本是一行,
+// 逼 6 个 crate 改 import 的成本高得多, 而且改 import 会把"这个模块刚接上"
+// 和"顺手统一风格"两件事混在一起, 掩盖真正的原因。
+pub use error::{cats_error_to_response, CatsError, ErrorBody, ErrorCode, Result};
+
 /// 当前 crate 语义版本（与 workspace.package.version 同步）
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

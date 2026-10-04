@@ -55,11 +55,15 @@ impl AiGateway for MockAiGateway {
             ));
         }
         let target_text = format!("[{}] {}", lang_name(&input.target_lang), input.source_text);
+        // 2026-10-04 接线时修：原写法把 target_text 移进结构体后又在
+        // 下一个字段里借用它（borrow of moved value），编译不过。
+        // 先算长度再移动，语义不变。
+        let completion_tokens = target_text.len() as i32;
         Ok(TranslateOutput {
             target_text,
             model_used: format!("mock:{}", input.model_provider),
             prompt_tokens: input.source_text.len() as i32,
-            completion_tokens: target_text.len() as i32,
+            completion_tokens,
             confidence: 0.85,
         })
     }
