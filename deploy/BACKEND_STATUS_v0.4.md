@@ -150,13 +150,13 @@ rustc 根本没看这个文件。
 **这一切只有真正去编译才会暴露。** 从「接线」到「编译通过」中间是
 9 → 1 → 0 的三轮，每一轮都是新信息。
 
-#### 剩余（8 crate / 4283 行）
+#### 剩余（7 crate / 3963 行，2026-10-05 audit-service 接线后）
 
 | crate | 行数 | 状态 |
 |---|---|---|
 | cats-mock | 2899 | `lib.rs` 文档宣称提供 http/db/infra/data 四模块，实际一个都没声明 |
 | cats-bff | 809 | 依赖 4 个不存在的 `Config` API（v0.3 §6 已记），需先补 API |
-| 其余 6 个 | 575 | 各自的 `state.rs` 等，**但情况各不相同，见下** |
+| 其余 5 个 | 255 | 各自的 `state.rs` 等，**但情况各不相同，见下** |
 
 ##### 6 个 `state.rs` 的三种不同情况（2026-10-05 逐 crate 核对）
 
@@ -165,7 +165,7 @@ rustc 根本没看这个文件。
 
 | crate | 现状 | 接 `mod state;` 的后果 |
 |---|---|---|
-| **audit-service** | `handlers.rs`（124 行完整 HTTP handler）引用 `crate::db` / `crate::models` / `crate::state::AppState`，而 `lib.rs` **只声明了 `pub mod consumer;`** | 这不是"接一个 state"，而是**接一整组**：`db` / `models` / `state` / `handlers` 四个文件互相引用，缺一个都编译不过 |
+| **audit-service** | ✅ **已于 2026-10-05 接完**（见下节）。原本 `handlers.rs`（124 行完整 HTTP handler）引用 `crate::db` / `crate::models` / `crate::state::AppState`，而 `lib.rs` **只声明了 `pub mod consumer;`** | 这不是"接一个 state"，而是**接一整组**：`db` / `models` / `state` / `handlers` 四个文件互相引用，缺一个都编译不过 |
 | **task-service** | `handlers.rs` **自己又定义了一个 `AppState`**（12 处引用），`state.rs` 里还有另一个 | **接上去会造出两个竞争的 `AppState`**，编译期就冲突。这需要先决定哪个是权威，不能顺手做 |
 | **project / report / file / notification** | `state.rs` 无人引用，其余文件也不提 `AppState` | 只加 `mod` 会多出一个没人用的类型，workspace 严格 lint 下是 `dead_code`（可能直接是错误）。**不构成进展** |
 
@@ -186,13 +186,93 @@ use cats_rbac::service_helpers::{extract_user_id_and_roles, require_roles};
 却因为自己没被 `mod` 声明而不可用，于是依赖它们的 audit handler
 也一起卡死。**接上共享模块等于一次性解锁了这条链。**
 
-它接完之后 audit-service 才有真正的 HTTP 端点（现在只有 `/healthz`），
+它接完之后 audit-service 才有真正的 HTTP 端点（接之前只有 `/healthz`），
 这是**补功能**而不只是清死代码。
-
 
 > 这正是「一个 27 行的小文件看起来该有多简单」和「它其实是设计冲突」的差别。
 > 接线 translation-core 时遇到的 prost 类型名问题同理：**动手前先确认
 > 它接的是谁、接上之后有没有人用**。
+
+### §4.1b audit-service 接线结果（2026-10-05，commit `18c577c`）
+
+上面 §4.1 的判断**成立**：四个文件互相引用，缺一不可；接完之后该服务第一次
+有了业务端点。
+
+```
+GET  /healthz             存活探针
+GET  /readyz              就绪探针（含 DB 探活）
+GET  /v1/audit-logs       按 org 分页列出（RBAC: Audit Read）
+POST /v1/audit-logs/test  手动 ingest（RBAC: Audit Audit）
+```
+
+**从"编译过"到"能用"之间又翻出 4 个真问题**，每一个都是因为这段代码
+从未被编译过：
+
+| # | 问题 | 后果 |
+|---|---|---|
+| 1 | `test_ingest` 签名是 `_req: HttpRequest`，**全程零校验** | 任何能连到 8088 的人都能往 `audit_logs` 写行 —— 审计记录可被伪造 |
+| 2 | handler 内嵌一份静态角色表，其中的 `Role::ReviewLead` / `Role::PlatformLead` **在 cats-rbac 里不存在** | 就算能编译，也是一套过时的角色表；且语义反了（把解出来的调用方角色丢成 `_roles`）|
+| 3 | 6 个未用 import（`handlers.rs` 2 个 + `consumer.rs` 4 个，后者是删掉重复 `KafkaAuditEvent` 定义后新产生的）| `clippy -D warnings` 直接红 |
+| 4 | `models.rs` / `db.rs` 用 `sqlx::types::ipnetwork::IpNetwork`，而 workspace 的 sqlx **没开该 feature** | E0433 编译不过。开 feature 要给 `Cargo.lock` 加包，而 CI 跑 `--locked` |
+
+第 4 条的修法值得记一笔：**没有开 feature，而是按仓库既有约定改**——
+写侧绑 `&str` + `$9::inet` 让 PG 自己转换（与 `consumer.rs` 完全同一套），
+读侧 `ip::text AS ip`。依据是 `auth-service` 的 `source_ip` 早就显式改成了
+`TEXT`，注释写着「改 TEXT 简化 bind」。
+
+#### 写测试时被实测打脸两次，两次都是**断言错、代码对**
+
+第一版测试只直接调 `require_roles` 测权限矩阵，7 条全绿，但鉴别力接近零：
+把 handler 里的 `Resource::Audit` 改成 `Project`、或者整个删掉
+`require_roles`，它照样全绿——它验证的是 cats-rbac，与 audit-service 的
+handler 无关。改成用 `actix_web::test` 真打 HTTP 之后，才有信息进来：
+
+1. **Guest 单独访问是 401 不是 403。** `Role::Guest` 的定义注释就写着
+   「未登录」（`cats-rbac/src/lib.rs:53`），全仓库一致（5 个 service 的
+   `is_authenticated()` 都是 `!roles.contains(&Role::Guest)`）。
+
+2. **更要紧：Guest 不是集合级否决。** `require_roles` 把角色集合**拆开、
+   逐个单独判定**（`check_roles(&[*role], ...)`），所以
+   `Guest,DatabaseLead` 会被**放行**——DatabaseLead 单独就够格，
+   直接 `return Ok()`，根本走不到 Guest 那一轮。
+
+#### 🐛 顺带钉住一个已知实现瑕疵（本次只记录，未改）
+
+`User,Guest` 返回 **401**，`Guest,User` 返回 **403**。同一组角色、仅顺序
+不同。原因在 `cats-rbac/src/service_helpers.rs:104`：它只保留**最后一次**
+迭代的错误，Guest 排在最后就留下 `Unauthenticated`。
+
+两个后果：同一用户的状态码随 header 顺序变化；401 对一个**已登录**的调用方
+是误导性的，会把人引去查认证链而不是权限矩阵。
+
+**未修的理由**：`require_roles` 是 16 个 service 共用的 helper，改它的错误
+优先级会影响全部服务，属于需要单独拍板的范围。当前以**特征化测试**的形式
+记录在 `crates/audit-service/tests/rbac_audit_read.rs`，注释写明「若将来有人
+修，应当连同注释一起改」，而不是让测试自动跟着变。
+
+#### ⚠ 过程事实：这个分支从来没有自动 CI
+
+所有 workflow 的触发条件都是：
+
+```yaml
+on:
+  push:
+    branches: [main, dev, 'feature/**']
+  pull_request:
+    branches: [main, dev]
+```
+
+本分支叫 `feat/e2e-real-pg`（是 `feat/` 不是 `feature/`），PR #22 的 base 是
+`integrate/ci-revival-dev-ff` —— **两头都不匹配**。所以 push 不触发任何检查。
+
+**更正**：本文档此前几轮记录的「4/4 绿」，实际只来自 `workflow_dispatch`
+**手动触发**的 `ci-rust-test` 一个 workflow。`ci-rust-fmt` 与
+`ci-rust-clippy` 从未跑过。本轮补跑后 fmt 立刻是红的（20 个文件的格式债，
+其中 13 个缺文件末尾换行，分布在**此前已 push 的** common / cats-rbac /
+translation-core / worker-service 里），已由 `8b7a675` 修掉。
+
+> 教训与本文档开头那句一致：**绿色的检查也可能从来没运行过。**
+> 「跑了 4 个 job 全绿」和「有 4 个检查会跑」是两件事。
 
 
 
