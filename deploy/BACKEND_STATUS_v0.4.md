@@ -192,10 +192,25 @@ no-op。topic 建了但没人消费。已在 compose 注释里写明，不再靠
 
 **更正**：本文件初稿写的是"12 个 service 的 healthz 全都自报
 cats-common"，那是错的——另外 8 个自报的是自己的名字。真实情况是
-**4 个自报错了 + 整体 6 种格式不统一**。以本节表格为准。
+**4 个自报错了 + 整体 6 种格式不统一**。
 
-**未修**：统一它要动 12 个 crate 的 healthz handler + 改共享 API，
-不属于本轮范围，记在这里避免下一个人以为 healthz 格式已经统一。
+#### 已修：10 处不再自报 `cats-common`（2026-10-05，CI run `37281458555` 4/4 绿）
+
+`AppMeta::current()` 返回的是 **cats-common 自己**的 `CARGO_PKG_NAME`。
+`env!("CARGO_PKG_NAME")` 是编译期按**本 crate** 展开的，所以每个服务
+改用 `env!` 后报的就是自己。跨 9 个 crate 改了 10 处调用点
+（audit / translation-core / cats-ai-gateway 的 main.rs 与 api/mod.rs，
+加 6 个 M0 占位 service）。`cats-common` 自己的单测保留
+`AppMeta::current()` —— 它本来就该报自己。
+
+顺带记一个坑：`cats-ai-gateway/src/api/mod.rs` 用 `serde_json::json!`，
+不能在其值位置内嵌 struct 字面量再在里面写 `"key": value` ——
+宏有自己的分词器，会把 `"name":` 当成 JSON 键值对解析。
+必须先 `let app = AppMeta { .. };` 再放进 `json!`。
+
+**仍未修**：6 种响应格式本身不统一。统一它要动 12 个 crate 的 handler
+并改共享结构，属于独立的 API 收敛工作，不在本次范围。
+
 
 
 ### §4.4 v0.3 §6 其余各项未变
@@ -226,14 +241,35 @@ Windows 服务 `endpointService` 占用，故用 override 换端口，
 
 ### §5.2 CI
 
-run **`37157912198`**（commit `5a9a74a`）：**4/4 绿**
+| run | commit | 结果 |
+|---|---|---|
+| `37157912198` | `5a9a74a` | **4/4 绿**（含 lint 步骤） |
+| `37166472300` | `481618c` | **4/4 绿**（接线 4 个 crate 后） |
+| `37278878858` | `4a2b319` | 3/4 绿 —— ubuntu 红在 `Upload coverage`（codecov TLS 握手失败），**测试与覆盖率门禁本身通过** |
+| `37280627724` | `3d8f96b` | **4/4 绿**（加 `continue-on-error` 后，同一位置不再拖红） |
+| `37281458555` | `6eb069b` | **4/4 绿**（healthz 修复后） |
 
-| job | 结果 |
-|---|---|
-| test (ubuntu-latest) | success（含 `Lint docker-compose + envoy invariants` 步骤） |
-| test (macos-latest) | success |
-| test (windows-latest) | success |
-| e2e (real PostgreSQL) | success |
+#### run `37278878858` 暴露的 CI 脆弱点（已修）
+
+`Upload coverage` 步骤红，错误是
+
+```
+Error: write EPROTO ...: ssl3_read_bytes: ssl/tls alert handshake failure
+```
+
+同一个 job 里 `Run tests` 与 `Coverage gate (fail-under 40%)` 都通过，
+macOS / Windows / e2e 也全绿 —— 整条流水线只因为「把报告传到第三方」
+而变红。
+
+**`fail_ci_if_error: false` 挡不住**：那是 codecov 解析/上传失败时的开关，
+而 TLS 握手失败是 action 内部的 JS 硬错误，绕过了该开关。
+真正能兜住的是 `continue-on-error: true`。
+
+改动的安全性依据：覆盖率真正的门禁是**上一行**的
+`cargo llvm-cov --fail-under-lines 40`，它在上传之前就已给出结论。
+上传只是把报告送到 codecov 做可视化。让一个纯上报动作拥有否决整条
+流水线的权力，等于把第三方服务的可用性混进了代码质量的判定里。
+
 
 ### §5.3 各闸门的反向验证
 
