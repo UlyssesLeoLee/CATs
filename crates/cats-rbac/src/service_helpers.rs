@@ -104,6 +104,24 @@ pub fn parse_role(s: &str) -> Option<Role> {
 /// 校验 `allowed_roles` 中是否有任一角色满足 (resource, action)
 ///
 /// 调用方传"允许的角色列表", helper 顺序检查每个角色是否有权, 任一通过即 Ok.
+///
+/// ## 错误优先级 (2026-10-05 修)
+///
+/// 循环里只保留**最后一个**错误, 于是拒绝时的状态码取决于角色在
+/// `X-Cats-Roles` 里的**顺序**:
+///
+/// | 角色集合 | 逐个判定 | 留下的错误 | HTTP |
+/// |---|---|---|---|
+/// | `User,Guest` | User→Forbidden, Guest→Unauthenticated | Unauthenticated | **401** |
+/// | `Guest,User` | Guest→Unauthenticated, User→Forbidden | Forbidden | **403** |
+///
+/// 同一组角色、仅顺序不同就给出不同状态码。而 401 意味着"未登录", 对一个
+/// 其实已登录、只是权限不够的调用方是**误导性的** —— 会把人引去查认证链
+/// 而不是权限矩阵。
+///
+/// 现在改为：**只要有任一角色被判 `Forbidden`, 就一律按 403 处理**。
+/// `Forbidden` 表示"身份已确认但权限不足", 比 `Unauthenticated` 更具体,
+/// 应当优先。纯粹全 Guest 的调用方仍然拿 401（那确实是未登录）。
 pub async fn require_roles(
     checker: &RbacChecker,
     allowed_roles: &[Role],
@@ -111,10 +129,16 @@ pub async fn require_roles(
     action: Action,
 ) -> Result<(), CatsError> {
     let mut last_err: Option<RbacError> = None;
+    let mut saw_forbidden = false;
     for role in allowed_roles {
         match checker.check_roles(&[*role], resource, action).await {
             Ok(()) => return Ok(()),
-            Err(e) => last_err = Some(e),
+            Err(e) => {
+                if matches!(e, RbacError::Forbidden { .. }) {
+                    saw_forbidden = true;
+                }
+                last_err = Some(e);
+            }
         }
     }
     let actual = allowed_roles.first().copied().unwrap_or(Role::Guest);
@@ -124,18 +148,32 @@ pub async fn require_roles(
         Action::Audit => Role::DatabaseLead,
         _ => Role::User,
     };
-    // 取 last_err 的具体 reason (Forbidden / Unauthenticated / ...), 保持 RbacError 语义
-    Err(match last_err {
-        Some(RbacError::Forbidden { required_role: _, actual_role: _ }) => CatsError::business(
+    let denied = || {
+        CatsError::business(
             ErrorCode::OperationNotPermitted,
             format!(
                 "operation_not_permitted: required_role={required:?} actual_role={actual:?} resource={resource:?} action={action:?}"
             ),
-        ),
-        Some(RbacError::Unauthenticated) | Some(RbacError::InvalidCredentials)
-        | Some(RbacError::UserInactive) => {
+        )
+    };
+    // 取 last_err 的具体 reason (Forbidden / Unauthenticated / ...), 保持 RbacError 语义
+    Err(match last_err {
+        Some(RbacError::Forbidden {
+            required_role: _,
+            actual_role: _,
+        }) => denied(),
+        // `saw_forbidden` 守卫是这个修复的全部: 出现过 Forbidden 就走 403,
+        // 不管它是不是最后一个错误。
+        Some(RbacError::Unauthenticated)
+        | Some(RbacError::InvalidCredentials)
+        | Some(RbacError::UserInactive)
+            if !saw_forbidden =>
+        {
             CatsError::business(ErrorCode::Unauthorized, "unauthenticated")
         }
+        Some(RbacError::Unauthenticated)
+        | Some(RbacError::InvalidCredentials)
+        | Some(RbacError::UserInactive) => denied(),
         Some(RbacError::NotFound(_)) => CatsError::not_found(ErrorCode::ResourceNotFound, "rbac"),
         None => CatsError::business(
             ErrorCode::OperationNotPermitted,
@@ -176,6 +214,53 @@ mod tests {
     async fn require_roles_empty_allowed_returns_403() {
         let checker = RbacChecker::new();
         let res = require_roles(&checker, &[], Resource::Project, Action::Read).await;
-        assert!(res.is_err());
+        // 2026-10-05：这个用例名字里写着 403，却只断言了 `is_err()` ——
+        // 名字表达的意图没有被验证。补上真正的断言。
+        assert_eq!(
+            res.unwrap_err().code(),
+            ErrorCode::OperationNotPermitted,
+            "空角色集合应判 403 operation_not_permitted"
+        );
+    }
+
+    /// 2026-10-05：拒绝时的状态码不应依赖角色在集合里的**顺序**。
+    #[tokio::test]
+    async fn require_roles_denied_status_is_order_independent() {
+        let checker = RbacChecker::new();
+        // User 对 Audit/Read 不够格（Forbidden），Guest 单独判是 Unauthenticated。
+        let user_then_guest = require_roles(
+            &checker,
+            &[Role::User, Role::Guest],
+            Resource::Audit,
+            Action::Read,
+        )
+        .await;
+        let guest_then_user = require_roles(
+            &checker,
+            &[Role::Guest, Role::User],
+            Resource::Audit,
+            Action::Read,
+        )
+        .await;
+        let code_a = user_then_guest.unwrap_err().code();
+        let code_b = guest_then_user.unwrap_err().code();
+        assert_eq!(
+            code_a,
+            ErrorCode::OperationNotPermitted,
+            "[User, Guest] 应判 403（已登录但权限不足）"
+        );
+        assert_eq!(code_b, code_a, "同一组角色仅顺序不同，状态码必须相同");
+    }
+
+    /// 纯 Guest 仍然拿 401 —— 那确实是未登录，不该被 403 吞掉。
+    #[tokio::test]
+    async fn require_roles_pure_guest_stays_401() {
+        let checker = RbacChecker::new();
+        let res = require_roles(&checker, &[Role::Guest], Resource::Audit, Action::Read).await;
+        assert_eq!(
+            res.unwrap_err().code(),
+            ErrorCode::Unauthorized,
+            "只有一个 Guest 时没有任何角色被判 Forbidden，应保留 401 未登录语义"
+        );
     }
 }

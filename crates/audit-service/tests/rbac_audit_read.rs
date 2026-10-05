@@ -21,7 +21,7 @@
 //! | 有 user_id 无 roles | 401 `unauthorized` | 同上 |
 //! | User 读审计 | 403 `operation_not_permitted` | 矩阵：User 的 Read 不含 Audit |
 //! | Guest 读审计 | **401** `unauthenticated` | `Role::Guest` 定义即「未登录」，单独判定时短路（lib.rs:404）|
-//! | `User,Guest` → 401 / `Guest,User` → 403 | 同组角色**仅顺序不同** | 已知瑕疵：`require_roles` 只保留最后一个错误 |
+//! | `User,Guest` 与 `Guest,User` | **都是 403** | 2026-10-05 修 `require_roles` 后不再依赖顺序（此前分别是 401 / 403）|
 //! | `Guest,DatabaseLead` | **放行** | Guest 不是集合级否决；DatabaseLead 单独够格即 `return Ok` |
 //! | DatabaseLead 读审计 | **放行**，落到 DB 层 | 矩阵：DatabaseLead 对 Audit/Report 有 Read/Audit/Approve |
 //! | 无凭据 POST `/test` | 401 | 2026-10-05 补的鉴权，此前该端点**零校验** |
@@ -281,28 +281,18 @@ async fn list_as_guest_is_401_unauthenticated() {
     assert_eq!(body["error"], "unauthorized");
 }
 
-/// `User,Guest` → 401（两个角色单独都不够格，且**最后一个**错误来自 Guest）
+/// `User,Guest` → 403
 ///
-/// ## 这里的 401 是个「顺序产物」，不是设计意图
+/// ## 这条断言改过两次，是有原因的
 ///
-/// `require_roles`（cats-rbac/src/service_helpers.rs:104）把角色集合
-/// **拆开、逐个单独判定**：
+/// 初版断言 403，实测 401 —— 因为 `require_roles` 当时只保留**最后一次**迭代
+/// 的错误，而 Guest 排在最后，留下的是 `Unauthenticated`。
 ///
-/// ```text
-/// for role in allowed_roles {
-///     match checker.check_roles(&[*role], resource, action).await { ... }
-/// }
-/// ```
-///
-/// 对 `User,Guest`：
-///   1. `check_roles(&[User])` → Forbidden   （User 的 Read 不含 Audit）
-///   2. `check_roles(&[Guest])` → Unauthenticated（Guest = 未登录）
-///   3. 两个都不过 → 取**最后一个**错误 = Unauthenticated → 401
-///
-/// 只要把顺序反过来（`Guest,User`），最后留下的错误就变成 Forbidden → **403**。
-/// 下面紧跟一条用例把这个顺序敏感性钉住。
+/// 2026-10-05 修了 `require_roles`：只要有任一角色被判 `Forbidden` 就一律按
+/// 403 处理，状态码不再依赖 `X-Cats-Roles` 的顺序。现在它与下一条
+/// `Guest,User` **返回值相同**，这正是修复的目的。
 #[actix_web::test]
-async fn list_as_user_plus_guest_is_401() {
+async fn list_as_user_plus_guest_is_403() {
     let (state, pool) = fixtures();
     let app = test::init_service(
         App::new()
@@ -318,22 +308,20 @@ async fn list_as_user_plus_guest_is_401() {
         .insert_header(("X-Cats-Roles", "User,Guest"))
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 401);
+    assert_eq!(
+        resp.status(),
+        403,
+        "已登录但权限不足应一律 403 —— 与 Guest,User 顺序对调后结果相同"
+    );
 }
 
-/// 同一组角色、换个顺序 → **403** 而不是 401
+/// 同一组角色、换个顺序 → **同样**是 403（与上一条构成对照）
 ///
-/// 与上一条构成对照，证明状态码取决于 `X-Cats-Roles` 里的**顺序**：
-/// `require_roles` 只保留最后一次迭代的错误。
+/// 2026-10-05 之前：这里是 403、上一条是 401，同一组角色仅顺序不同。
+/// `require_roles` 已修（Forbidden 优先于 Unauthenticated），本文件两条断言
+/// 现在必须给出**相同**结果 —— 这条就是那个不变量的守卫。
 ///
-/// 这是一个**已知的实现瑕疵**，不是设计意图。两个后果：
-///   - 同一个用户、同样的权限，HTTP 状态码可能随 header 顺序变化；
-///   - 401（未登录）对一个其实已登录的调用方是误导性的，会把人引去查
-///     认证链而不是权限矩阵。
-///
-/// 本用例是**特征化测试**：它记录当前行为，让漂移可见。若将来有人修
-/// `require_roles`（例如「Forbidden 优先于 Unauthenticated」），这条会红，
-/// 那时应当**连同注释一起**改掉，而不是让测试自动跟着变。
+/// 若它哪天变回 401，说明「Forbidden 优先」的修复被回退了。
 #[actix_web::test]
 async fn list_as_guest_plus_user_is_403_same_roles_reversed_order() {
     let (state, pool) = fixtures();
@@ -354,8 +342,7 @@ async fn list_as_guest_plus_user_is_403_same_roles_reversed_order() {
     assert_eq!(
         resp.status(),
         403,
-        "Guest,User 与 User,Guest 是一组相同的角色，只是顺序不同；\
-         本用例记录 require_roles 只保留最后一个错误导致的状态码差异"
+        "Guest,User 与 User,Guest 是一组相同的角色 —— 顺序不应影响状态码"
     );
 }
 
