@@ -303,7 +303,9 @@ ORPHAN_BASELINE = {
     # 剩余 4 项仍未接入 —— routes.rs / grpc_clients.rs 是另两步，
     # upstream/{auth,projects,tasks}.rs 一直被 upstream/mod.rs 声明着，
     # 它们留在基线里是 lint 自身的历史遗留（见 BACKEND_STATUS_v0.4 §4.1c）。
-    "cats-bff": ["grpc_clients.rs", "routes.rs"],
+    # 2026-10-05: cats-bff 三步全部接完，孤儿清零。
+    #   1) upstream_passthrough.rs  2) grpc_clients.rs  3) routes.rs
+
     # 2026-10-05 移除 cats-mock 整项（原 12 个文件 / 2899 行）。
     #
     # 那一条**全是 reachable_rs 的 bug 造出来的假账**，不是真孤儿：

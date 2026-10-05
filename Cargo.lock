@@ -613,6 +613,7 @@ dependencies = [
  "anyhow",
  "cats-common",
  "cats-mock",
+ "cats-proto",
  "cats-rbac",
  "chrono",
  "jsonwebtoken",
@@ -621,6 +622,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tonic 0.13.1",
  "tracing",
 ]
 

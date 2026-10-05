@@ -11,6 +11,7 @@
 //!   TASK_SERVICE_URL    默认 `http://localhost:8084`
 //!   TRANSLATION_CORE_URL 默认 `http://localhost:8086`
 //!   UPSTREAM_TIMEOUT_SECS 默认 `5`
+//!   TRANSLATION_CORE_GRPC 默认 `http://127.0.0.1:50051`（gRPC，非 REST）
 
 use std::env;
 
@@ -31,6 +32,10 @@ pub struct Config {
     pub translation_core_url: String,
     /// 上游调用 timeout (秒)
     pub upstream_timeout_secs: u64,
+    /// translation-core 的 **gRPC** URL（`grpc_clients` 用）。
+    ///
+    /// 注意与上面的 `translation_core_url` 是两回事：后者是 REST 基址。
+    pub translation_core_grpc: String,
 }
 
 impl Config {
@@ -52,6 +57,10 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5),
+            // per 守门 #11 缺标比错标：缺标用默认值，不打 fail-fast。
+            // 50051 是 compose 里 translation-core 映射出来的宿主 gRPC 端口。
+            translation_core_grpc: env::var("TRANSLATION_CORE_GRPC")
+                .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string()),
         }
     }
 
@@ -66,6 +75,14 @@ impl Config {
         Self {
             auth_service_url,
             project_service_url,
+            ..Self::from_env()
+        }
+    }
+
+    /// 测试专用构造：只覆盖 gRPC URL。
+    pub fn for_test_grpc(translation_core_grpc: String) -> Self {
+        Self {
+            translation_core_grpc,
             ..Self::from_env()
         }
     }

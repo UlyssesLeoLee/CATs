@@ -7,6 +7,21 @@
 //! 是同一套未接入的平行设计。接入前需先做适配改造，详见
 //! `upstream_passthrough.rs` 头部的说明。
 //!
+//! ## 2026-10-05 已接入编译（第 2 步 / 共 3 步）
+//!
+//! 原文写着"未接入状态（不参与编译）"，本步已处理完三处卡点：
+//!
+//! 1. `BffError::Upstream` 变体不存在 → 改用 `DependencyUnavailable`
+//!    （同样 502；语义也更准：这是"建 channel 失败"，不是"上游返回了坏状态"）
+//! 2. manifest 里没有 `tonic` / `cats-proto` → 已补（workspace 里都已有）
+//! 3. **`MatchTMRequest` 这个类型名是错的** —— proto 里确实叫 `MatchTMRequest`，
+//!    但 prost 按 Rust 命名规范把它规范化成了 **`MatchTmRequest`**。
+//!    照 `.proto` 里的名字写必然编译不过（与当初接线 translation-core 时
+//!    踩的 `TMMatchItem`→`TmMatchItem` 是同一个坑）。
+//!
+//! 另外 `Config` 补了 `translation_core_grpc` 字段，`BffError` 补了
+//! `From<tonic::transport::Error>`。第 3 步（`routes.rs`）尚未接入。
+//!
 //! proto 定义见 `proto/cats/v1/translation_core.proto`：
 //! ```proto
 //! service TranslationCoreService {
@@ -25,8 +40,7 @@
 use crate::config::Config;
 use crate::error::BffError;
 use cats_proto::cats::v1::{
-    translation_core_service_client::TranslationCoreServiceClient,
-    MatchTMRequest,
+    translation_core_service_client::TranslationCoreServiceClient, MatchTmRequest,
 };
 use serde::Serialize;
 use tonic::transport::Channel;
@@ -46,7 +60,7 @@ impl TranslationClient {
             "connecting to translation-core gRPC"
         );
         let channel = Channel::from_shared(cfg.translation_core_grpc.clone())
-            .map_err(|e| BffError::Upstream(format!("grpc url invalid: {e}")))?
+            .map_err(|e| BffError::DependencyUnavailable(format!("grpc url invalid: {e}")))?
             .connect()
             .await?;
         Ok(Self {
@@ -65,7 +79,7 @@ impl TranslationClient {
     ///
     /// 内部把 HTTP JSON 体映射成 proto `MatchTMRequest`，调 gRPC，再把响应投影成
     /// BFF 端点所需的 JSON 结构。
-    pub async fn match_tm(&self, req: MatchTMRequest) -> Result<TmLookupResponse, BffError> {
+    pub async fn match_tm(&self, req: MatchTmRequest) -> Result<TmLookupResponse, BffError> {
         let mut client = self.inner.clone();
         let resp = client.match_tm(req).await?.into_inner();
         let matches = resp

@@ -211,6 +211,44 @@ impl From<reqwest::Error> for BffError {
     }
 }
 
+/// `tonic::Status`（一次 RPC 返回的 gRPC 错误）→ 逐 code 映射
+///
+/// 2026-10-05 接线 `grpc_clients` 时补的：`client.match_tm(req).await?`
+/// 返回的是 `tonic::Status`，没有这个 impl 编不过。
+///
+/// **为什么不图省事全部映射成 `DependencyUnavailable`**：那会把上游的
+/// `UNAUTHENTICATED` / `PERMISSION_DENIED` / `NOT_FOUND` 一律谎报成 502。
+/// 调用方（以及看日志的人）会以为"依赖挂了"，而实际是"这个请求不该被允许"。
+/// 所以按下表逐个转，语义与 HTTP 侧一一对应。
+impl From<tonic::Status> for BffError {
+    fn from(status: tonic::Status) -> Self {
+        let msg = status.message().to_string();
+        match status.code() {
+            tonic::Code::Unauthenticated => BffError::Unauthorized("upstream unauthenticated"),
+            tonic::Code::PermissionDenied => BffError::Forbidden(format!("upstream denied: {msg}")),
+            tonic::Code::NotFound => BffError::NotFound(format!("upstream not found: {msg}")),
+            tonic::Code::AlreadyExists => BffError::Conflict(format!("upstream conflict: {msg}")),
+            tonic::Code::InvalidArgument | tonic::Code::FailedPrecondition => {
+                BffError::InvalidRequest(format!("upstream rejected: {msg}"))
+            }
+            // DeadlineExceeded / Unavailable / 其余：依赖侧问题
+            other => BffError::DependencyUnavailable(format!("upstream grpc {other:?}: {msg}")),
+        }
+    }
+}
+
+/// `tonic` 传输层错误 → `DependencyUnavailable`（502）
+///
+/// 2026-10-05 接线 `grpc_clients` 时补的：那里 `Channel::connect().await?`
+/// 用 `?` 直接传播，没有这个 impl 就编不过。
+///
+/// 语义与上面的 `From<reqwest::Error>` 对齐：连不上 = 依赖不可用。
+impl From<tonic::transport::Error> for BffError {
+    fn from(err: tonic::transport::Error) -> Self {
+        BffError::DependencyUnavailable(err.to_string())
+    }
+}
+
 impl From<serde_json::Error> for BffError {
     fn from(err: serde_json::Error) -> Self {
         BffError::InvalidRequest(format!("invalid json: {err}"))
