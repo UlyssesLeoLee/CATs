@@ -150,15 +150,20 @@ rustc 根本没看这个文件。
 **这一切只有真正去编译才会暴露。** 从「接线」到「编译通过」中间是
 9 → 1 → 0 的三轮，每一轮都是新信息。
 
-#### 剩余（6 crate / 558 行，2026-10-05 更正）
+#### 剩余（5 crate / 255 行，2026-10-05 cats-bff 全部接完后）
 
-**这一节的数字在本轮被推翻过一次，见 §4.1c。** 此前记的是「7 crate / 3963 行」，
-其中 `cats-mock` 整项（2899 行）是 lint 的可达性 bug 造出来的**假账**。
+**这个数字在本轮被推翻过两次**，见 §4.1c（lint 假账）与 §4.1d（cats-bff 接线）。
 
 | crate | 行数 | 状态 |
 |---|---|---|
-| cats-bff | 303 | `routes.rs`(178) + `grpc_clients.rs`(125) —— 同一条**平行设计**的另两个文件，见 §4.1c |
-| 其余 5 个 | 255 | 各自的 `state.rs` 等，**但情况各不相同，见下** |
+| file-service | 2 文件 | `state.rs` + `storage.rs` |
+| notification-service | 2 文件 | `consumer.rs` + `state.rs` |
+| project / report / task-service | 各 1 文件 | 各自的 `state.rs` |
+
+剩下的 5 个 crate 共 255 行，**是 9 个 `state.rs` 里还没接的那几个**。
+`audit-service` 那种"四个文件互相引用、缺一不可"的情况已经没有了 ——
+剩下的要么是没人引用的类型（接上去只会产生 `dead_code`），要么需要先决定
+哪个 `AppState` 是权威（`task-service` 的 `handlers.rs` 自己又定义了一个）。
 
 ##### 6 个 `state.rs` 的三种不同情况（2026-10-05 逐 crate 核对）
 
@@ -371,6 +376,35 @@ cp = os.path.join(src_dir, *cand.split("/"))   # ← 恒定相对 src_dir
 写的，编译器管不到的那类语义错误（字段含义变了没、RPC 语义对不对）不会在编译
 期暴露。所以第 2/3 步要按 `upstream_passthrough` → `routes` → `grpc_clients`
 的顺序做，每步单独验证。
+
+### §4.1e cats-bff 全部接完，orphan 清零
+
+**步骤顺序被调整过**：原计划 `upstream_passthrough` → `routes` →
+`grpc_clients`，但 `routes.rs` 里有
+`use crate::grpc_clients::{TmCommitAck, TmLookupResponse, TranslationClient}`
+—— 它硬依赖后者，只能改成 `upstream_passthrough` → `grpc_clients` → `routes`。
+
+第 2、3 步又翻出 4 个问题，**其中三个是"两条平行设计各写各的"才暴露的**：
+
+| 问题 | 谁能发现它 |
+|---|---|
+| `UpstreamClient` 的 import 路径指向 `upstream/` | 编译器 |
+| `proxy_status` 收 actix 的 `StatusCode`，而 `UpstreamClient` 返回 reqwest 的 | 编译器 |
+| proto3 枚举字段是 `i32` 不是 `LanguageCode` | 编译器 |
+| `MatchTMRequest` → prost 规范化后的 `MatchTmRequest` | 编译器 |
+
+也就是说，**这 809 行里凡是编译器能抓的都抓到了；抓不到的（RPC 语义、
+字段含义是否还对得上）仍然没有验证**，因为那需要真的跑一次
+translation-core。
+
+一个值得单独记的取舍：`From<tonic::Status>` 我**没有**图省事全部映射成
+`DependencyUnavailable`（502）。那样会把上游的 `UNAUTHENTICATED` /
+`PERMISSION_DENIED` / `NOT_FOUND` 一律谎报成 502 —— 调用方会以为"依赖挂了"，
+而实际是"这个请求不该被允许"。现在逐 code 映射到 401/403/404/409/400/502。
+
+**结果**：`ORPHAN_BASELINE` 里 `cats-bff` 整项移除。孤儿存量
+**6 crate / 558 行 → 5 crate / 255 行**，剩下的全是各 service 孤立的
+`state.rs`（`audit-service` 那种"四个文件互相引用、缺一不可"的情况已经没有了）。
 
 
 
