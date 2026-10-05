@@ -106,11 +106,39 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo build --workspace --release --target ${{ matrix.target }} --locked
 
+      - name: Stage release binaries
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          set -euo pipefail
+          src="target/${{ matrix.target }}/release"
+          mkdir -p dist
+          # 只取可执行文件：release/ 根目录下的 .d 文件以及
+          # deps/ build/ incremental/ 子目录自然被排除（-type f + -perm -u+x）。
+          #
+          # 2026-10-05 修正。原来是 `path: target/.../release/cats-*`，而
+          # 17 个 service 里**只有 cats-bff 一个**叫 cats-*。其余 16 个
+          # （auth-service / user-service / project-service / task-service / file-service /
+          #   notification-service / report-service / audit-service / worker-service /
+          #   translation-core / ingestion-service / asr-service / ocr-service /
+          #   subtitle-service / office-converter-service / render-writer-service）
+          # 一个都不匹配。
+          # `if-no-files-found: error` 因为那 1 个确实存在而**没有触发**——
+          # 绿灯、无错误、artifact 里却只有 1 个二进制。
+          # 全仓库没有 `download-artifact`，所以这个缺陷一直没被发现。
+          find "$src" -maxdepth 1 -type f -perm -u+x -exec cp {} dist/ \;
+          n=$(find dist -maxdepth 1 -type f | wc -l)
+          echo "staged $n binaries:"
+          ls -1 dist
+          if [ "$n" -lt 5 ]; then
+            echo "::error::release binaries look wrong: got $n, expected the whole workspace's service set"
+            exit 1
+          fi
+
       - name: Upload binaries
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: target/${{ matrix.target }}/release/cats-*
+          path: dist
           retention-days: 7
           if-no-files-found: error

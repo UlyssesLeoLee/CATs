@@ -41,14 +41,33 @@ COPY proto ./proto
 # 复制所有 crate 源码（注意：tonic-build 在 cats-proto/build.rs 中调用）
 COPY crates ./crates
 
-# 构建：仅目标 crate（避免链接整个 workspace）
-# 注：tonic-build 需要所有 crate 可见以解析 crate 间依赖，因此这里 build 整个 workspace
-# 但只把目标 crate 的二进制 COPY 到 runtime
-ARG CRATE_NAME
-ENV CRATE_NAME=${CRATE_NAME}
-
-RUN cargo build --release --bin ${CRATE_NAME} \
-    && strip target/release/${CRATE_NAME}
+# 构建：整个 workspace 编一遍，与 CRATE_NAME 无关
+#
+# 2026-10-05 改版。原来这里是：
+#     ARG CRATE_NAME
+#     ENV CRATE_NAME=${CRATE_NAME}
+#     RUN cargo build --release --bin ${CRATE_NAME} \
+#         && strip target/release/${CRATE_NAME}
+#
+# 那一层的 cache key 里含 CRATE_NAME。而 ci-docker-build 是 17 个
+# service 的 matrix，**每个 service 都有不同的 CRATE_NAME**，因此
+# 17 个 job 的这一层 cache key 互不相同 → **每个都永远 miss**。
+#
+# 实测（run 37306407841，`docker build (ingestion-service)`，34.3 min）：
+#     #26 [linux/amd64 builder 9/9] RUN cargo build --release --bin ingestion-service
+#         144.5s   —— 真的跑了，不是 cache hit
+#     #32 [linux/arm64 builder 9/9] RUN cargo build --release --bin ingestion-service
+#         1425.3s  —— 同一步在 QEMU 模拟下，慢约 10 倍
+# 全 job 34.3 min 里 33.8 min 全在这一步；17 service × 2 平台
+# = 34 次完整 release 编译，缓存一次都命不中。
+#
+# 现在改成：与 CRATE_NAME 无关的一层编整个 workspace —— 17 个 job
+# 共享同一个 cache key，只需真正编一次；「选哪个二进制」
+# 下移成 runtime 阶段一次几乎零成本的 COPY。
+RUN cargo build --release --workspace \
+    && for f in target/release/*; do \
+         if [ -f "$f" ] && [ -x "$f" ]; then strip "$f" || true; fi; \
+       done
 
 # === Stage 2: runtime ===
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
