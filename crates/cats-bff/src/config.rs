@@ -79,13 +79,10 @@ impl Config {
         }
     }
 
-    /// 测试专用构造：只覆盖 gRPC URL。
-    pub fn for_test_grpc(translation_core_grpc: String) -> Self {
-        Self {
-            translation_core_grpc,
-            ..Self::from_env()
-        }
-    }
+    // 2026-10-05 死代码清理：删除 `for_test_grpc`（只覆盖 gRPC URL 的测试构造）。
+    // 全仓零调用 —— `grpc_clients::connect(&Config)` 取的是 `from_env()` 读到的
+    // TRANSLATION_CORE_GRPC；`tests/bff_routes_passthrough.rs` 自带字面量 channel，
+    // 用不到本构造。gRPC 测试真要覆盖 URL 时再按实际需要加回 (勿再加没人用的参数)。
 }
 
 #[cfg(test)]

@@ -36,11 +36,9 @@ impl AiGatewayService {
         self
     }
 
-    /// 设置重试策略
-    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
-        self.retry_policy = policy;
-        self
-    }
+    // 2026-10-05 死代码清理：删除 `with_retry_policy`。
+    // 全仓零调用；生产路径 (`main.rs`) 只走 `AiGatewayService::new(...).with_compliance(...)`，
+    // retry 策略没有任何 env / Config 入口，恒为 `RetryPolicy::default()`。
 
     /// 引用 router
     pub fn router(&self) -> &Router {
@@ -177,9 +175,13 @@ mod tests {
     #[tokio::test]
     async fn quota_exceeded_short_circuits_before_provider_call() {
         // 用极小配额 (1 token), 即便 prompt 估算也超限
+        // 走 `service_for_test` 注入单 provider + 配额 (Cloud = `new()` 的默认值)
         let small_quota = QuotaTracker::with_limit(1);
-        let router = Router::new(vec![crate::provider::openai()]);
-        let svc = AiGatewayService::new(router, small_quota);
+        let svc = service_for_test(
+            vec![crate::provider::openai()],
+            small_quota,
+            ComplianceMode::Cloud,
+        );
         let req = ChatRequest {
             model: "gpt-4o-mini".into(),
             messages: vec![ChatMessage {

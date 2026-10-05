@@ -3,6 +3,9 @@
 //! 引用: 设计书 §4.4.2
 //!
 //! ErrorBody 字段对齐 auth-service::models::ErrorBody
+//!
+//! 已清理: `ResponseBuilder::err_with_msg()` — 全仓零调用; routes.rs 只用 `err(MockError)`,
+//! 没有手搓自定义 message 的响应需要它去收敛
 
 use actix_web::HttpResponse;
 use serde::{Deserialize, Serialize};
@@ -126,11 +129,6 @@ impl ResponseBuilder {
     /// 错误响应 (用 MockError)
     pub fn err(e: MockError) -> HttpResponse {
         e.to_body().to_response(e.status())
-    }
-
-    /// 错误响应 + 自定义 message
-    pub fn err_with_msg(e: MockError, msg: impl Into<String>) -> HttpResponse {
-        ErrorBody::new(e.code(), msg).to_response(e.status())
     }
 }
 

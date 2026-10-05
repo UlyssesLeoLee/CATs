@@ -178,11 +178,16 @@ impl EventBus {
     /// 测试/调试用: 列出当前所有 task 的视图
     #[cfg(any(test, debug_assertions))]
     pub fn snapshot(&self) -> Vec<TaskView> {
-        let last = self
-            .last_state
-            .lock()
-            .expect("EventBus last_state mutex poisoned");
-        last.keys().map(|id| self.view(*id)).collect()
+        // 先取 id 再放锁: `view()` 会再取一次 `last_state`, 而 `Mutex` 不可重入,
+        // 持锁调用 `view()` 必然自死锁 (per 2026-10-05 接线时实测)。
+        let ids: Vec<Uuid> = {
+            let last = self
+                .last_state
+                .lock()
+                .expect("EventBus last_state mutex poisoned");
+            last.keys().copied().collect()
+        };
+        ids.into_iter().map(|id| self.view(id)).collect()
     }
 }
 
@@ -234,6 +239,11 @@ mod tests {
             error: None,
         };
         assert!(!bus.publish_stage_progress(task_id, &req)); // 无订阅者 -> false
+
+        // 无订阅者时 last_state 仍应登记该 task (SSE "Last-Event-ID" 重连依赖这份记录)
+        let snap = bus.snapshot();
+        assert_eq!(snap.len(), 1, "只应有本 test 的 task 被登记");
+        assert_eq!(snap[0].task_id, task_id);
 
         // 订阅应能取到最近一次事件 (per SSE 协议 "Last-Event-ID" 重连)
         let sub = bus.subscribe(task_id);

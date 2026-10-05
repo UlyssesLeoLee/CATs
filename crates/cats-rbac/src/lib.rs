@@ -54,16 +54,10 @@ pub enum Role {
     Guest,
 }
 
-impl Role {
-    /// 代签理由 (per 守门 #14 v3 + 8/27 19:39/20:56/21:59/9/8 15:19)
-    pub fn proxy_reason(&self) -> ProxyReason {
-        match self {
-            Role::Sponsor => ProxyReason::NoProxy, // Sponsor Ulysses 本人签
-            Role::User | Role::Guest => ProxyReason::NoProxy, // 业务角色 0 代签
-            _ => ProxyReason::PersonNotAvailable,  // 5 域 Lead 真人到位率 0%
-        }
-    }
-}
+// 2026-10-05 删除 `Role::proxy_reason()`: 全仓 0 调用方 (含 inline 测试)。
+// 代签理由只是 README §代签机制 的设计草图, 对应的 `ProxySignature` 结构体
+// 在代码里根本不存在, 代签实际由 Mavis 在代码外完成, 没有消费方。
+// `ProxyReason` 枚举保留 (pub API + 文档引用)。
 
 /// 代签理由
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,16 +138,10 @@ pub enum RbacError {
 }
 
 impl RbacError {
-    /// 转换为 ErrorBody.error 枚举 (per 错误码表 v1.0 §3)
-    pub fn to_error_code(&self) -> &'static str {
-        match self {
-            RbacError::Unauthenticated => "missing_authorization",
-            RbacError::InvalidCredentials => "invalid_credentials",
-            RbacError::UserInactive => "user_inactive",
-            RbacError::Forbidden { .. } => "operation_not_permitted",
-            RbacError::NotFound(_) => "resource_not_found",
-        }
-    }
+    // 2026-10-05 删除 `RbacError::to_error_code()`: 全仓 0 调用方。同一张错误码
+    // 表 (v1.0 §3) 已在两处落地 —— `cats-common::ErrorCode` 的序列化映射
+    // (common/src/error.rs) 和各 service crate 自己的 `rbac_error_to_response()`
+    // (硬编码同 5 个字符串), 本函数是第三份重复实现。
 
     /// HTTP 状态码 (per 错误码表 v1.0 §3.3-§3.7 + 接口设计书 v2.0+2 §3.5.2)
     pub fn http_status(&self) -> u16 {

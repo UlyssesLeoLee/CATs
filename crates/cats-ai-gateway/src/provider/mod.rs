@@ -317,18 +317,9 @@ impl CompositeMockProvider {
         }
     }
 
-    /// 自定义 4 provider 注入 (测试用, e.g. 用 failing stub 替换某一 provider)
-    pub fn with_providers(providers: Vec<Arc<dyn AiProvider>>) -> Self {
-        let mut by_model = HashMap::new();
-        for p in &providers {
-            for m in p.supported_models() {
-                by_model.insert((*m).to_string(), p.clone());
-            }
-        }
-        // 第一个 provider 作为 default
-        let default = providers.into_iter().next().expect("at least one provider");
-        Self { by_model, default }
-    }
+    // 2026-10-05 死代码清理：删除 `with_providers`（自定义 provider 列表构造）。
+    // 全仓零调用；自定义 provider 注入已由 `Router::new(vec![...])` 覆盖
+    // （service.rs 配额测试即走该路径），本类型唯一在用的构造是 `default_4()`。
 
     /// 按 model 查 provider
     pub fn find_by_model(&self, model: &str) -> Option<Arc<dyn AiProvider>> {

@@ -110,6 +110,7 @@ impl TaskStatus {
 // =====================================================================
 // 通用工具: 随机时间戳 / 边界值
 // =====================================================================
+// 已清理: weak_passwords() — 全仓零调用, 且本 crate 无密码强度校验器可消费, 一并移除
 
 /// 当前 UTC 时间 (便于在测试中重写 mock)
 pub fn now_utc() -> DateTime<Utc> {
@@ -140,11 +141,6 @@ pub fn invalid_emails() -> &'static [&'static str] {
         "double@@at.com",  // 2 @s
         "triple@@@at.com", // 3 @s
     ]
-}
-
-/// 边界 password (用于密码强度校验)
-pub fn weak_passwords() -> &'static [&'static str] {
-    &["", "123", "password", "short", "         "]
 }
 
 #[cfg(test)]

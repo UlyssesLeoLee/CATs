@@ -36,11 +36,9 @@ impl AuthContext {
         !self.roles.is_empty() && !self.roles.contains(&Role::Guest)
     }
 
-    pub fn principal_id(&self) -> String {
-        self.user_id
-            .map(|u| u.to_string())
-            .unwrap_or_else(|| "anonymous".to_string())
-    }
+    // 2026-10-05 删除 `principal_id()`: 全仓 0 调用方。本 crate 的
+    // `extract_user_roles` 硬编码 `user_id: None` (M1 简化: 不解 user_id,
+    // JWT 解码留 Sprint 2), 该函数唯一可能的返回值就是常量 "anonymous"。
 }
 
 /// 从请求头提取用户角色 (M1 简化模式)

@@ -859,6 +859,118 @@ run `37314826034`（即 `--workspace` 那一版）在本节写下期间始终没
 4. `cache-to` 加 `scope:`，或改结构为「1 个 build job 编 workspace + 18 个 job 只做装配」，让共享 cache key 真正兑现。
 5. arm64 走 QEMU 慢约 10 倍（144.5s vs 1425.3s）—— 根治要原生 arm64 runner 或交叉编译。
 
+### §4.1j 清掉 22 个零引用 `pub` 函数，顺带挖出 2 个真 bug 🆕
+
+§4.1f~§4.1i 清理的是"文件级"孤儿（整个 `.rs` 从未被编译）。这一节是**函数级**：
+文件在编译，`pub` 函数也在编译，但**全仓库零调用方**——既没有生产调用，
+也没有任何测试引用（`#[cfg(test)] mod tests` 里的调用一样算引用）。
+
+#### 扫描器本身先修过两次
+
+前两版有**系统性缺陷**，都会把"目标不存在"误报成"函数是死的"：
+
+1. 调用点正则要求名字前有 `.` 或 `::`，**漏掉裸调用** → `find_by_user_id` 被误报。
+2. 引用统计只扫 `tests/` 目录，**漏掉内联 `#[cfg(test)] mod tests`** → `drain_events` 被误报。
+
+修掉后收敛到 **24 个真·全仓库零引用的 `pub` 函数**；其中 `run_migrations` 与
+`task-service::rbac::principal_id` 在随后两节被单独处理，剩 **22 个**。
+
+#### 处置结果：20 删 + 2 接线，0 抑制
+
+| 处置 | 数量 | 代表 |
+|---|---|---|
+| 删除 | 20 | `cats-mock` 的 `weak_passwords` / `with_password_hash` / `audit_only` / `users_only` / `translation_unit_schema` / `err_with_msg` / `auth_user_only` / `set_ex`；`m1-s0-smoke` 的 `start_mock_server`；`cats-rbac` 的 `proxy_reason` / `to_error_code`；5 份 `principal_id`；`cats-ai-gateway` 的 `with_providers` / `with_retry_policy`；`cats-bff` 的 `for_test_grpc`；`task-service` 的 `task_type_enum` |
+| **接线** | 2 | `cats-ai-gateway::service_for_test` 接进 `quota_exceeded_short_circuits_before_provider_call`；`task-service::events::snapshot` 接进 `publish_stage_progress_then_subscribe_returns_event` |
+
+**全程没有用任何 `#[allow(dead_code)]` 之类的抑制。** 本次 diff 的 74 条新增行里
+经程序逐行检查，抑制注解数为 **0** —— 在这个项目里"用抑制把门禁刷绿但代码仍无人用"
+算缺陷，不算修法。
+
+那 2 个选择接线而非删除，是因为它们本来就在**等一个调用方**：
+`service_for_test` 是 `*_for_test` 辅助函数，内联测试本来就该用却手搓了一遍等价代码；
+`snapshot` 标着 `#[cfg(any(test, debug_assertions))]`，是刻意留的调试设施。
+
+#### 子代理的一处更正值得留着
+
+派工时我基于 `task-service` 的代码断言"`user_id` 恒为 `None`，所以 `principal_id()`
+只可能返回常量 `"anonymous"`"。子代理查证后发现**这只对 5 份中的 1 份成立**：
+`file` / `notification` / `project` / `report` 四个 crate 真的会从
+`cats-role:<uuid>:<roles>` 这种可选形式里解析 `user_id`。5 份函数体确实字节相同
+（SHA256 一致），但"只可能返回常量"是错的。**5 份仍然全部零引用、全部删除**，
+只是每个文件的说明改成了该 crate 自己的真实理由，而不是照抄我那个不成立的断言。
+
+#### 挖出并修掉的 2 个真 bug
+
+**① `MockRedis` 的 TTL 完全不生效**（`crates/cats-mock/src/infra/redis.rs`）
+
+```rust
+// 修复前
+fn is_expired(ttl: Duration) -> bool {
+    let _now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    // 算了个 _now 又丢掉
+    ttl.is_zero()
+}
+```
+
+`expire(key, 60)` 存进去的是**相对时长** 60s，而判定只看 `is_zero()` ⇒
+**非零 TTL 的 key 永远不会过期**。配套测试 `expire_returns_bool` 只断言 `expire()`
+的返回值、压根不查 key 是否过期，所以一直是绿的。
+
+改为在 `expire()` 时记下**绝对截止时刻**（`Instant::now() + ttl`），
+`is_expired` 判 `Instant::now() >= deadline`。
+
+**② `EventBus::snapshot()` 持锁调 `view()`，必然自死锁**（`task-service/src/events.rs`）
+
+`snapshot()` 持有 `last_state` 锁时调用 `self.view()`，而 `view()` 会**再取一次**
+`last_state`；`std::sync::Mutex` 不可重入 ⇒ 每次调用都死锁。原先因为零调用方而从未触发。
+
+修法：锁内只收集 task id，出块释放锁后再逐个 `view()`。
+
+复核过锁序：`publish_stage_progress`（`last_state` → `sender_for` → `senders`）与
+`view`（`last_state` → `senders`）是**同一顺序**，`sender_for` 单独只锁 `senders`、
+不碰 `last_state`，**没有反序**。所以这次修复是恢复既有纪律，不是引入新顺序。
+
+#### 验证（含一次我自己踩的坑）
+
+```
+cargo fmt --all -- --check                                       exit 0
+cargo clippy (10 个受影响 crate, --all-targets, -D warnings)      exit 0
+cargo test  (同上 10 个 crate)                                    exit 0
+    41 个 test target / 319 passed / 0 failed
+零引用扫描器                                                       0
+```
+
+新增的 3 个 redis 用例做了**变异验证**。这里有两条值得记：
+
+- **第一版测试抓不住这个 bug。** 我最初只测了 TTL=0，复核时才发现旧实现下
+  `Duration::from_secs(0).is_zero()` 恰恰为 true，TTL=0 本来就会过期；
+  真正的 bug 是**非零 TTL 永不过期**。判别性用例是"过去的时刻必须判为过期"
+  和"TTL 走完后 key 读不到"。
+- **第一次变异验证是假阳性。** 我把 `is_expired` 的形参从 `Instant` 改回 `Duration`
+  来复现旧实现，结果**根本编译不过**，cargo 同样返回 101 —— 变异"被杀"了，
+  但没有任何测试真正运行。**编译不过的变异证明不了测试的鉴别力。**
+  改成保持类型不变、只把函数体换成 `false`（语义等价于旧 bug）后：
+
+```
+基线                                       PASS
+M1  is_expired 恒 false（旧 bug 语义）        3/4 新增用例变红
+M2  is_expired 恒 true（反向过度修正）         3/4 新增用例变红（含 M1 抓不到的那条）
+```
+
+两个方向都抓到，说明用例不是在检测"任何改动"。
+
+#### 遗留（本节不处理）
+
+- `crates/cats-mock/.aci.json:195` 仍对外宣称有 `translation_unit_schema`，
+  且**没有任何测试校验 `.aci.json` 的文本与代码一致**。
+- `cats-mock::infra::redis::MockRedis` 之外，`UserFactory.password_hash` 现在恒为 `None`，
+  喂的是一条死分支 `.unwrap_or_else(...)`。
+- `cats-ai-gateway` 的 `retry_policy` **根本没有配置入口**（无 env、无 `Config` 字段、
+  无调用方），但 `chat()` 一直在读它 ⇒ 重试行为不可配置。
+- 零引用扫描器本身还放在临时目录、**未入库**，因此没有成为常设门禁；
+  它的 3 条自检夹具已因本节改动而过期（`run_migrations` 已删、`configure_app` 已接线、
+  `snapshot` 已接线），下次复用前须先更新夹具。
+
 ---
 
 ### §4.4 v0.3 §6 其余各项未变
