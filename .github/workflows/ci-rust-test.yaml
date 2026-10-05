@@ -6,9 +6,10 @@ name: ci-rust-test
 
 on:
   push:
-    branches: [main, dev, 'feature/**']
+    branches: [main, dev, 'feature/**', 'feat/**']
+    # 2026-10-05: 加 feat/**、去掉 pull_request 的 base 过滤 —— 否则本分支
+    # 两头都不匹配，push 不触发任何检查。起因见 BACKEND_STATUS_v0.4 §4.1b。
   pull_request:
-    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
