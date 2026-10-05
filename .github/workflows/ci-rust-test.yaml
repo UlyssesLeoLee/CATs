@@ -107,6 +107,20 @@ jobs:
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4
+        # continue-on-error: 上传是**上报**，不是门禁 —— 真正的门禁是上面那个
+        # `--fail-under-lines 40`，它在上传之前就已经给出结论了。
+        #
+        # 真实事故（run 37278878858，2026-10-05）: 本步骤因 codecov.io 的
+        # TLS 握手失败而红:
+        #   Error: write EPROTO ...: ssl/tls alert handshake failure
+        # 同一个 job 里 `Run tests` 与 `Coverage gate` 都通过了，
+        # macOS / Windows / e2e 三个 job 也全绿 —— 整条流水线只因为
+        # 「把报告传到第三方」而变红。
+        #
+        # 注意 `fail_ci_if_error: false` 挡不住这个: 那是 codecov 解析/上传
+        # 失败时的开关，而 TLS 握手失败是 action 内部的 JS 硬错误，
+        # 绕过了该开关。必须用 `continue-on-error`。
+        continue-on-error: true
         with:
           files: lcov.info
           fail_ci_if_error: false
