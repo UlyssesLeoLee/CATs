@@ -568,6 +568,78 @@ Rust 不会冲突。真正的问题是**概念上的重复定义**，不是编�
 - 本地验证：`cargo fmt --all -- --check` 0 / `cargo clippy --workspace --all-features
   --all-targets -- -D warnings` 0 / `cargo test --workspace --locked` 0 / `lint-compose.py` 0（`FAILCOUNT=0`）
 
+### §4.1g `routes.rs` 终于有了运行时覆盖（不需要 Docker）🆕
+
+§4.1e 记录了 cats-bff 三步接完、孤儿清零，但当时还留着一个尚未解决的问题：
+**`routes.rs` 那 178 行从接进编译到此一直只做过类型检查**。
+
+原因很简单：crate 里唯一跑 HTTP 的集成测试 `bff_smoke.rs` 打的是
+`main.rs` 实际注册的那套 `handlers::*` 路由表（`/v1/*`），**打不到 `/api/v1/*`**。
+
+#### 新增 `crates/cats-bff/tests/bff_routes_passthrough.rs`（13 个用例）
+
+方法：起一个**真的 HTTP 上游**（`HttpServer` 绑 `127.0.0.1:0`，随机端口），
+把 `UpstreamClient` 的两个基址指过去。这样新旧接口才能被真正验证：
+
+| 断言的性质 | 靠什么证据 |
+|---|---|
+| URL 拼装正确 | 假上游**记下**自己收到的 method + path |
+| body 原样透传 | 假上游记下收到的 JSON，逐字段比对 |
+| 上游状态码原样透传 | 让上游回 401 / 503 / 201，断言 BFF **不是** 200/502 |
+| `X-Cats-*` header 注入 | 假上游记下收到的 header 列表 |
+
+与 `bff_smoke.rs` 的 "DEAD_URL + 断言走到哪一层" 策略**互补**：那边验证鉴权层，
+这边验证透传层。**不需要 Docker**——不依赖本机 Docker Desktop 状态。
+
+`translate/lookup` 的 gRPC 也不需要真服务：`source_text` 空值校验发生在调用
+`TranslationClient` 之前，用 `connect_lazy()` 的 channel（不建立连接）就能满足提取器。
+
+#### 验证测试本身有没有鉴别力（两个变异，都变红）
+
+全绿不代表有效。对生产代码做两处故意破坏（实验自带回滚）：
+
+| 变异 | 预期变红的用例 | 实际结果 |
+|---|---|---|
+| `proxy_status` 改成永远返回 200 | `upstream_401_...` / `upstream_503_...` | 变红：`rc=101`，`0 passed; 1 failed` |
+| 去掉 `auth_base` 的 trailing-slash trim | `login_forwards_to_auth_service_v1_login_path` | 变红：`rc=101`，`0 passed; 1 failed` |
+
+两处均已回滚，`git status` 回读确认生产代码完整。
+
+#### 两个技术坑：不要用 actix 的 `test::start`
+
+`actix_web::test::start` 需要 `macros` feature，本 crate 没开。改用 `HttpServer` 手动绑端口，
+带上两个真正需要记下来的坑：
+
+1. `Server` 没有 `addrs()` ——必须在 `.run()` **之前**从 `HttpServer` 上取地址。
+2. **`HttpServer::run()` 返回的是 Future，不 spawn 它就永远不会监听端口**。
+   只 bind 不动，假上游不会 accept，症状是 BFF 侧全部拿到
+   `502 dependency_timeout`——与“上游没起来”完全一样，很容易误判为测试本身有问题。
+   正确做法：`let h = server.handle(); rt::spawn(server);`。
+
+#### 本地验证
+
+```
+cargo fmt --all -- --check                                     RC=0
+cargo clippy --workspace --all-features --all-targets
+    --locked -- -D warnings                                    RC=0
+cargo test --workspace --locked                    EXIT=0  96 targets / 444 passed / 0 failed
+python deploy/scripts/lint-compose.py                          RC=0
+```
+
+新套件单独跑：`cargo test -p cats-bff --test bff_routes_passthrough` → **13 passed / 0 failed**。
+
+#### 环境事实：本机 24 核，`cargo test --workspace` 不能用默认并发数
+
+原本判断是“其它 session 与我共享 target 目录互相抢锁”。
+换了独立 `CARGO_TARGET_DIR` 之后**仍然退出码 -1**——说明那个假设不对。
+
+真因：24 核机器上 cargo 默认 `-j 24`。大 workspace 会在**链接阶段**死掉 ——
+每个 rustc 链接时占 1~2 GB 虚拟内存，而本机 commit limit 仅 58.5 GB，
+已被其它 session 占掉约 36 GB。表现是**编译到链接阶段、零错误输出、
+退出码 1 或 -1**，看起来像编译错误，实际是进程被系统杀了。
+
+**修正：这类大 workspace 命令限定 `-j 4`。** 上面那个 EXIT=0 就是加上 `-j 4` 之后的结果。
+
 ### §4.4 v0.3 §6 其余各项未变
 
 Tauri 客户端、真实 AI provider、Vault secret 注入、translation-core 接真
