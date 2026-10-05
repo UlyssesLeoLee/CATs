@@ -15,7 +15,7 @@ use cats_common::{CatsError, ErrorCode};
 use cats_proto::cats::v1::{
     translation_core_service_server::TranslationCoreService, BatchTranslateRequest,
     BatchTranslateResponse, LanguageCode, MatchTmRequest, MatchTmResponse, RunQaRequest,
-    RunQaResponse, TermItem, TmMatchItem, TranslateSegmentRequest, TranslateSegmentResponse,
+    RunQaResponse, TmMatchItem, TranslateSegmentRequest, TranslateSegmentResponse,
 };
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -183,6 +183,5 @@ fn mock_match_tm(source_text: &str, threshold: f32) -> Vec<TmMatchItem> {
         target_text: format!("[mock TM] {source_text}"),
         similarity: 1.0_f32.max(threshold),
         is_exact: true,
-        ..Default::default()
     }]
 }

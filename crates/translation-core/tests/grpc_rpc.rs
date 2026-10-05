@@ -161,7 +161,6 @@ async fn run_qa_flags_forbidden_term() {
                 source_term: "acme".into(),
                 target_term: "Acme".into(),
                 forbidden: true,
-                ..Default::default()
             }],
         })
         .await

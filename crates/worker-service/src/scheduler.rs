@@ -102,21 +102,29 @@ mod tests {
     use super::*;
 
     /// 不依赖 DB 的覆盖:
-    /// - `BATCH_SIZE` 上限契约 (防雪崩)
+    /// - `BATCH_SIZE` 上限契约 (防雪崩)，下面是**编译期**断言
     /// - 抢占 SQL / 状态回写 SQL 的字面契约 (列名 + 状态字面量 + SKIP LOCKED)
     ///
     /// 说明: `tick` / `dispatch_one` / `mark_qa_blocked` 本身需要活的 PostgreSQL
     /// (sqlx 运行时校验 + 真实行锁语义), **本模块没有 DB 集成测试覆盖**。
     /// 抢占→派发→回写的行为级验证留 e2e-real-pg 阶段。
-
-    #[test]
-    fn batch_size_is_bounded_and_positive() {
-        assert!(BATCH_SIZE > 0, "BATCH_SIZE must be positive");
-        assert!(
-            BATCH_SIZE <= 1000,
-            "BATCH_SIZE must stay bounded, got {BATCH_SIZE}"
-        );
-    }
+    ///
+    /// 2026-10-05：`BATCH_SIZE` 这条原先是
+    /// `#[test] fn batch_size_is_bounded_and_positive` 加两条
+    /// `assert!(BATCH_SIZE ...)`。但 `BATCH_SIZE` 是 `const`，clippy 的
+    /// `assertions_on_constants` 判它 "this assertion has a constant value"，
+    /// 而 CI 跑 `clippy --workspace --all-features --all-targets -- -D warnings`，
+    /// 三条平台全红。
+    ///
+    /// 这里**保留该 lint 但显式 allow**：它的建议是"改成运行时检查"，而在这个
+    /// 场景里那恰恰是反的 —— 契约对象就是一个常量，改坏它时 crate 直接编不过
+    /// 比"等跑测试才发现"强得多。allow 附在此处而不是 crate 级，理由写在这里，
+    /// 免得下次有人以为可以整片关掉。
+    #[allow(clippy::assertions_on_constants)]
+    const _: () = {
+        assert!(BATCH_SIZE > 0);
+        assert!(BATCH_SIZE <= 1000);
+    };
 
     #[test]
     fn claim_sql_uses_skip_locked_to_avoid_double_dispatch() {

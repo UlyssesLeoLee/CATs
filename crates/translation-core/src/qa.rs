@@ -28,7 +28,6 @@ impl QaEngine {
                     start_pos: 0,
                     end_pos: term.target_term.len() as i32,
                     severity: "ERROR".into(),
-                    ..Default::default()
                 });
             }
             if !term.forbidden
@@ -42,7 +41,6 @@ impl QaEngine {
                     start_pos: 0,
                     end_pos: 0,
                     severity: "WARNING".into(),
-                    ..Default::default()
                 });
             }
         }
@@ -64,7 +62,6 @@ impl QaEngine {
                     start_pos: 0,
                     end_pos: 0,
                     severity: "ERROR".into(),
-                    ..Default::default()
                 });
             }
         }
@@ -89,7 +86,6 @@ mod tests {
             source_term: "secret".into(),
             target_term: "秘密".into(),
             forbidden: true,
-            ..Default::default()
         }];
         let v = QaEngine::run("s1", "secret data", "秘密数据", &terms);
         assert_eq!(v.len(), 1);
