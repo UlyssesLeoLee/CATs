@@ -84,33 +84,10 @@ async fn main() -> std::io::Result<()> {
     let cfg_for_log = cfg.clone();
     HttpServer::new(move || {
         let cfg_log = cfg_for_log.clone();
+        let state_for_routes = state_data.clone();
         App::new()
-            .app_data(state_data.clone())
-            .route("/healthz", web::get().to(task_service::handlers::healthz))
-            .route(
-                "/v1/tasks",
-                web::post().to(task_service::handlers::create_task),
-            )
-            .route(
-                "/v1/tasks",
-                web::get().to(task_service::handlers::list_tasks),
-            )
-            .route(
-                "/v1/tasks/{id}",
-                web::get().to(task_service::handlers::get_task),
-            )
-            .route(
-                "/v1/tasks/{id}/status",
-                web::patch().to(task_service::handlers::update_task_status),
-            )
-            .route(
-                "/v1/tasks/{id}/events",
-                web::get().to(task_service::handlers::task_events_sse),
-            )
-            .route(
-                "/internal/v1/tasks/{id}/stage-progress",
-                web::post().to(task_service::handlers::stage_progress),
-            )
+            // 路由表只有这一份——main.rs 与集成测试共用
+            .configure(move |c| task_service::handlers::configure_app(c, state_for_routes.clone()))
             .app_data(web::Data::new(Arc::new(cfg_log)))
     })
     .bind(&cfg.bind_addr)?

@@ -583,12 +583,21 @@ pub async fn stage_progress(
 }
 
 // =====================================================================
-// 测试辅助: 不通过 HTTP, 直接在内存构造一个 App 路由
+// **唯一生成表** —— `main.rs` 与集成测试都从这里接进来
 // =====================================================================
-
-#[cfg(any(test, debug_assertions))]
-pub fn configure_app(cfg: &mut web::ServiceConfig, state: AppState) {
-    cfg.app_data(web::Data::new(state))
+//
+// 2026-10-05。原来这里是 `#[cfg(any(test, debug_assertions))]` 的测试辅助，
+// **从未被调用过**，而 `main.rs` 另外内联注册了一份**完全相同**
+// 的 7 条路由。同一份路由表写两遍意味着：以后写第一个
+// task-service HTTP 测试的人会自然拿起 `configure_app`，然后在一张**已经与生产漂移**
+// 的路由表上测试。
+//
+// 它必须不能再带 `#[cfg]`；`main.rs` 是 release 构建，带了 cfg 就会被刪掉。
+//
+// 参数改为 `web::Data<AppState>`（而不是 `AppState`）：`main.rs` 里状态只构造一次，
+// 闭包每次连接重复消费，`web::Data` 内封 Arc 可以安全 clone。
+pub fn configure_app(cfg: &mut web::ServiceConfig, state: web::Data<AppState>) {
+    cfg.app_data(state)
         .route("/healthz", web::get().to(healthz))
         .route("/v1/tasks", web::post().to(create_task))
         .route("/v1/tasks", web::get().to(list_tasks))

@@ -18,14 +18,6 @@ pub async fn build_pool() -> Result<PgPool, CatsError> {
         .map_err(|e| CatsError::business(ErrorCode::InternalError, format!("connect fail: {e}")))
 }
 
-/// sqlx-migrate 自动跑 (从 crates/audit-service/migrations/*.sql)
-pub async fn run_migrations(pool: &PgPool) -> Result<(), CatsError> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await
-        .map_err(|e| CatsError::business(ErrorCode::InternalError, format!("migrate fail: {e}")))
-}
-
 /// 插入一条 audit log (从 Kafka event 落档)
 ///
 /// 2026-10-05：`ip` 原先绑成 `Option<sqlx::types::ipnetwork::IpNetwork>`，
