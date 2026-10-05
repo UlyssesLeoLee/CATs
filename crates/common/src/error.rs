@@ -108,9 +108,17 @@ impl ErrorCode {
             // 400
             ValidationError | InvalidRequest | InvalidEmail | WeakPassword => 400,
             // 401
-            Unauthorized | MissingAuthorization | InvalidToken | TokenExpired
-            | TokenRevoked | InvalidCredentials | UserInactive | AuthInvalidCredentials
-            | AuthTokenExpired | AuthTokenRevoked | AuthTokenInvalid => 401,
+            Unauthorized
+            | MissingAuthorization
+            | InvalidToken
+            | TokenExpired
+            | TokenRevoked
+            | InvalidCredentials
+            | UserInactive
+            | AuthInvalidCredentials
+            | AuthTokenExpired
+            | AuthTokenRevoked
+            | AuthTokenInvalid => 401,
             // 403
             Forbidden | OperationNotPermitted => 403,
             // 404
@@ -136,17 +144,25 @@ impl ErrorCode {
         // tonic 1.x status codes (per docs.rs/tonic enum StatusCode)
         match self {
             ValidationError | InvalidRequest | InvalidEmail | WeakPassword => 3, // INVALID_ARGUMENT
-            Unauthorized | MissingAuthorization | InvalidToken | TokenExpired
-            | TokenRevoked | InvalidCredentials | UserInactive | AuthInvalidCredentials
-            | AuthTokenExpired | AuthTokenRevoked | AuthTokenInvalid => 16, // UNAUTHENTICATED
+            Unauthorized
+            | MissingAuthorization
+            | InvalidToken
+            | TokenExpired
+            | TokenRevoked
+            | InvalidCredentials
+            | UserInactive
+            | AuthInvalidCredentials
+            | AuthTokenExpired
+            | AuthTokenRevoked
+            | AuthTokenInvalid => 16, // UNAUTHENTICATED
             Forbidden | OperationNotPermitted => 7, // PERMISSION_DENIED
             NotFound | ResourceNotFound | UserNotFound => 5, // NOT_FOUND
             Conflict | EmailConflict | UsernameConflict | ComplianceBlocked => 6, // ALREADY_EXISTS
-            QaBlocked => 9, // FAILED_PRECONDITION
-            RateLimited => 8, // RESOURCE_EXHAUSTED
-            InternalError | ServerError => 13, // INTERNAL
-            UpstreamError => 14, // UNAVAILABLE
-            UpstreamTimeout => 4, // DEADLINE_EXCEEDED
+            QaBlocked => 9,                         // FAILED_PRECONDITION
+            RateLimited => 8,                       // RESOURCE_EXHAUSTED
+            InternalError | ServerError => 13,      // INTERNAL
+            UpstreamError => 14,                    // UNAVAILABLE
+            UpstreamTimeout => 4,                   // DEADLINE_EXCEEDED
         }
     }
 
@@ -252,10 +268,7 @@ pub enum CatsError {
         detail: Option<serde_json::Value>,
     },
     /// 框架/基础设施错误 — 5xx + 原始 source 内部日志
-    Internal {
-        message: String,
-        source: String,
-    },
+    Internal { message: String, source: String },
 }
 
 impl CatsError {
@@ -332,7 +345,11 @@ impl CatsError {
     /// 转 `ErrorBody` (面向客户端)
     pub fn to_error_body(&self) -> ErrorBody {
         match self {
-            Self::Business { code, message, detail } => ErrorBody {
+            Self::Business {
+                code,
+                message,
+                detail,
+            } => ErrorBody {
                 error: code.as_str().to_string(),
                 message: message.clone(),
                 detail: detail.clone(),
@@ -377,7 +394,9 @@ impl From<sqlx::Error> for CatsError {
         if let sqlx::Error::Database(db_err) = &e {
             if let Some(code) = db_err.code() {
                 match code.as_ref() {
-                    "23505" => return Self::conflict(ErrorCode::Conflict, "unique constraint violation"),
+                    "23505" => {
+                        return Self::conflict(ErrorCode::Conflict, "unique constraint violation")
+                    }
                     "23503" => return Self::business(ErrorCode::Conflict, "foreign key violation"),
                     "23514" => return Self::validation("check constraint violation"),
                     _ => {}
@@ -467,8 +486,10 @@ mod tests {
             assert!(s.starts_with('"') && s.ends_with('"'));
             let inner = &s[1..s.len() - 1];
             assert!(!inner.is_empty(), "ErrorCode {code:?} serialized to empty");
-            assert!(inner.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
-                    "ErrorCode {code:?} not snake_case: {inner}");
+            assert!(
+                inner.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "ErrorCode {code:?} not snake_case: {inner}"
+            );
         }
     }
 

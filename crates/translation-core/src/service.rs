@@ -49,7 +49,9 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
         );
         // MVP: 不连 DB, 走 mock 返回
         let mock_items = mock_match_tm(&req.source_text, req.threshold);
-        Ok(Response::new(MatchTmResponse { matches: mock_items }))
+        Ok(Response::new(MatchTmResponse {
+            matches: mock_items,
+        }))
     }
 
     async fn translate_segment(
@@ -142,19 +144,22 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
 fn to_grpc_status(e: CatsError) -> Status {
     let code = e.code();
     let msg = e.to_string();
-    Status::new(match code {
-        ErrorCode::InvalidRequest => tonic::Code::InvalidArgument,
-        ErrorCode::NotFound => tonic::Code::NotFound,
-        ErrorCode::Unauthorized => tonic::Code::Unauthenticated,
-        ErrorCode::Forbidden => tonic::Code::PermissionDenied,
-        ErrorCode::Conflict => tonic::Code::AlreadyExists,
-        ErrorCode::ComplianceBlocked => tonic::Code::FailedPrecondition,
-        ErrorCode::QaBlocked => tonic::Code::FailedPrecondition,
-        ErrorCode::RateLimited => tonic::Code::ResourceExhausted,
-        ErrorCode::UpstreamError => tonic::Code::Unavailable,
-        ErrorCode::UpstreamTimeout => tonic::Code::DeadlineExceeded,
-        _ => tonic::Code::Internal,
-    }, msg)
+    Status::new(
+        match code {
+            ErrorCode::InvalidRequest => tonic::Code::InvalidArgument,
+            ErrorCode::NotFound => tonic::Code::NotFound,
+            ErrorCode::Unauthorized => tonic::Code::Unauthenticated,
+            ErrorCode::Forbidden => tonic::Code::PermissionDenied,
+            ErrorCode::Conflict => tonic::Code::AlreadyExists,
+            ErrorCode::ComplianceBlocked => tonic::Code::FailedPrecondition,
+            ErrorCode::QaBlocked => tonic::Code::FailedPrecondition,
+            ErrorCode::RateLimited => tonic::Code::ResourceExhausted,
+            ErrorCode::UpstreamError => tonic::Code::Unavailable,
+            ErrorCode::UpstreamTimeout => tonic::Code::DeadlineExceeded,
+            _ => tonic::Code::Internal,
+        },
+        msg,
+    )
 }
 
 /// prost 把 proto3 枚举字段生成为 `i32`，而 `TranslateInput` 用的是

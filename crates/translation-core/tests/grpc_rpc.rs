@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use cats_proto::cats::v1::{
     translation_core_service_client::TranslationCoreServiceClient,
-    translation_core_service_server::TranslationCoreServiceServer, LanguageCode,
-    MatchTmRequest, RunQaRequest, TermItem, TranslateSegmentRequest,
+    translation_core_service_server::TranslationCoreServiceServer, LanguageCode, MatchTmRequest,
+    RunQaRequest, TermItem, TranslateSegmentRequest,
 };
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Channel, Server};
@@ -191,7 +191,9 @@ async fn run_qa_flags_broken_placeholder() {
 
     assert!(!resp.passed);
     assert!(
-        resp.violations.iter().any(|v| v.rule_category == "placeholder"),
+        resp.violations
+            .iter()
+            .any(|v| v.rule_category == "placeholder"),
         "应报出占位符类违规，实际: {:?}",
         resp.violations
     );
@@ -212,7 +214,11 @@ async fn run_qa_passes_on_clean_text() {
         .await
         .unwrap()
         .into_inner();
-    assert!(resp.passed, "干净的文本应通过，实际违规: {:?}", resp.violations);
+    assert!(
+        resp.passed,
+        "干净的文本应通过，实际违规: {:?}",
+        resp.violations
+    );
 }
 
 #[tokio::test]
@@ -245,7 +251,10 @@ async fn batch_translate_returns_one_result_per_segment() {
     assert_eq!(resp.results.len(), 3, "3 段应得 3 个结果");
     // MVP 的 batch 实现里 segment_id 被写成了 model_used（源码注释标了 dummy），
     // 这里如实断言现状，不假装它是对的。
-    assert!(resp.results.iter().all(|r| r.segment_id.starts_with("mock:")));
+    assert!(resp
+        .results
+        .iter()
+        .all(|r| r.segment_id.starts_with("mock:")));
     assert_eq!(resp.results[0].target_text, "[ko-KR] A");
     assert_eq!(resp.results[2].target_text, "[ko-KR] C");
 }

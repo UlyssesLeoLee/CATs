@@ -46,8 +46,7 @@ impl Config {
         Self {
             grpc_bind_addr: env::var("GRPC_BIND_ADDR")
                 .unwrap_or_else(|_| DEFAULT_GRPC_BIND.to_string()),
-            http_bind_addr: env::var("BIND_ADDR")
-                .unwrap_or_else(|_| DEFAULT_HTTP_BIND.to_string()),
+            http_bind_addr: env::var("BIND_ADDR").unwrap_or_else(|_| DEFAULT_HTTP_BIND.to_string()),
         }
     }
 }
@@ -86,10 +85,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .name("translation-core-healthz".into())
             .spawn(move || {
                 actix_web::rt::System::new().block_on(async move {
-                    let srv = HttpServer::new(|| {
-                        App::new().route("/healthz", web::get().to(healthz))
-                    })
-                    .bind(&http_bind_addr);
+                    let srv =
+                        HttpServer::new(|| App::new().route("/healthz", web::get().to(healthz)))
+                            .bind(&http_bind_addr);
                     match srv {
                         Ok(s) => {
                             info!(addr = %http_bind_addr, "healthz listening");
@@ -101,7 +99,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
             })
-            .map_err(|e| std::io::Error::other(e.to_string()))?;    }
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+    }
 
     let grpc_addr: SocketAddr = cfg.grpc_bind_addr.parse()?;
     info!(

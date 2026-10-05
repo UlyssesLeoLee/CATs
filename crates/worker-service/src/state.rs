@@ -17,8 +17,9 @@ impl AppState {
         Self {
             pool,
             checker: Arc::new(RbacChecker::new()),
-            translation_core_url: std::env::var("TRANSLATION_CORE_URL")
-                .unwrap_or_else(|_| "http://translation-core.cats-core.svc.cluster.local:50051".to_string()),
+            translation_core_url: std::env::var("TRANSLATION_CORE_URL").unwrap_or_else(|_| {
+                "http://translation-core.cats-core.svc.cluster.local:50051".to_string()
+            }),
         }
     }
 }

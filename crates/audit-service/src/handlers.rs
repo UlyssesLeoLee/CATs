@@ -55,7 +55,10 @@ pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
         service: &'static str,
         db: &'static str,
     }
-    let db_ok = sqlx::query(r#"SELECT 1"#).execute(pool.get_ref()).await.is_ok();
+    let db_ok = sqlx::query(r#"SELECT 1"#)
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
     HttpResponse::Ok().json(ReadyResponse {
         status: if db_ok { "ready" } else { "not_ready" },
         service: "audit-service",
@@ -99,9 +102,7 @@ pub async fn list_audit_logs(
         Ok(v) => v,
         Err(e) => return cats_error_to_response(&e),
     };
-    if let Err(e) =
-        require_roles(&state.checker, &roles, Resource::Audit, Action::Read).await
-    {
+    if let Err(e) = require_roles(&state.checker, &roles, Resource::Audit, Action::Read).await {
         return cats_error_to_response(&e);
     }
     tracing::info!(user_id = %user_id, org_id = %q.org_id, "list audit logs");
@@ -141,9 +142,7 @@ pub async fn test_ingest(
         Ok(v) => v,
         Err(e) => return cats_error_to_response(&e),
     };
-    if let Err(e) =
-        require_roles(&state.checker, &roles, Resource::Audit, Action::Audit).await
-    {
+    if let Err(e) = require_roles(&state.checker, &roles, Resource::Audit, Action::Audit).await {
         return cats_error_to_response(&e);
     }
     let ev = KafkaAuditEvent {

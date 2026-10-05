@@ -62,10 +62,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(pool_data.clone())
             .route("/healthz", web::get().to(handlers::healthz))
             .route("/readyz", web::get().to(handlers::readyz))
-            .route(
-                "/v1/worker/tick",
-                web::post().to(handlers::manual_tick),
-            )
+            .route("/v1/worker/tick", web::post().to(handlers::manual_tick))
     })
     .bind(&bind_addr)?
     .run()

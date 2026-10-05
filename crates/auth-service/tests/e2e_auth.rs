@@ -320,13 +320,13 @@ async fn e2e_me_missing_token_returns_401() {
     let resp = actix_test::call_service(&app, req).await;
     let status = resp.status().as_u16();
     let body_bytes = actix_test::read_body(resp).await;
-    eprintln!("[e2e diag] missing-token status={status} body={}", String::from_utf8_lossy(&body_bytes));
-    assert_eq!(
-        status,
-        401,
-        "me without Authorization header should be 401"
+    eprintln!(
+        "[e2e diag] missing-token status={status} body={}",
+        String::from_utf8_lossy(&body_bytes)
     );
-    let body: ErrorBody = serde_json::from_slice(&body_bytes).expect("diag: body must be ErrorBody");
+    assert_eq!(status, 401, "me without Authorization header should be 401");
+    let body: ErrorBody =
+        serde_json::from_slice(&body_bytes).expect("diag: body must be ErrorBody");
     assert_eq!(body.error, "invalid_token");
 }
 

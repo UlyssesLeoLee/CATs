@@ -49,9 +49,9 @@ pub async fn tick(pool: &PgPool) -> Result<(), CatsError> {
     // 1. 抢占: 把一批 pending → in_progress (避免多 worker 抢同一行)
     let claimed: Vec<(Uuid, Uuid)> = sqlx::query_as(CLAIM_SQL)
         .bind(BATCH_SIZE)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| CatsError::business(ErrorCode::InternalError, format!("claim fail: {e}")))?;
+        .fetch_all(pool)
+        .await
+        .map_err(|e| CatsError::business(ErrorCode::InternalError, format!("claim fail: {e}")))?;
 
     if claimed.is_empty() {
         return Ok(());
@@ -80,7 +80,9 @@ async fn dispatch_one(pool: &PgPool, task_id: Uuid) -> Result<(), CatsError> {
         .bind(task_id)
         .execute(pool)
         .await
-        .map_err(|e| CatsError::business(ErrorCode::InternalError, format!("complete fail: {e}")))?;
+        .map_err(|e| {
+            CatsError::business(ErrorCode::InternalError, format!("complete fail: {e}"))
+        })?;
     Ok(())
 }
 
@@ -89,7 +91,9 @@ async fn mark_qa_blocked(pool: &PgPool, task_id: Uuid) -> Result<(), CatsError> 
         .bind(task_id)
         .execute(pool)
         .await
-        .map_err(|e| CatsError::business(ErrorCode::InternalError, format!("qa_blocked fail: {e}")))?;
+        .map_err(|e| {
+            CatsError::business(ErrorCode::InternalError, format!("qa_blocked fail: {e}"))
+        })?;
     Ok(())
 }
 
@@ -108,16 +112,28 @@ mod tests {
     #[test]
     fn batch_size_is_bounded_and_positive() {
         assert!(BATCH_SIZE > 0, "BATCH_SIZE must be positive");
-        assert!(BATCH_SIZE <= 1000, "BATCH_SIZE must stay bounded, got {BATCH_SIZE}");
+        assert!(
+            BATCH_SIZE <= 1000,
+            "BATCH_SIZE must stay bounded, got {BATCH_SIZE}"
+        );
     }
 
     #[test]
     fn claim_sql_uses_skip_locked_to_avoid_double_dispatch() {
         // 多 worker 并发时若去掉 SKIP LOCKED, 同一行会被重复抢占
         let sql = CLAIM_SQL;
-        assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "claim must use SKIP LOCKED");
-        assert!(sql.contains("status = 'pending'"), "claim must filter pending");
-        assert!(sql.contains("status = 'in_progress'"), "claim must set in_progress");
+        assert!(
+            sql.contains("FOR UPDATE SKIP LOCKED"),
+            "claim must use SKIP LOCKED"
+        );
+        assert!(
+            sql.contains("status = 'pending'"),
+            "claim must filter pending"
+        );
+        assert!(
+            sql.contains("status = 'in_progress'"),
+            "claim must set in_progress"
+        );
     }
 
     #[test]

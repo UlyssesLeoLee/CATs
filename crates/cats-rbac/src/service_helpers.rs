@@ -56,7 +56,10 @@ pub fn extract_user_id_and_roles(req: &HttpRequest) -> Result<(Uuid, Vec<Role>),
             )
         })?;
     let user_id = Uuid::parse_str(user_id).map_err(|_| {
-        CatsError::business(ErrorCode::InvalidToken, "X-Cats-User-Id is not a valid UUID")
+        CatsError::business(
+            ErrorCode::InvalidToken,
+            "X-Cats-User-Id is not a valid UUID",
+        )
     })?;
 
     let roles = req

@@ -28,7 +28,10 @@ pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
         service: &'static str,
         db: &'static str,
     }
-    let db_ok = sqlx::query(r#"SELECT 1"#).execute(pool.get_ref()).await.is_ok();
+    let db_ok = sqlx::query(r#"SELECT 1"#)
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
     HttpResponse::Ok().json(ReadyResponse {
         status: if db_ok { "ready" } else { "not_ready" },
         service: "worker-service",

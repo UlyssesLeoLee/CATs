@@ -133,7 +133,12 @@ pub async fn glossary_match(
     .bind(source_text)
     .fetch_all(pool)
     .await
-    .map_err(|e| CatsError::business(ErrorCode::InternalError, format!("glossary match fail: {e}")))?;
+    .map_err(|e| {
+        CatsError::business(
+            ErrorCode::InternalError,
+            format!("glossary match fail: {e}"),
+        )
+    })?;
 
     Ok(rows
         .into_iter()

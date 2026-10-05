@@ -31,7 +31,10 @@ impl QaEngine {
                     ..Default::default()
                 });
             }
-            if !term.forbidden && !term.target_term.is_empty() && !target_text.contains(&term.target_term) {
+            if !term.forbidden
+                && !term.target_term.is_empty()
+                && !target_text.contains(&term.target_term)
+            {
                 violations.push(QaViolation {
                     rule_id: "glossary.missing".into(),
                     rule_category: "glossary".into(),
@@ -57,10 +60,7 @@ impl QaEngine {
                 violations.push(QaViolation {
                     rule_id: format!("placeholder.{}", open_char),
                     rule_category: "placeholder".into(),
-                    message: format!(
-                        "placeholder count mismatch in segment {}",
-                        segment_id
-                    ),
+                    message: format!("placeholder count mismatch in segment {}", segment_id),
                     start_pos: 0,
                     end_pos: 0,
                     severity: "ERROR".into(),
