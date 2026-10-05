@@ -49,21 +49,41 @@ COPY crates ./crates
 #     RUN cargo build --release --bin ${CRATE_NAME} \
 #         && strip target/release/${CRATE_NAME}
 #
-# 那一层的 cache key 里含 CRATE_NAME。而 ci-docker-build 是 17 个
-# service 的 matrix，**每个 service 都有不同的 CRATE_NAME**，因此
-# 17 个 job 的这一层 cache key 互不相同 → **每个都永远 miss**。
+# 改的理由是结构性的，不是测出来的：那一层的 cache key 里含命令引用到的
+# CRATE_NAME，而 ci-docker-build 是 18 个 service 的 matrix，每个 service 都传
+# 不同的 CRATE_NAME。**结果是这 18 个 job 永远无法复用彼此的编译层**，每一个都
+# 要自己编一遍。这是「昂贵层里不能含 per-item 变量」的典型后果
+# （arm64 还要额外付 QEMU 模拟的代价）。
 #
-# 实测（run 37306407841，`docker build (ingestion-service)`，34.3 min）：
-#     #26 [linux/amd64 builder 9/9] RUN cargo build --release --bin ingestion-service
-#         144.5s   —— 真的跑了，不是 cache hit
-#     #32 [linux/arm64 builder 9/9] RUN cargo build --release --bin ingestion-service
-#         1425.3s  —— 同一步在 QEMU 模拟下，慢约 10 倍
-# 全 job 34.3 min 里 33.8 min 全在这一步；17 service × 2 平台
-# = 34 次完整 release 编译，缓存一次都命不中。
+# 改成与 CRATE_NAME 无关的一层编整个 workspace 后，18 个 job 共享同一个 cache key，
+# 「选哪个二进制」下移成 runtime 阶段一次几乎零成本的 COPY。
 #
-# 现在改成：与 CRATE_NAME 无关的一层编整个 workspace —— 17 个 job
-# 共享同一个 cache key，只需真正编一次；「选哪个二进制」
-# 下移成 runtime 阶段一次几乎零成本的 COPY。
+# 实现要点：builder 阶段**不得**再出现 ARG/ENV CRATE_NAME。`ENV X=${X}` 这一层的
+# digest 随 ARG 取值而变，会让 18 个 job 的父链摘要重新分裂，共享 cache key 就白做了。
+# ARG CRATE_NAME 只在 runtime 阶段声明。
+#
+# 共享 cache key 只在**缓存真的能跨 run 存活**时才省时间。这一点不由本文件决定，
+# 而由 ci-docker-build.yaml 决定，当前是不满足的：
+#   - cache-to: type=gha,mode=max 未指定 scope，18 个 job 争抢同一个默认 scope
+#   - concurrency.cancel-in-progress: true，而单 job 需 27~53 min，本分支平均
+#     6~54 min 就来一个 push
+# 实测 23 次 run：15 cancelled / 3 success / 4 failure（4 次 failure 均为
+# 10-02~10-03 的 Harbor login 失败，此后已不复现）。被取消的 job 走不到 cache-to，
+# 缓存因此长期是冷的。也就是说本改动**方向正确但目前兑现不了**；要兑现须先修
+# workflow 的取消策略。详见 BACKEND_STATUS_v0.4 §4.1i。
+#
+# 耗时基线（目前唯一一次完整成功的 run 37298809794，17 job，墙钟 53.3 min，
+# Build and push 单 job 27.4~53.0 min）。以其中最快的 ingestion-service 为例，
+# 两步的耗时与平台：
+#     #26 [linux/amd64 builder 9/9] RUN cargo build --release --bin ingestion-service   161.3s
+#     #32 [linux/arm64 builder 9/9] RUN cargo build --release --bin ingestion-service  1506.8s
+# 161.3 + 1506.8 = 1668s ≈ 27.8 min，正好等于该 job 的 Build and push 总耗时——
+# 即单 job 耗时几乎全部是这两步，**arm64 占约 90%**，QEMU 模拟慢 9.3 倍。
+# 该 run 全程 CACHED 计数为 0，即没有任何一层命中缓存。
+# 根治 arm64 要靠原生 arm64 runner 或交叉编译，而不是调 Dockerfile 的层结构。
+#
+# 注意：不要拿「某次 run 的完成数」与「另一次 run 的完成数」直接比较来判定本改动
+# 快慢——被 cancel-in-progress 取消的 run 会给出偏低的完成数，两边不可比。
 RUN cargo build --release --workspace \
     && for f in target/release/*; do \
          if [ -f "$f" ] && [ -x "$f" ]; then strip "$f" || true; fi; \

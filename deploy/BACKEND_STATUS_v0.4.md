@@ -699,6 +699,130 @@ CI matrix 构建的: 17 个
 并且匹配要落在上游的**结构**（YAML 解析出来的值）而不是文本（这一条
 本轮已写进记忆）。
 
+### §4.1i 撤回我自己下的一个错误结论："Docker 改动让 CI 更慢了"没有证据 🆕
+
+本节记录一次**论据被证伪、动作被取消**的完整过程。`9f745e5` 把 Dockerfile 的编译层
+从 `--bin ${CRATE_NAME}` 改成 `--workspace`。本轮我一度准备把它撤回
+（脚本 `revert-dockerfile.py` 都写好了），**最后没有撤**。
+
+#### 当时的论据，以及它为什么不成立
+
+论据是：run `37314826034`（`14ec1b5`）跑到 36.4 min 时，18 个 job **全部**仍在
+`Build and push`、0/18 完成；而"基线" run `37306407841` 有 7 个 job 成功。看起来改完更慢。
+
+这个对照有两处硬伤：
+
+1. **两边不可比。** `37306407841` 的 conclusion 是 **`cancelled`** —— 它是被
+   `concurrency.cancel-in-progress` 杀掉的。那 7 个"成功"只是被杀之前的**中途快照**，
+   不是它的最终成绩。拿一个进行中的 run 去比一个被取消 run 的中途快照，不构成对照。
+2. **真正的基线不是那一个。** 查全量历史，目前**唯一一次完整成功**的 run 是
+   `37298809794`（`fa21e896`，10-05 10:47:27 → 11:40:53）：17 job 全绿，
+   墙钟 **53.3 min**，`Build and push` 单 job **27.4~53.0 min**，其中 7 个 ≤ 34.9 min。
+   当前 run 在 36.4 min 时 0 完成，落在这个分布之内并不异常。
+
+#### 顺带查清的一件事，比原结论有价值得多
+
+**`ci-docker-build` 在本分支几乎从不跑完。** 全量 23 次 run 的结论分布：
+
+```
+cancelled  15
+success     3      （10-03 两次、10-05 一次；最近一次即 37298809794）
+failure     4      （全部在 10-02 ~ 10-03）
+```
+
+- **4 次 failure 已不是当前问题**：签名完全一致（`Login to Harbor` = `skipped`
+  → `Build and push` = `failure`），且都发生在 10-02~10-03，此后两次完整 success 未复现。
+- **15 次 cancelled 的机制**（这就是"几乎从不跑完"的原因）：
+  - `concurrency.cancel-in-progress: true`，而单 job 需 27~53 min；
+  - 本分支平均 **6~54 min** 就来一个 push，每次都把在跑的杀掉；
+  - `paths:` / `paths-ignore:` **均为空** ⇒ 任何 push（哪怕只改文档）都拉起全部 18 个 docker job；
+  - `max-parallel` **未设** ⇒ 18 个 job 同时启动；
+  - `cache-to: type=gha,mode=max` **未指定 `scope`** ⇒ 18 个 job 争抢同一个默认 scope。
+- **这解释了缓存为什么长期是冷的**：被取消的 job 走不到 `cache-to`，缓存导不出来。
+
+所以 `9f745e5` 的 `--workspace` 改动——**方向是对的，但目前兑现不了**。
+它要省时间，前提是缓存能跨 run 存活，而这个前提由 `ci-docker-build.yaml` 决定，
+不由 Dockerfile 决定。这正是本轮要记的那条：**修法必须落在真正控制这件事的那一层**。
+
+#### 因此本轮不撤回，但把 Dockerfile 里那段不实论据订正了
+
+原文（`9f745e5` 写的）有两处站不住：
+
+| 原文 | 问题 | 已改为 |
+|---|---|---|
+| "17 个 job 的这一层 cache key 互不相同 → **每个都永远 miss**" | "永远"过头。`ENV CRATE_NAME=${CRATE_NAME}` 那层确实让 18 个 job **彼此**无法共享，但实测最近 7 次连续提交里有 **3 次 `crates/` + `Cargo.lock` 完全没变**（`9f745e5→14ec1b5`、`4d988f5→9f745e5`、`0606ca2b→2612e1a8`），跨 run 暖缓存在原理上可行 | 只说"18 个 job 彼此无法复用编译层"，并注明真正让缓存长期为冷的是上面的取消机制 |
+| 引 run `37306407841` 的耗时当"改前基线" | 那是**被取消**的 run，不能当基线 | 改引唯一完整成功的 `37298809794`（53.3 min / 单 job 27.4~53.0 min） |
+
+另外补了一条**实现要点**（原先没写，且极易踩坏）：builder 阶段**不得**再出现
+`ARG/ENV CRATE_NAME`。`ENV X=${X}` 这一层的 digest 随 ARG 取值而变，会让 18 个 job
+的父链摘要重新分裂，共享 cache key 就白做了。`ARG CRATE_NAME` 只在 runtime 阶段声明。
+当前文件经结构解析确认：builder 阶段 16 条指令中**无** `ARG/ENV CRATE_NAME`，
+runtime 阶段保留 `ARG CRATE_NAME` + `COPY` + `ENTRYPOINT`。
+
+#### 订正用到的断言做了变异验证（4/4）
+
+```
+未变异                                        PASS
+把 ENV CRATE_NAME 塞回 builder 阶段            FAIL  ENV leaked into builder
+把 ARG CRATE_NAME 塞回 builder 阶段            FAIL  ARG leaked into builder
+退回 per-crate build（= 本会话原本打算做的撤回）  FAIL
+只改注释、指令不动                            PASS  ← 证明断言没被注释文本污染
+```
+
+写这条断言时它**第一次就是错的**：直接对全文做 `ENV CRATE_NAME not in text` 子串判断，
+而本文件的注释里恰好引用了旧版的 `ENV CRATE_NAME=${CRATE_NAME}`，于是匹配到了注释。
+改成先滤掉注释行、只在**指令行**上断言才对（与 §4.1h 的 lint 规则 8 同一个坑）。
+
+#### 顺带把单 job 的耗时构成测准了（同一 run 内自洽）
+
+基线 run `37298809794` 里最快的 `ingestion-service`，两步耗时：
+
+```
+#26 [linux/amd64 builder 9/9] RUN cargo build --release --bin ingestion-service   161.3s
+#32 [linux/arm64 builder 9/9] RUN cargo build --release --bin ingestion-service  1506.8s
+```
+
+- `161.3 + 1506.8 = 1668s ≈ 27.8 min`，**正好等于该 job 的 `Build and push` 总耗时**
+  → 单 job 耗时几乎全部是这两步，没有别的地方可以省。
+- **arm64 占约 90%**（`1506.8 / 161.3 = 9.3×`），QEMU 模拟的代价。
+- 该 run 全程 `CACHED` 计数 **0** —— 没有任何一层命中缓存，与"缓存长期是冷的"一致。
+
+这给 `--workspace` 改动一个**可检验的定量预测**（尚未证实，只是预测）：
+冷缓存下 `--bin <单 crate>` 只需编 1 个二进制，`--workspace` 要编全部 20 个，
+所以单 job 的编译步应当变长，arm64 尤甚；而它换来的"共享 cache key"在本仓库
+兑现不了（见上）。两者相抵，净效果是变慢。**但这是预测，不是结论** ——
+`37314826034` 未跑完前不下判断。
+
+#### 当前状态：未定论
+
+run `37314826034` 仍在进行中。本节写下时为 44.0 min：18/18 仍在 `Build and push`，
+0 完成，最快 37.5 / 最慢 42.3 min。作为对照，基线有 7 个 job 在 34.9 min 内完成。
+**看起来更慢，但尚未跑完，不足以定论**。等它出最终结果后再补完整对照。
+
+#### 撤回本次会话中一个"看起来在做、其实没在做"的检查
+
+记录这次取证时我自己踩的坑，留作后续同类操作的门禁：
+
+- 查 `37298809794` 的分层耗时时，我写的正则要求 `#N [平台 阶段]` 形式，
+  匹配到 **0 行**。若就此收手，就会得出"日志里没有这些层"的结论。
+  实际日志是 `#1 DONE 4.1s`（无平台前缀）**与** `#26 [linux/amd64 ...]` 两种格式混排。
+  打印原始行才看清。**0 命中必须先证明模式对，不能默认"目标不存在"。**
+- 查 job 耗时时，`completedAt` 对进行中的步骤是哨兵值 `0001-01-01T00:00:00Z`
+  而非 `null`，我的真值判断放行了它，日期解析到年份 1，于是打印出一串
+  `-1065446712.9 min` 的负数。**哨兵值不等于空值**，要用 `now - startedAt` 兜底。
+- `gh` 的一次 404：`jobs[].databaseId` 是 **job id**，`gh run view <job-id>` 会把它当
+  run id 去查 → 404。取 job 日志要用 `gh run view <run-id> --job <job-id> --log`。
+
+#### 待排期（本 PR 不做）
+
+`ci-docker-build.yaml` 属 PR #19 的改动范围，按排期单独处理。按预期收益排序：
+
+1. 给 `ci-docker-build` 单独的 concurrency group 或 `cancel-in-progress: false` —— 让 27~53 min 的长 job 有机会跑完，**这是其余一切的前提**（不跑完就没有基线，缓存也导不出来）。
+2. 加 `paths:` 过滤（`deploy/docker/**`、`Cargo.toml`、`Cargo.lock`、`crates/**`、`proto/**`）—— 纯文档 push 不再拉起 18 个 job。
+3. 设 `max-parallel` —— 消掉冷缓存踩踏。
+4. `cache-to` 加 `scope:`，或改结构为「1 个 build job 编 workspace + 18 个 job 只做装配」，让共享 cache key 真正兑现。
+5. arm64 走 QEMU 慢约 10 倍（144.5s vs 1425.3s）—— 根治要原生 arm64 runner 或交叉编译。
+
 ---
 
 ### §4.4 v0.3 §6 其余各项未变
