@@ -82,6 +82,14 @@ jobs:
           - service: cats-bff
             crate: cats-bff
             port: 8097
+          # 2026-10-05 补入。cats-ai-gateway 一直有 src/main.rs（产出二进制），
+          # docker-compose-mvp.yml 里也声明了跑 /usr/local/bin/cats-ai-gateway 的
+          # `ai-gateway` service，但本地 compose 走的是 Dockerfile.runtime 产出的
+          # 单一 `cats-runtime:latest`（含全部二进制），**掩盖了缺镜像这件事**。
+          # CI 出的是 per-service 镜像推 Harbor，缺它 = 部署侧拿不到这个镜像。
+          - service: cats-ai-gateway
+            crate: cats-ai-gateway
+            port: 8090
     steps:
       - name: Checkout
         uses: actions/checkout@v4

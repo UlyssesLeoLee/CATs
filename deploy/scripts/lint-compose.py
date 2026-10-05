@@ -480,6 +480,72 @@ if orphan_crates:
     note("存量死代码: %d 个 crate 共 %d 行 .rs 从未编译（已列入 ORPHAN_BASELINE，"
          "新增会 FAIL）" % (orphan_crates, orphan_total))
 
+# ---------------------------------------------------------------------
+# 规则 8: 每个产出二进制的 crate 都必须在 ci-docker-build 的
+# matrix 里——否则部署侧拿不到镜像
+#
+# 2026-10-05 新增。发现过的真实缺陷：cats-ai-gateway 一直有
+# src/main.rs（产出二进制），也被 compose 声明为一个服务，但**不在**
+# ci-docker-build 的 matrix 里。它因此永远没有对应的 Harbor 镜像。
+#
+# 为什么一直没人发现：本地 compose 走的是**另一条路径**——
+# `deploy/Dockerfile.runtime` 产出单一个含**全部二进制**的
+# `cats-runtime:latest`，所以本地 `docker compose up` 一切都能跑。
+# 只有 CI 输出的 per-service 镜像才会显出缺口。
+#
+# 所以这条规则的价值不在于“查出一个有问题的服务”，
+# 而在于**把一类静默漂移变成可发现的**：以后新增任何服务
+# crate，未加入 matrix 就会 FAIL。
+NOT_A_SERVICE = {
+    # m1-s0-smoke 产出二进制，但它是烟雾测试工具，不是一个需要
+    # 镜像的服务。需要新增时在这里加一行并写下理由——
+    # 本意是强制一次有意识的决定，而不是默认忽略。
+    "m1-s0-smoke",
+}
+
+
+def _service_crates():
+    """ci-docker-build matrix 里列出的 crate 名。"""
+    p = os.path.join(ROOT, ".github", "workflows", "ci-docker-build.yaml")
+    if not os.path.isfile(p):
+        return None
+    txt = io.open(p, encoding="utf-8").read()
+    # matrix 里的写法是 `- service: X` 换行后 `crate: Y`，
+    # 不是同一行的 `- crate: X`——之前的正则只能匹配
+    # 它们之间的 `-` 和 `service:`，所以始终返回空集，
+    # 规则 8 会把全部 18 个 crate 都报成缺失。
+    return set(re.findall(r"(?m)^\s*crate:\s*(\S+)\s*$", txt))
+
+
+def _binary_crates():
+    """workspace 里所有有 src/main.rs 的 crate（即会产出可执行文件的）。"""
+    p = os.path.join(ROOT, "Cargo.toml")
+    if not os.path.isfile(p):
+        return set()
+    txt = io.open(p, encoding="utf-8").read()
+    i = txt.find("members")
+    j = txt.find("]", i)
+    if i < 0 or j < 0:
+        return set()
+    out = set()
+    for name in re.findall(r'"crates/([^"]+)"', txt[i:j]):
+        if os.path.isfile(os.path.join(ROOT, "crates", name, "src", "main.rs")):
+            out.add(name)
+    return out
+
+
+_matrix = _service_crates()
+if _matrix is None:
+    note("规则 8 跳过：找不到 .github/workflows/ci-docker-build.yaml")
+else:
+    _bins = _binary_crates() - NOT_A_SERVICE
+    for _missing in sorted(_bins - _matrix):
+        err("crate '%s' 会产出二进制，但不在 ci-docker-build 的 matrix 里"
+            " —— 部署侧拿不到它的镜像" % _missing)
+    for _stale in sorted(_matrix - _bins):
+        err("ci-docker-build matrix 里的 crate '%s' 不再产出二进制"
+            "（src/main.rs 没了）—— 请从 matrix 里删掉" % _stale)
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -502,6 +568,7 @@ print("  OK    规则 4  声明了 *_TOPIC 的 service 都等 kafka-init")
 print("  OK    规则 5  envoy 每个 filter 都有 typed_config")
 print("  OK    规则 6  compose 注入的每个 env 变量都被源码读过")
 print("  OK    规则 7  src/ 下没有新增的未编译 .rs 文件")
+print("  OK    规则 8  每个产出二进制的 crate 都在 ci-docker-build 的 matrix 里")
 print("")
 for n in notes:
     print("  提醒  " + n)

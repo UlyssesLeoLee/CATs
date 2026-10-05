@@ -640,6 +640,67 @@ python deploy/scripts/lint-compose.py                          RC=0
 
 **修正：这类大 workspace 命令限定 `-j 4`。** 上面那个 EXIT=0 就是加上 `-j 4` 之后的结果。
 
+### §4.1h 发现一个“能跑、但没镜像”的服务，并加门禁🆕
+
+上两节（§4.1f / §4.1g）均在代码层。这一段是部署层：项目里
+**有一个能产出二进制、也被 compose 声明为服务的 crate，却根本没有对应的镜像**。
+
+#### 发现过程
+
+对三份清单做差集：CI matrix 构建的 17 个镜像 vs `docker-compose-mvp.yml` 声明的
+service vs `deploy/helm/` 下的 chart 目录，再对照 workspace 里谁有 `src/main.rs`（会产出可执行文件）。
+
+```
+产出二进制的 crate: 18 个
+CI matrix 构建的: 17 个
+缺的那一个: cats-ai-gateway
+```
+
+#### 为什么一直没人发现
+
+因为**本地走的是另一条构建路径**，它把缺口藏了：
+
+| | 本地 compose | CI 输出 |
+|---|---|---|
+| Dockerfile | `deploy/Dockerfile.runtime` | `deploy/docker/Dockerfile.rust` |
+| 产出 | 单一 `cats-runtime:latest`，**含全部二进制** | 17 个 per-service 镜像推 Harbor |
+| 结果 | `docker compose up` 一切都能跑，`ai-gateway` 强调 `command: ["/usr/local/bin/cats-ai-gateway"]` 也能跑 | —— **永远不会有 ai-gateway 镜像** |
+
+`docker-compose-mvp.yml` 里那个 service 甚至留着一条评语记录了一个更早的同类事故：
+它曾经没有 `command`，继承了 `Dockerfile.runtime` 的 `CMD ["/usr/local/bin/cats-bff"]`，
+**叫 ai-gateway 的容器里跑的是 cats-bff**（现在已修）。
+
+只有 CI 输出的 per-service 镜像会暴露这个缺口——而本地测一概组合的
+`docker compose up` 永远是绿的，它们与 CI 输出的是两套不同的东西。
+
+#### 修正
+
+1. matrix 补入 `cats-ai-gateway`（已有 `src/main.rs`，compose 也在跑）。18 个镜像覆盖全部服务。
+2. **加 lint 规则 8**，把这类静默漂移变成可发现：
+   每个产出二进制的 crate 都必须在 `ci-docker-build` 的 matrix 里；
+   反向也查（matrix 里的 crate 不再产出二进制 → FAIL）。
+   以后新增任何服务 crate，未加入 matrix 就会 FAIL。
+   唯一的例外 `m1-s0-smoke`（产出二进制但是烟雾工具，不是服务）在脚注里写了理由。
+
+#### 规则 8 的鉴别力已实测（两个变异）
+
+```
+基线（不改）                    EXIT=0  全部通过
+从 matrix 删掉 cats-ai-gateway          FAIL    精确点名它
+往 matrix 塞入不存在的 ghost-service  FAIL  报为 stale
+```
+
+**写完第一版时这条规则是坏的**，它把全部 18 个 crate 都报成缺失，
+正则测试一跑就会 EXIT=1。原因：正则写的是 `-\s+crate:`（同一行），
+而 matrix 的 YAML 写法是 `- service: X` 换行后 `crate: Y`——**两者之间还乲着 `service:`**，
+所以正则始终返回空集。改成按行匹配 `^\s*crate:` 后才对（3 -> 18）。
+
+这张口的教训：**新规则必须变异验证，否则它可能是一个会把 CI 全部报红的写错的门禁**。
+并且匹配要落在上游的**结构**（YAML 解析出来的值）而不是文本（这一条
+本轮已写进记忆）。
+
+---
+
 ### §4.4 v0.3 §6 其余各项未变
 
 Tauri 客户端、真实 AI provider、Vault secret 注入、translation-core 接真
