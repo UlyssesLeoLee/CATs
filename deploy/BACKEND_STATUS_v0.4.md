@@ -150,12 +150,14 @@ rustc 根本没看这个文件。
 **这一切只有真正去编译才会暴露。** 从「接线」到「编译通过」中间是
 9 → 1 → 0 的三轮，每一轮都是新信息。
 
-#### 剩余（7 crate / 3963 行，2026-10-05 audit-service 接线后）
+#### 剩余（6 crate / 558 行，2026-10-05 更正）
+
+**这一节的数字在本轮被推翻过一次，见 §4.1c。** 此前记的是「7 crate / 3963 行」，
+其中 `cats-mock` 整项（2899 行）是 lint 的可达性 bug 造出来的**假账**。
 
 | crate | 行数 | 状态 |
 |---|---|---|
-| cats-mock | 2899 | `lib.rs` 文档宣称提供 http/db/infra/data 四模块，实际一个都没声明 |
-| cats-bff | 809 | 依赖 4 个不存在的 `Config` API（v0.3 §6 已记），需先补 API |
+| cats-bff | 303 | `routes.rs`(178) + `grpc_clients.rs`(125) —— 同一条**平行设计**的另两个文件，见 §4.1c |
 | 其余 5 个 | 255 | 各自的 `state.rs` 等，**但情况各不相同，见下** |
 
 ##### 6 个 `state.rs` 的三种不同情况（2026-10-05 逐 crate 核对）
@@ -273,6 +275,102 @@ translation-core / worker-service 里），已由 `8b7a675` 修掉。
 
 > 教训与本文档开头那句一致：**绿色的检查也可能从来没运行过。**
 > 「跑了 4 个 job 全绿」和「有 4 个检查会跑」是两件事。
+
+**已修（`fa21e89`，随 PR #19 落地）**：`push.branches` 加 `feat/**`，
+`pull_request` 去掉 base 过滤。改完之后 **PR #19 立刻从 0 个 check 变成全量自动
+触发**（fmt / clippy / test / build / docker build / helm lint / deny / proto
+check 全在跑）—— 这就是改动生效的端到端证据。
+
+顺带一个更根本的事实：**`dev` 分支上根本没有 `.github/workflows/`**，workflow
+文件全在 `ci/github-actions/`。而 GitHub Actions 只读 `.github/workflows/`，
+放在那里的文件**完全失效**。PR #19 正是在做这件事：把 CI 放回生效位置。所以
+触发条件的修改跟着 #19 走而不是另开 PR。
+
+### §4.1c 撤回两处错误记录：lint 规则 7 自己的可达性有 bug 🆕
+
+写这份文档的过程中，`lint-compose.py` 规则 7（死文件检测）**自己报错了**。
+
+#### 现象
+
+接线 `upstream_passthrough.rs` 时把 `cats-bff` 的基线减了一项，lint 立刻报：
+
+```
+FAIL  crate 'cats-bff' 的 src/upstream/auth.rs 没有被任何 mod 声明编译
+FAIL  crate 'cats-bff' 的 src/upstream/projects.rs ...
+FAIL  crate 'cats-bff' 的 src/upstream/tasks.rs ...
+```
+
+可是 `src/upstream/mod.rs` 第一屏就是：
+
+```rust
+pub mod auth;
+pub mod projects;
+pub mod tasks;
+```
+
+而且 `cats-bff` 一直能编译 —— 真没被声明的文件根本过不了 `cargo check`。
+
+#### 根因
+
+```python
+cp = os.path.join(src_dir, *cand.split("/"))   # ← 恒定相对 src_dir
+```
+
+`mod` 声明**永远相对 crate 根目录**解析。走到 `src/upstream/mod.rs` 时，
+`pub mod auth;` 被解析成 `src/auth.rs`（不存在）→ **从不进入 `src/upstream/`**。
+
+#### 危害比「多报 3 个文件」大得多
+
+它会**掩盖真正的孤儿**：只要一个 crate 用子目录组织模块，那个子目录的可达性
+就是瞎的 —— 里面真躺着一个没被声明的文件，规则 7 也看不见。
+
+修好后做了两种反向验证：
+
+| 反例 | 期望 | 实测 |
+|---|---|---|
+| 子目录里塞真孤儿 `src/data/zz_negtest.rs` | FAIL 并点名 | ✅ EXIT=1 精确点名（**旧版本抓不到这种**）|
+| 注掉 `pub mod smoke;` | 其文件变孤儿 | ✅ EXIT=1，点名 `src/smoke.rs` |
+
+#### 由此撤回本文档的两条记录
+
+1. **「`cats-mock` 2899 行孤儿，`lib.rs` 宣称四模块却一个都没声明」——假的。**
+   `cats-mock/src/lib.rs` 一直声明着
+   `pub mod data; pub mod db; pub mod http; pub mod infra; pub mod smoke;`。
+   那 12 个文件（`data/*.rs` `db/*.rs` `http/*.rs` `infra/*.rs`）纯粹是这个
+   bug 造出来的假账，已从 `ORPHAN_BASELINE` 整项移除。
+
+2. **「孤儿存量 7 crate / 3963 行」→「6 crate / 558 行」。**
+
+也就是说，前面几轮说的「接线进度还差 3963 行」**高估了约 7 倍**。真实剩下的
+是 558 行，其中 303 行（`routes.rs` + `grpc_clients.rs`）属于下一节。
+
+> 这一段的教训和 §4.1b 那句是同一句：**「检查通过了」和「检查看的是你以为的
+> 那个东西」是两件事。** 规则 7 报告的每一个数字，都建立在「我的可达性算法
+> 是对的」这个未经检验的前提上。
+
+### §4.1d cats-bff 剩下的 303 行：一条被有意推迟的平行设计
+
+`routes.rs` 与 `grpc_clients.rs` 不是「缺几个 API 就能接」的活。它们和
+`upstream_passthrough.rs` 是**同一套设计**，而那套设计与正在跑的强类型设计
+并存 —— 两个文件自己的头部都写明了这件事：
+
+> 本文件属于另一条平行设计（`/api/v1/*` 前缀 + 裸透传），其依赖的
+> `crate::upstream::UpstreamClient` 与 `crate::grpc_clients` 同为未接入文件，
+> **接入前需先做适配改造**。
+
+也就是说**这不是疏忽，是有意推迟**。第 1 步（`upstream_passthrough.rs`）已按
+「对齐到共享 `Config` 的真实字段名」的方向接完（`5149a4a`），剩下两步的已知
+卡点：
+
+| 文件 | 卡点 |
+|---|---|
+| `routes.rs` | 依赖 `cats-proto`（manifest 里没有）；引用不存在的 `crate::upstream::UpstreamClient`；proto 类型名写成 `MatchTMRequest`，而 prost 规范化后是 **`MatchTmRequest`**（与 translation-core 接线时踩的是同一个坑）|
+| `grpc_clients.rs` | 依赖 `tonic`（manifest 里没有）；`Config` 缺 `translation_core_grpc` 字段；`BffError` 缺 `From<tonic::transport::Error>` |
+
+**风险提示**：这 809 行是照着**旧版 Config 形状**和 **`.proto` 里的类型名**
+写的，编译器管不到的那类语义错误（字段含义变了没、RPC 语义对不对）不会在编译
+期暴露。所以第 2/3 步要按 `upstream_passthrough` → `routes` → `grpc_clients`
+的顺序做，每步单独验证。
 
 
 
