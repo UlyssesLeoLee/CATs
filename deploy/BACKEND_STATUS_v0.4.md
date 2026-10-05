@@ -153,6 +153,9 @@ rustc 根本没看这个文件。
 #### 剩余（5 crate / 255 行，2026-10-05 cats-bff 全部接完后）
 
 **这个数字在本轮被推翻过两次**，见 §4.1c（lint 假账）与 §4.1d（cats-bff 接线）。
+> **【已落实 · 2026-10-05】**下面这张表已经过时。逐项调查后删掉了 6 个文件，
+> 孤儿存量现为 **1 crate / 75 行**（仅 `notification-service/consumer.rs`）。证据与两条技术断言的撤回
+> 见 **§4.1f**。
 
 | crate | 行数 | 状态 |
 |---|---|---|
@@ -456,6 +459,114 @@ cats-common"，那是错的——另外 8 个自报的是自己的名字。真�
 并改共享结构，属于独立的 API 收敛工作，不在本次范围。
 
 
+
+### §4.1f 剩下的 5 crate / 255 行：查清后删掉 6 个，只留 1 个 🆕
+
+本节形成时，剩余孤儿已经不是“等着被接线的半成品”了。逐项调查后发现：
+**5 个 `state.rs` 全部零引用，`storage.rs` 是被替代的旧稿**。接线不会让代码变活，
+只会把“零调用方、门禁看得见”变成“零调用方、门禁看不见”。
+
+#### 拍板来源（如实标注）
+
+| 事项 | 503 |
+|---|---|
+| 方式 | `ask_user` 四项问卷，每项均标 `(推荐)` |
+| 取得方式 | `responseSource: automatic_timeout` / `explicitUserConfirmation: false` |
+| 结果 | 4 项**全部自动选中推荐项** |
+
+**本次拍板未取得 Ulysses 的明确确认**，仅为超时自动选中推荐项。
+下面的证据与实测结果可独立核对，但决策本身应当作待复核项。
+
+#### 逐项调查结论
+
+**1. `file-service/src/storage.rs`（63 行）—— 被 `handlers.rs` 内联重写取代，且语义冲突**
+
+| | `handlers.rs`（活的） | `storage.rs`（孤儿） |
+|---|---|---|
+| 分区键 | `workspace_id` | `org_id` |
+| 根目录 | 读 `FILE_STORAGE_ROOT`，缺省落到 `temp_dir()/file-storage` | 硬编码相对路径 `var/files/`（相对 cwd）|
+| 文件名 | 纯 uuid + `.bin` | `{file_id}_{safe_name}`（拼用户传入的 name）|
+
+权威是 **`workspace_id`**：`migrations/20260920_0001_init.sql` 建表用
+`workspace_id` + `storage_path`，索引建在 `(workspace_id, sha256)` 上；
+更早的两份迁移（`0001_init_file_db.sql` / `20260919_0001_init.sql`）
+注释里明写 `org_id` 是“旧版约定、已被 workspace_id 取代”。
+
+附带删掉 2 个**假测试**：
+
+- `ensure_base_dir_succeeds` 算了路径、删了目录、设了环境变量，
+  但**从未调用被测函数**——它永远不会红，与被测对象无关。
+- `path_traversal_protection_strips_dots` 把过滤逻辑**抄了一遍**而不是调用 `write_file`，
+  改生产代码它照样绿。
+
+**2. `file-service` / `notification-service` / `project-service` / `report-service` 各自的 `state.rs`（17~24 行）—— 零引用**
+
+`AppState` 只在文件内部出现，crate 内无任何其它引用。
+4 个 crate 的 `main.rs` 都是**分别**注册 `web::Data::new(pool)` 和
+`web::Data::new(rbac_checker)` 两个独立参数——活设计本来就不是“一个合并的 AppState”。
+
+**3. `task-service/src/state.rs`（17 行）—— 权威已经定了**
+
+与上面 4 个不同：`task-service` 的 `src/handlers.rs` **自己定义了**一个 `AppState`，
+而它是活的——`web::Data<AppState>` 出现 **6 次**，`main.rs` 确实注册了
+`web::Data::new(state)`。这个孤儿文件是给一个“已经存在且正在使用”的类型
+又写了一份定义。
+
+**4. `notification-service/src/consumer.rs`（69 行）—— 保留，不是旧稿**
+
+它不是被取代的草稿：`process_event` 是真代码（反序列化 `KafkaEvent` →
+`db::insert_from_event` 真落库），`kafka_event_round_trip` 是真测试。但 `run_consumer_loop`
+依赖的 `poll_once` 恒返回 `Ok(0)`，接上去等于多 spawn 一个永远 5 秒一轮空转的任务；
+`notification-service/main.rs` 目前完全没 spawn 任何 consumer。文件自己的文档注释写明
+“真实 Kafka 集成留 Sprint 2”——**它自己声明是占位符**。
+留在基线里正好避免“占位符被当成已完成”。
+
+#### 【显式撤回】本文档两条技术断言——两条都是错的，都没被实测过
+
+上面删除的论据很部分建立在我自己写过的两条断言上，而**这两条都没被实测过**。
+本次补做了两个可回滚实验，结果是**两条都错**：
+
+**错误 1（写在 §4.1 表格与本节之前的表格里）**：
+
+> 原文：“只加 `mod` 会多出一个没人用的类型，workspace 严格 lint 下是
+> `dead_code`（可能直接是错误）。不构成进展”
+
+**实测**（从 git 恢复 `file-service/src/state.rs`、在 `lib.rs` 插入 `pub mod state;`，
+然后 `cargo clippy -p file-service --all-targets -- -D warnings`）：
+
+```
+[result] exit=0
+[result] dead_code 诊断条数 = 0
+```
+
+**原因**：`AppState` 是 `pub` 且从 crate root 可达，rustc 不会把它当死代码。
+
+**这把删除的论据反过来加强了**：“加 `mod` ”不会让门禁变红，**它甚至不会发出任何警告**——
+就是把“零调用方、门禁看得见”直接变成“零调用方、门禁看不见”。
+
+**错误 2**（写在 §4.1「6 个 `state.rs` 的三种不同情况」表格里）：
+
+> 原文：“**接上去会造出两个竞争的 `AppState`**，**编译期就冲突**”
+
+**实测**（恢复 `task-service/src/state.rs`、加 `pub mod state;`，而 `handlers.rs` 里已有一个
+正在使用的 `AppState`，然后 `cargo check -p task-service --all-targets`）：
+
+```
+[pre]  handlers.rs struct AppState x1, web::Data<AppState> x6
+[result] cargo check -p task-service  exit=0
+[result] error 行数 = 0
+```
+
+**原因**：两个同名类型在不同模块里属于不同路径（`state::AppState` vs `handlers::AppState`），
+Rust 不会冲突。真正的问题是**概念上的重复定义**，不是编译错误。
+
+#### 结果
+
+- 删除 6 个文件（`file-service/storage.rs` + 5 个 `state.rs`），共 180 行
+- 孤儿存量：**5 crate / 255 行 → 1 crate / 75 行**（仅 `notification-service/consumer.rs`）
+- `ORPHAN_BASELINE` 同步移除这 6 项，并在脚注里写上逐项调查结论
+- 本地验证：`cargo fmt --all -- --check` 0 / `cargo clippy --workspace --all-features
+  --all-targets -- -D warnings` 0 / `cargo test --workspace --locked` 0 / `lint-compose.py` 0（`FAILCOUNT=0`）
 
 ### §4.4 v0.3 §6 其余各项未变
 

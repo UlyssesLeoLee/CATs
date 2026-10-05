@@ -290,6 +290,17 @@ for name, s in sorted(services.items()):
 #   cats-mock         2899 行, lib.rs 文档宣称提供 http/db/infra/data 四个模块
 #   其余 8 个 crate   各自的 state.rs / models.rs 等
 #
+# 【更正 · 2026-10-05】上面这两行是**假账**，不要当作现状：
+#   - cats-mock 那 2899 行**从来不是孤儿**。`cats-mock/src/lib.rs` 一直声明着
+#     `pub mod data; pub mod db; pub mod http; pub mod infra; pub mod smoke;`，
+#     而 `cargo check -p cats-mock` 一直通过。它会被误报，是因为
+#     reachable_rs 的可达性一行 bug（把 `mod` 声明恒定相对 src_dir
+#     解析，从不进入子目录），已修。详见下方 ORPHAN_BASELINE
+#     内的撤回记录。
+#   - "其余 8 个 crate 各自的 state.rs / models.rs"也不成立：
+#     逐项查过后，5 个 state.rs 已于 2026-10-05 删除（见下方
+#     ORPHAN_BASELINE 的逐项调查结论），models.rs 则从未被证实为孤儿。
+#
 # 为什么难发现: 文件在、代码完整、注释和文档都像那么回事，
 # 但 binary 启动后只注册 /healthz。487 个测试和 12 路 healthz 全绿，
 # 都不能证明这些代码存在——因为它们根本没进编译。
@@ -318,11 +329,50 @@ ORPHAN_BASELINE = {
     # 也就是说 BACKEND_STATUS_v0.4 §4.1 里「cats-mock 2899 行孤儿
     # （lib.rs 宣称四模块却一个都没声明）」这句**是错的**，在此显式撤回。
     # 真正的孤儿存量因此从「7 crate / 3963 行」降到「6 crate / 558 行」。
-    "file-service": ["state.rs", "storage.rs"],
-    "notification-service": ["consumer.rs", "state.rs"],
-    "project-service": ["state.rs"],
-    "report-service": ["state.rs"],
-    "task-service": ["state.rs"],
+    # 2026-10-05 移除 6 项（file-service/storage.rs + 5 个 state.rs，合计 155 行）。
+    #
+    # 逐项调查结论 —— 这 6 个文件**不是"等着被接线"的半成品，而是已经被
+    # 取代的旧稿或零引用的第二份定义**。接线只会让门禁变绿，不会让代码变活。
+    #
+    # 1) file-service/src/storage.rs（63 行）
+    #    被 src/handlers.rs 内联重写取代。两套实现的语义直接冲突：
+    #      - 分区键：storage.rs 按 org_id，handlers.rs 按 workspace_id
+    #      - 根目录：storage.rs 硬编码相对路径 var/files/（相对 cwd），
+    #        handlers.rs 读 FILE_STORAGE_ROOT，缺省落到 temp_dir()/file-storage
+    #      - 文件名：storage.rs 把用户传入的 name 拼进路径并过滤 `/ \ . \0`，
+    #        handlers.rs 用纯 uuid + .bin
+    #    权威是 workspace_id：migrations/20260920_0001_init.sql 建表用
+    #    workspace_id + storage_path，索引建在 (workspace_id, sha256) 上；
+    #    两份更早的迁移（0001_init_file_db.sql / 20260919_0001_init.sql）
+    #    注释里明确写了 org_id 是"旧版约定，已被 workspace_id 取代"。
+    #    附带删掉 2 个假测试：ensure_base_dir_succeeds 算了路径、删了目录、
+    #    设了环境变量，但从未调用被测函数；path_traversal_protection_strips_dots
+    #    把过滤逻辑抄了一遍而非调用 write_file，改生产代码它照样绿。
+    #
+    # 2) file-service / notification-service / project-service / report-service
+    #    各自的 state.rs（17~24 行）
+    #    AppState 只在文件内部出现，crate 内无任何其它引用；4 个 crate 的
+    #    main.rs 都是**分别**注册 web::Data::new(pool) 和
+    #    web::Data::new(rbac_checker) 两个独立参数 —— 活设计本来就不是
+    #    "一个合并的 AppState"。
+    #    关键：给 lib crate 加 `pub mod state;` **不会**产生 dead_code 警告
+    #    （pub 且从 crate root 可达的项不被标记），所以"加 mod"的效果是
+    #    把"零调用方、门禁看得见"变成"零调用方、门禁看不见"。
+    #
+    # 3) task-service/src/state.rs（17 行）
+    #    与上面 4 个不同：权威已经定了。task-service 的 src/handlers.rs 自己
+    #    定义了一个 AppState 且它是活的 —— web::Data<AppState> 出现 6 次，
+    #    main.rs 确实注册了 web::Data::new(state)。这个孤儿文件是给一个
+    #    "已经存在且正在使用"的类型又写了一份定义。
+    #
+    "notification-service": ["consumer.rs"],
+    # 2026-10-05 保留 consumer.rs（69 行）：它**不是**旧稿。
+    #   process_event 是真代码（反序列化 KafkaEvent → db::insert_from_event 真落库），
+    #   kafka_event_round_trip 是真测试。但 run_consumer_loop 依赖的 poll_once
+    #   恒返回 Ok(0)，接上去等于多 spawn 一个永远 5 秒一轮空转的任务；
+    #   main.rs 目前完全没 spawn 任何 consumer。文件自己的文档注释写明
+    #   "真实 Kafka 集成留 Sprint 2" —— 它自己声明是占位符。
+    #   保留在基线里，正是为了避免"占位符被当成已完成"。
     # 已于 2026-10-04 接线、因此从基线移除的有 4 个 crate:
     #   common            error.rs（550 行共享错误体系）
     #   cats-rbac         service_helpers.rs（178 行）
