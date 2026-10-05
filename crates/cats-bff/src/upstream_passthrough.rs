@@ -9,19 +9,31 @@
 //!
 //! ---
 //!
-//! **未接入状态（不参与编译）**
+//! ## 2026-10-05 已接入编译（第 1 步 / 共 3 步）
 //!
-//! 本文件由 `feat/mvp-final-*` 抢救进仓（commit `68fe10b`），`lib.rs` 未声明
-//! `mod` 故不参与编译。它与 `src/upstream/` 目录版是两条平行设计：
+//! 本文件由 `feat/mvp-final-*` 抢救进仓（commit `68fe10b`）后一直是孤儿。它与
+//! `src/upstream/` 目录版确实是两条平行设计：
 //!
 //! - 本文件：`UpstreamClient` 共享 reqwest client + 裸 `serde_json::Value` 透传
 //! - `src/upstream/`：`AuthClient` / `ProjectsClient` / `TasksClient` 三个强类型
 //!   客户端，带 RBAC 校验，是 `main.rs` 实际注册路由所用的实现
 //!
-//! 直接接入不可行——它依赖的 4 个 API 在当前 `Config` 上均不存在：
-//! `Config::for_test`、`auth_service_base`、`project_service_base`、
-//! `upstream_timeout_ms`（当前是 `auth_service_url` / `project_service_url` /
-//! `upstream_timeout_secs`）。接入前需先做适配改造。
+//! 原文写着"直接接入不可行——它依赖的 4 个 API 在当前 `Config` 上均不存在"。
+//! **那 4 个 API 已按下述方式处理完**（保留本段是为了说明适配去了哪里）：
+//!
+//! | 原代码要的 | 现在用 | 怎么处理的 |
+//! |---|---|---|
+//! | `auth_service_base` | `auth_service_url` | 对齐到共享 `Config` 的真实字段名 |
+//! | `project_service_base` | `project_service_url` | 同上 |
+//! | `upstream_timeout_ms` | `upstream_timeout_secs` | 秒→毫秒换算，**保留原来的 2000ms 连不上限** |
+//! | `Config::for_test` | `Config::for_test` | 新增；只收 2 个参数（原测试传的第三个从未被用到）|
+//!
+//! 另外 `BffError::Upstream` 这个变体**不存在**，5 处调用改用
+//! `DependencyUnavailable`（同样映射 502，语义也更准：这些是"没能跟上游通信"，
+//! 而 `UpstreamError{status,body}` 是"上游返回了坏状态码"）。
+//!
+//! 第 2 步（`routes.rs`）与第 3 步（`grpc_clients.rs`）尚未接入。
+//! 下面关于文件名的说明依然有效且必须遵守。
 //!
 //! 文件名带 `_passthrough` 后缀而非直接叫 `upstream.rs`：同名会与
 //! `src/upstream/mod.rs` 争抢同一模块路径，触发 E0761
@@ -50,15 +62,17 @@ impl UpstreamClient {
     /// 从 [`Config`] 构造客户端；超时由 config 控制
     pub fn new(cfg: &Config) -> Result<Self, BffError> {
         let http = Client::builder()
-            .timeout(Duration::from_millis(cfg.upstream_timeout_ms))
-            .connect_timeout(Duration::from_millis(cfg.upstream_timeout_ms.min(2000)))
+            .timeout(Duration::from_secs(cfg.upstream_timeout_secs))
+            .connect_timeout(Duration::from_millis(
+                (cfg.upstream_timeout_secs.saturating_mul(1000)).min(2000),
+            ))
             .pool_idle_timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| BffError::Upstream(format!("reqwest build: {e}")))?;
+            .map_err(|e| BffError::DependencyUnavailable(format!("reqwest build: {e}")))?;
         Ok(Self {
             http,
-            auth_base: cfg.auth_service_base.trim_end_matches('/').to_string(),
-            project_base: cfg.project_service_base.trim_end_matches('/').to_string(),
+            auth_base: cfg.auth_service_url.trim_end_matches('/').to_string(),
+            project_base: cfg.project_service_url.trim_end_matches('/').to_string(),
         })
     }
 
@@ -74,13 +88,16 @@ impl UpstreamClient {
             .await?;
         let status = resp.status();
         let json: Value = resp.json().await.map_err(|e| {
-            BffError::Upstream(format!("auth login response decode: {e}"))
+            BffError::DependencyUnavailable(format!("auth login response decode: {e}"))
         })?;
         Ok((status, json))
     }
 
     /// `POST /v1/auth/refresh` — 透传
-    pub async fn forward_auth_refresh(&self, body: &Value) -> Result<(HttpStatus, Value), BffError> {
+    pub async fn forward_auth_refresh(
+        &self,
+        body: &Value,
+    ) -> Result<(HttpStatus, Value), BffError> {
         let url = format!("{}/v1/auth/refresh", self.auth_base);
         let resp = self
             .http
@@ -91,7 +108,7 @@ impl UpstreamClient {
             .await?;
         let status = resp.status();
         let json: Value = resp.json().await.map_err(|e| {
-            BffError::Upstream(format!("auth refresh response decode: {e}"))
+            BffError::DependencyUnavailable(format!("auth refresh response decode: {e}"))
         })?;
         Ok((status, json))
     }
@@ -120,7 +137,7 @@ impl UpstreamClient {
         let resp = req.send().await?;
         let status = resp.status();
         let json: Value = resp.json().await.map_err(|e| {
-            BffError::Upstream(format!("project list response decode: {e}"))
+            BffError::DependencyUnavailable(format!("project list response decode: {e}"))
         })?;
         Ok((status, json))
     }
@@ -135,7 +152,6 @@ mod tests {
         let cfg = Config::for_test(
             "http://127.0.0.1:9001/".into(),
             "http://127.0.0.1:9003//".into(),
-            "http://127.0.0.1:9090".into(),
         );
         let c = UpstreamClient::new(&cfg).unwrap();
         assert_eq!(c.auth_base, "http://127.0.0.1:9001");

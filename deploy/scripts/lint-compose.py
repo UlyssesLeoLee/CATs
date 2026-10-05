@@ -299,13 +299,23 @@ for name, s in sorted(services.items()):
 #
 # 已知存量列入基线（gate new violations），清债方式见 v0.4 §未接项。
 ORPHAN_BASELINE = {
-    "cats-bff": ["grpc_clients.rs", "routes.rs", "upstream/auth.rs",
-                 "upstream/projects.rs", "upstream/tasks.rs",
-                 "upstream_passthrough.rs"],
-    "cats-mock": ["data/audit.rs", "data/project.rs", "data/task.rs",
-                  "data/user.rs", "db/fixture.rs", "db/schema.rs", "db/seed.rs",
-                  "http/response.rs", "http/routes.rs", "http/server.rs",
-                  "infra/kafka.rs", "infra/redis.rs"],
+    # 2026-10-05: upstream_passthrough.rs 已接线（第 1 步）。
+    # 剩余 4 项仍未接入 —— routes.rs / grpc_clients.rs 是另两步，
+    # upstream/{auth,projects,tasks}.rs 一直被 upstream/mod.rs 声明着，
+    # 它们留在基线里是 lint 自身的历史遗留（见 BACKEND_STATUS_v0.4 §4.1c）。
+    "cats-bff": ["grpc_clients.rs", "routes.rs"],
+    # 2026-10-05 移除 cats-mock 整项（原 12 个文件 / 2899 行）。
+    #
+    # 那一条**全是 reachable_rs 的 bug 造出来的假账**，不是真孤儿：
+    # `cats-mock/src/lib.rs` 一直声明着
+    #     pub mod data; pub mod db; pub mod http; pub mod infra; pub mod smoke;
+    # 而旧实现恒把 `mod` 声明相对 `src_dir` 解析，于是 `mod data;` 去找
+    # `src/data.rs`（不存在），**从不进入 `src/data/` 目录**。
+    # 证据：`cargo check -p cats-mock` 一直通过 —— 真孤儿编不过。
+    #
+    # 也就是说 BACKEND_STATUS_v0.4 §4.1 里「cats-mock 2899 行孤儿
+    # （lib.rs 宣称四模块却一个都没声明）」这句**是错的**，在此显式撤回。
+    # 真正的孤儿存量因此从「7 crate / 3963 行」降到「6 crate / 558 行」。
     "file-service": ["state.rs", "storage.rs"],
     "notification-service": ["consumer.rs", "state.rs"],
     "project-service": ["state.rs"],
@@ -323,8 +333,37 @@ ORPHAN_BASELINE = {
 MOD_RE = re.compile(r'^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;', re.M)
 
 
+def _mod_search_dirs(path, src_dir):
+    """一个文件里的 `mod x;` 可能落在哪些目录（Rust 2018 规则）。
+
+    - `src/lib.rs` / `src/main.rs` / `src/foo/mod.rs` → 同目录
+    - `src/foo.rs`                        → 先 `src/foo/`，再退回 `src/`（旧式）
+    """
+    base = os.path.dirname(path)
+    stem = os.path.basename(path)
+    if stem in ("lib.rs", "main.rs", "mod.rs"):
+        return [base]
+    return [os.path.join(base, stem[:-3]), base]
+
+
 def reachable_rs(src_dir):
-    """从 lib.rs / main.rs 出发做传递闭包，返回真正会编译的相对路径集合。"""
+    """从 lib.rs / main.rs 出发做传递闭包，返回真正会编译的相对路径集合。
+
+    2026-10-05 修：**`mod` 声明必须相对「当前文件所在目录」解析，不能恒定
+    相对 `src_dir`。**
+
+    原实现恒用 `os.path.join(src_dir, ...)`，于是走到 `src/upstream/mod.rs`
+    时，它的 `pub mod auth;` 被解析成 `src/auth.rs` —— 不存在，于是**不往下
+    走**。结果 `upstream/{auth,projects,tasks}.rs` 明明被 `upstream/mod.rs`
+    声明着（crate 能构建就是证明），却被规则 7 报成孤儿。
+
+    这个 bug 的危害不是"多报了 3 个文件"，而是**它会掩盖真正的孤儿**：只要一个
+    crate 用子目录组织模块，那整个子目录的可达性就是瞎的 —— 里面真躺着一个
+    没被声明的文件，规则 7 也看不见。
+
+    顺带按 Rust 2018 规则补上 `src/foo.rs` 声明 `mod bar;` 解析到
+    `src/foo/bar.rs` 的情形（旧式 `src/bar.rs` 仍作回退）。
+    """
     found = set()
     frontier = [os.path.join(src_dir, n) for n in ("lib.rs", "main.rs")
                 if os.path.isfile(os.path.join(src_dir, n))]
@@ -337,10 +376,15 @@ def reachable_rs(src_dir):
         with io.open(path, encoding="utf-8") as f:
             mods = MOD_RE.findall(f.read())
         for m in mods:
-            for cand in (m + ".rs", m + "/mod.rs"):
-                cp = os.path.join(src_dir, *cand.split("/"))
-                if os.path.isfile(cp):
-                    frontier.append(cp)
+            placed = False
+            for d in _mod_search_dirs(path, src_dir):
+                for cand in (m + ".rs", m + "/mod.rs"):
+                    cp = os.path.join(d, *cand.split("/"))
+                    if os.path.isfile(cp):
+                        frontier.append(cp)
+                        placed = True
+                        break
+                if placed:
                     break
     return found
 

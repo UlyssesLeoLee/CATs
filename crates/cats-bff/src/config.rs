@@ -54,6 +54,21 @@ impl Config {
                 .unwrap_or(5),
         }
     }
+
+    /// 测试专用构造：只覆盖两个上游基址，其余取默认值。
+    ///
+    /// 2026-10-05 接线 `upstream_passthrough` 时补的 —— 那个文件的测试原本调
+    /// `Config::for_test(auth, project, translation_core_grpc)` 三个参数，但
+    /// **第三个在该测试里压根没被用到**（只断言了前两个）。这里按实际需要只收
+    /// 两个参数；等 `grpc_clients` 接线、真的需要 gRPC URL 时再加第三个，
+    /// 免得先加一个此刻无人使用的字段。
+    pub fn for_test(auth_service_url: String, project_service_url: String) -> Self {
+        Self {
+            auth_service_url,
+            project_service_url,
+            ..Self::from_env()
+        }
+    }
 }
 
 #[cfg(test)]
