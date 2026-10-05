@@ -156,12 +156,44 @@ rustc 根本没看这个文件。
 |---|---|---|
 | cats-mock | 2899 | `lib.rs` 文档宣称提供 http/db/infra/data 四模块，实际一个都没声明 |
 | cats-bff | 809 | 依赖 4 个不存在的 `Config` API（v0.3 §6 已记），需先补 API |
-| 其余 6 个 | 575 | audit/file/notification/project/report/task 的 `state.rs` 等 |
+| 其余 6 个 | 575 | 各自的 `state.rs` 等，**但情况各不相同，见下** |
 
-> **最实际的风险**：`common/src/error.rs` 接线之后，audit / file /
-> notification 的 `db.rs`·`handlers.rs`·`consumer.rs` 仍然在基线里。
-> 它们引用 `cats_common::CatsError` 的方式现在**能编译了**，但仍没人调用。
-> 下一个改错误处理的人会遇到"类型明明存在却找不到引用"。
+##### 6 个 `state.rs` 的三种不同情况（2026-10-05 逐 crate 核对）
+
+这三个 crate 的 `state.rs` 都是 19~27 行的 `AppState { pool, checker }`，
+看着像同一个模板，**实际不能一把接**：
+
+| crate | 现状 | 接 `mod state;` 的后果 |
+|---|---|---|
+| **audit-service** | `handlers.rs`（124 行完整 HTTP handler）引用 `crate::db` / `crate::models` / `crate::state::AppState`，而 `lib.rs` **只声明了 `pub mod consumer;`** | 这不是"接一个 state"，而是**接一整组**：`db` / `models` / `state` / `handlers` 四个文件互相引用，缺一个都编译不过 |
+| **task-service** | `handlers.rs` **自己又定义了一个 `AppState`**（12 处引用），`state.rs` 里还有另一个 | **接上去会造出两个竞争的 `AppState`**，编译期就冲突。这需要先决定哪个是权威，不能顺手做 |
+| **project / report / file / notification** | `state.rs` 无人引用，其余文件也不提 `AppState` | 只加 `mod` 会多出一个没人用的类型，workspace 严格 lint 下是 `dead_code`（可能直接是错误）。**不构成进展** |
+
+##### audit-service 是下一块最合理的阵地
+
+它的 `handlers.rs` 依赖：
+
+```rust
+use crate::db;
+use crate::models::{AuditLogListResponse, AuditLogResponse, KafkaAuditEvent};
+use crate::state::AppState;
+use cats_common::{cats_error_to_response, CatsError, ErrorCode};
+use cats_rbac::service_helpers::{extract_user_id_and_roles, require_roles};
+```
+
+后两条**正好是本轮刚接上的两个共享模块**（`common/src/error.rs` 与
+`cats-rbac/src/service_helpers.rs`）。也就是说：这两个模块当年写好了、
+却因为自己没被 `mod` 声明而不可用，于是依赖它们的 audit handler
+也一起卡死。**接上共享模块等于一次性解锁了这条链。**
+
+它接完之后 audit-service 才有真正的 HTTP 端点（现在只有 `/healthz`），
+这是**补功能**而不只是清死代码。
+
+
+> 这正是「一个 27 行的小文件看起来该有多简单」和「它其实是设计冲突」的差别。
+> 接线 translation-core 时遇到的 prost 类型名问题同理：**动手前先确认
+> 它接的是谁、接上之后有没有人用**。
+
 
 
 ### §4.2 audit consumer 仍是 no-op
