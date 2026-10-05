@@ -27,15 +27,17 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), CatsError> {
 }
 
 /// 插入一条 audit log (从 Kafka event 落档)
+///
+/// 2026-10-05：`ip` 原先绑成 `Option<sqlx::types::ipnetwork::IpNetwork>`，
+/// 编译不过（workspace 的 sqlx 没开 `ipnetwork` feature，E0433）。改为绑
+/// `&str` 并在 SQL 里写 `$9::inet` 让 PG 自己做转换 —— 与 `consumer.rs`
+/// 的 `process_event` 完全同一套写法。
 pub async fn insert_event(pool: &PgPool, ev: &KafkaAuditEvent) -> Result<i64, CatsError> {
-    let ip: Option<sqlx::types::ipnetwork::IpNetwork> = ev
-        .ip
-        .as_ref()
-        .and_then(|s| s.parse().ok());
+    let ip: Option<&str> = ev.ip.as_deref();
     let row: (i64,) = sqlx::query_as(
         r#"INSERT INTO audit_logs (event_id, org_id, actor_user_id, action, resource_type, resource_id,
                                   before_state, after_state, ip, occurred_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::inet,$10)
            ON CONFLICT (event_id) DO UPDATE SET ingested_at = now()
            RETURNING id"#,
     )
@@ -56,6 +58,10 @@ pub async fn insert_event(pool: &PgPool, ev: &KafkaAuditEvent) -> Result<i64, Ca
 }
 
 /// 按 org 分页查询 (供 GET /v1/audit-logs 用)
+///
+/// `ip::text AS ip` —— 列是 `INET`，但 workspace 的 sqlx 没开 `ipnetwork`
+/// feature（见 `AuditLogRow::ip` 的说明与 `insert_event`）。在 SQL 里转成
+/// 文本后，解码成 `String` 就不需要那个 feature 了。
 pub async fn list_by_org(
     pool: &PgPool,
     org_id: Uuid,
@@ -64,7 +70,7 @@ pub async fn list_by_org(
 ) -> Result<Vec<AuditLogRow>, CatsError> {
     sqlx::query_as::<_, AuditLogRow>(
         r#"SELECT id, event_id, org_id, actor_user_id, action, resource_type, resource_id,
-                  before_state, after_state, ip, occurred_at, ingested_at
+                  before_state, after_state, ip::text AS ip, occurred_at, ingested_at
            FROM audit_logs
            WHERE org_id = $1
            ORDER BY occurred_at DESC

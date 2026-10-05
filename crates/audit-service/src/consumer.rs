@@ -13,40 +13,37 @@
 //! 引用: doc/02-基础设计/部署设计/CATs_Kafka物理发布设计_v1.0.md
 //! 引用: doc/05-其他/错误码/CATs_错误码表_v1.0.md (per 失败重试策略)
 //!
-//! 自包含: 不依赖 crate 内其他模块 (handlers/db/models 都还是孤儿文件),
-//! 重复定义 `KafkaAuditEvent` 与 INSERT SQL 以保证 consumer 模块可独立编译.
+//! 2026-10-05 更正：这段曾写着「自包含: 不依赖 crate 内其他模块
+//! (handlers/db/models 都还是孤儿文件), 重复定义 `KafkaAuditEvent` 与
+//! INSERT SQL 以保证 consumer 模块可独立编译」。接线后这句话不再成立 ——
+//! `KafkaAuditEvent` 已改为从 `models.rs` re-export（下方第 1 节），原因见那里。
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sqlx::PgPool;
 use std::env;
 use std::time::Duration;
 use tracing::{error, info, warn};
-use uuid::Uuid;
+// 2026-10-05：本文件原先还 import 了 `chrono::{DateTime, Utc}`、
+// `serde::Serialize`、`uuid::Uuid` —— 它们只服务于本模块那份重复的
+// `KafkaAuditEvent` 定义。定义删掉后这三个就变成未用 import，而
+// `clippy -D warnings` 会因此让 CI 变红。
 
 // =====================================================================
-// 1. 自包含 Kafka event schema (重复自 crate 原 models.rs, 但消费链独立)
+// 1. Kafka event schema —— 现在从 models.rs 取，不再自带一份
 // =====================================================================
+//
+// 2026-10-05 接线时改掉的自包含副本：
+//
+// 原注释写的是"handlers/db/models 都还是孤儿文件，重复定义 KafkaAuditEvent
+// 以保证 consumer 模块可独立编译"。这个理由在当时成立。但一旦 `mod models;`
+// 接上，同一个 crate 里就会有两个 `KafkaAuditEvent` —— `db::insert_event`
+// 收的是 `&models::KafkaAuditEvent`，而 consumer 造的是自己那份，
+// **类型不同，编译期直接冲突**。
+//
+// 两个结构体逐字段完全相同，所以这里没有语义取舍：models.rs 是唯一来源，
+// consumer 用 re-export 保持对外 API 不变。
 
-/// `cats.audit.v1` topic 消息 schema (per 接口设计 §1.5 schema_version 字段)
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct KafkaAuditEvent {
-    pub event_id: Uuid,
-    pub org_id: Uuid,
-    pub actor_user_id: Option<Uuid>,
-    pub action: String,
-    pub resource_type: String,
-    pub resource_id: String,
-    #[serde(default)]
-    pub before_state: Option<serde_json::Value>,
-    #[serde(default)]
-    pub after_state: Option<serde_json::Value>,
-    #[serde(default)]
-    pub ip: Option<String>,
-    pub occurred_at: DateTime<Utc>,
-    #[serde(default)]
-    pub schema_version: u32,
-}
+pub use crate::models::KafkaAuditEvent;
 
 // =====================================================================
 // 2. REST proxy 长轮询响应 schema (兼容 Confluent REST Proxy v2)

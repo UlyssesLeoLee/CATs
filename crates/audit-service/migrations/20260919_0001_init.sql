@@ -22,9 +22,14 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 --                partitioning columns
 --
 --   2. 修成 `UNIQUE (event_id, occurred_at)` 之后，生产代码
---      （src/db.rs:39 与 src/consumer.rs:103）里的
+--      （`db::insert_event` 与 `consumer::process_event`）里的
 --          ON CONFLICT (event_id) DO UPDATE SET ingested_at = now()
 --      会运行期报错：
+--
+--      注：这里原本写的是 `src/db.rs:39 与 src/consumer.rs:103`。行号指针
+--      在 2026-10-05 核实时就已失准 —— HEAD 版本里 consumer.rs 的
+--      ON CONFLICT 在第 98 行，从来不是 103。改为函数名，函数名不会随
+--      增删注释而漂移。
 --        ERROR:  there is no unique or exclusion constraint matching the
 --                ON CONFLICT specification
 --      这段 ON CONFLICT 是 Kafka 至少一次投递下的幂等键，丢掉它等于允许

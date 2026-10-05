@@ -299,7 +299,6 @@ for name, s in sorted(services.items()):
 #
 # 已知存量列入基线（gate new violations），清债方式见 v0.4 §未接项。
 ORPHAN_BASELINE = {
-    "audit-service": ["db.rs", "handlers.rs", "models.rs", "state.rs"],
     "cats-bff": ["grpc_clients.rs", "routes.rs", "upstream/auth.rs",
                  "upstream/projects.rs", "upstream/tasks.rs",
                  "upstream_passthrough.rs"],

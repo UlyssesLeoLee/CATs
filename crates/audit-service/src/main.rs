@@ -4,15 +4,23 @@
 //! 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
 //! 引用: ULYS-153 切片 C-2 — 真实 Kafka consumer (REST proxy 拉取)
 //!
-//! M0 阶段：actix-web 4 健康检查占位，端口与绑定地址走环境变量。
-//! M1 阶段 (per ULYS-153 切片 C-2): spawn `run_consumer_loop` 订阅 `cats.audit.v1`.
+//! 2026-10-05 接线。此前本文件只注册 `/healthz` 一个路由，而 `db.rs` /
+//! `handlers.rs` / `models.rs` / `state.rs` 四个文件因为 `lib.rs` 没有
+//! `mod` 声明而从未被编译 —— 也就是说这个服务**从来没有过任何业务端点**。
+//!
+//! 路由：
+//! - `GET  /healthz`             — 存活探针（无 auth）
+//! - `GET  /readyz`              — 就绪探针，含 DB 探活
+//! - `GET  /v1/audit-logs`       — 按 org 分页列出（RBAC: Audit Read）
+//! - `POST /v1/audit-logs/test`  — 手动 ingest 一条（开发/测试用）
+//! - 另 spawn `run_consumer_loop` 订阅 `cats.audit.v1`（per ULYS-153 C-2）
 
-use actix_web::{web, App, HttpResponse, HttpServer};
-use cats_common::AppMeta;
-use serde::Serialize;
-use sqlx::postgres::PgPoolOptions;
+use actix_web::{web, App, HttpServer};
 use std::env;
-use tracing::{error, info};
+use tracing::info;
+
+use audit_service::handlers;
+use audit_service::state::AppState;
 
 /// 业务配置 (从 env 读取)
 #[derive(Debug, Clone)]
@@ -31,52 +39,34 @@ impl Config {
     }
 }
 
-/// 健康检查响应
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    app: AppMeta,
-}
-
-/// `GET /healthz` — 存活探针 + 启动探针复用
-async fn healthz() -> HttpResponse {
-    HttpResponse::Ok().json(HealthResponse {
-        status: "ok",
-        // 2026-10-05: 原来用 AppMeta::current(), 它返回的是 **cats-common 自己的**
-        // CARGO_PKG_NAME —— 于是所有 service 的 /healthz 都自报 "cats-common",
-        // 监控无法区分是哪个服务应答的, 版本号也是共享库的版本。
-        // env! 是编译期按**本 crate** 展开的, 所以这里报的是本服务自己。
-        app: AppMeta {
-            name: env!("CARGO_PKG_NAME").to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        },
-    })
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     cats_common::init_tracing();
     let cfg = Config::from_env();
     info!(bind_addr = %cfg.bind_addr, "starting audit-service");
 
-    // 构造 audit_db 连接池 (lazy connect, 不阻塞启动)
-    // 若 DATABASE_URL 未设, 仍启动 HTTP 但 consumer 不能落档
-    let pool = match env::var("DATABASE_URL").ok() {
-        Some(url) => match PgPoolOptions::new().max_connections(10).connect_lazy(&url) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                error!(error = %e, "audit_db pool build failed; consumer disabled, HTTP only");
-                None
-            }
-        },
-        None => {
-            error!("DATABASE_URL not set; consumer disabled, HTTP only");
-            None
+    // 2026-10-05 行为变更：原来 DATABASE_URL 缺失时**照常起 HTTP**，
+    // 只有 consumer 被禁用。那在没有 DB 的情况下所有业务端点都必然失败，
+    // 容器却显示 Up —— 又一次"看起来正常"。
+    //
+    // 既然现在有了真端点，缺库就该启动即失败（与 file-service / worker-service
+    // 一致），并且**不打印 URL 的值**（仓库安全约束）。
+    //
+    // 用 `db::build_pool`（connect 而非 connect_lazy）：compose 已保证
+    // db-init 先跑完，库连不上就是真故障，应该当场暴露而不是拖到第一个请求。
+    let pool = match audit_service::db::build_pool().await {
+        Ok(p) => p,
+        Err(e) => {
+            // 打印错误码而不打印连接串
+            eprintln!("ERROR: audit_db unavailable: {}", e);
+            return Err(std::io::Error::other("audit_db unavailable"));
         }
     };
+    info!("audit_db pool ready");
 
     // 启动 Kafka consumer (per ULYS-153 切片 C-2)
-    if let Some(pool) = pool.clone() {
+    {
+        let pool = pool.clone();
         let topic = cfg.kafka_topic.clone();
         tokio::spawn(async move {
             audit_service::run_consumer_loop(pool, topic).await;
@@ -84,9 +74,19 @@ async fn main() -> std::io::Result<()> {
         info!(topic = %cfg.kafka_topic, "audit consumer task spawned");
     }
 
+    let state = web::Data::new(AppState::new(pool.clone()));
+    let pool_data = web::Data::new(pool);
     let bind_addr = cfg.bind_addr.clone();
-    HttpServer::new(move || App::new().route("/healthz", web::get().to(healthz)))
-        .bind(&bind_addr)?
-        .run()
-        .await
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(state.clone())
+            .app_data(pool_data.clone())
+            // 路由表在 handlers::configure —— 与集成测试共用同一份，
+            // 避免"测试验证的路由表"和"服务实际监听的路由表"两份。
+            .configure(handlers::configure)
+    })
+    .bind(&bind_addr)?
+    .run()
+    .await
 }
