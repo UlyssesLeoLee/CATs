@@ -34,3 +34,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 cats-mock = { workspace = true }
+# 起一个真监听端口的 gRPC server，用 TcpListenerStream 把 tokio 的 listener
+# 喂给 tonic 的 serve_with_incoming（否则只能挑固定端口，测试会 flaky）。
+tokio-stream = { version = "0.1", features = ["net"] }
