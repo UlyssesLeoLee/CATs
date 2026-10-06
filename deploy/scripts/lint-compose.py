@@ -782,6 +782,44 @@ _HEALTHZ_PKG_RE = re.compile(r'env!\(\s*"CARGO_PKG_NAME"\s*\)')
 _HEALTHZ_APP_RE = re.compile(r'\bapp\s*:|"app"\s*:')
 _HEALTHZ_LEAK_KEYS = ("upstreams", "bind_addr")
 
+# 整个函数体就是一次无参调用 —— `fn healthz() -> impl Responder { healthz_response() }`。
+# report-service 用的就是这种委托：handler 自己不含任何响应字段，形状在被委托的
+# 工厂里。不跟随就会把合法代码判成"不合统一形状"，也会把形状检查落到空白上。
+_HEALTHZ_PURE_CALL_RE = re.compile(
+    r'^\s*(?:return\s+)?(?P<f>[A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*;?\s*$', re.S)
+_HEALTHZ_MAX_DELEGATE_HOPS = 3
+
+
+def _healthz_payload(crate, def_rel, body):
+    """返回真正承载 `/healthz` 响应体的 body，外加跟随过的委托链说明。
+
+    抽不出来时返回 `(None, trail)`。**不要**把"抽不出来"当成"形状正确"——
+    那正是本规则最初漏掉 report-service 的方式。
+    """
+    trail = []
+    seen = set()
+    cur, rel = body, def_rel
+    for _ in range(_HEALTHZ_MAX_DELEGATE_HOPS):
+        if cur is None:
+            return None, trail
+        if _HEALTHZ_APP_RE.search(cur) or _HEALTHZ_PKG_RE.search(cur):
+            return cur, trail
+        m = _HEALTHZ_PURE_CALL_RE.match(cur)
+        if not m:
+            return None, trail
+        fname = m.group("f")
+        if fname in seen:
+            return None, trail          # 委托成环
+        seen.add(fname)
+        defs = _healthz_defs.get(crate, {})
+        cands = sorted((c for c in defs.get(fname, []) if c[1] is not None),
+                       key=lambda t: (0 if t[0] == rel else 1, t[0]))
+        if not cands:
+            return None, trail
+        trail.append("%s()" % fname)
+        rel, cur = cands[0][0], cands[0][1]
+    return None, trail
+
 
 def _strip_line_comments(src):
     """丢掉每行 `//` 之后的全部内容，**保留换行**以便行号不变。
@@ -882,6 +920,11 @@ def _fn_body(code, start):
 
 
 _healthz_sites = []          # 受本规则检查的注册点（已剔除 HEALTHZ_SKIP）
+                             # 元组：(crate, 注册处rel, 注册行, 定义rel, 定义体首行,
+                             #        handler名, handler函数体文本)
+                             # 函数体一并存下：检查发生在 crate 循环之外，不存下来
+                             # 就只能去读那个循环的残留变量（= 最后一个 crate 的）。
+_healthz_defs = {}           # crate -> {fn 名: [(rel, body, bline)]}
 _healthz_crates = set()       # 上面这些注册点跨了多少个 crate
 _healthz_all_sites = defaultdict(int)   # 每个 crate 的注册点总数（含被跳过的）
 _healthz_skip_sites = defaultdict(int)  # 每个被跳过 crate 实际找到的注册点数
@@ -909,6 +952,11 @@ for _crate in sorted(os.listdir(crates_root)):
         for _m in _HEALTHZ_FN_DEF_RE.finditer(_code[_rel]):
             _body, _bline = _fn_body(_code[_rel], _m.start())
             _defs[_m.group("name")].append((_rel, _body, _bline))
+
+    # 逐 crate 留存函数索引: 规则 10/12 要跟随 `healthz_response()` 这类委托,
+    # 而检查发生在 crate 循环**之外** —— 只留一个 `_defs` 会让它变成"最后一个
+    # crate 的函数表", 于是每个 crate 的 handler 都被解析成别的 crate 的函数。
+    _healthz_defs[_crate] = _defs
 
     for _rel in sorted(_code):
         _src = _code[_rel]
@@ -942,7 +990,8 @@ for _crate in sorted(os.listdir(crates_root)):
                                                t[0]))
                 if _cands:
                     _drel, _body, _bline = _cands[0]
-            _healthz_sites.append((_crate, _rel, _reg_line, _drel, _bline, _name))
+            _healthz_sites.append((_crate, _rel, _reg_line, _drel, _bline, _name,
+                                   _body))
 
 _healthz_n_sites = len(_healthz_sites)
 _healthz_n_crates = len(_healthz_crates)
@@ -956,7 +1005,7 @@ if _healthz_n_sites < _HEALTHZ_MIN_SITES:
         "**空结果不等于没有问题**" % (_healthz_n_sites, _HEALTHZ_MIN_SITES))
 else:
     for _site in _healthz_sites:
-        _crate, _reg_rel, _reg_line, _drel, _bline, _name = _site
+        _crate, _reg_rel, _reg_line, _drel, _bline, _name, _body = _site
         if _drel is None:
             err("crate '%s' 的 %s:%d 注册了 /healthz，但解析不到 handler 的函数体"
                 "（handler=%s；可能是闭包/method 值，也可能大括号没配平）—— "
@@ -964,20 +1013,32 @@ else:
                 "若这是有意为之的闭包 handler，请把该 crate 加进 HEALTHZ_SKIP "
                 "并写下理由" % (_crate, _reg_rel, _reg_line, _name))
             continue
+        # 真正的响应体可能在被委托的工厂里（report-service 的
+        # `healthz()` → `healthz_response()`）。抽不出来**必须报错**：把
+        # "抽不出"当成"形状正确"会让这一处悄悄脱离检查范围。
+        _payload, _trail = _healthz_payload(_crate, _drel, _body)
+        if _payload is None:
+            err("crate '%s' 的 /healthz handler `%s()`（注册于 %s:%d，定义于 %s:%d）"
+                "既不含响应字段，又不是可跟随的纯委托（已跟随：%s）—— 无法确认它返回统一形状。"
+                "**解析失败不等于形状正确**，不能当成通过"
+                % (_crate, _name, _reg_rel, _reg_line, _drel, _bline,
+                   " -> ".join(_trail) if _trail else "无"))
+            continue
         _bad = []
-        if not _HEALTHZ_PKG_RE.search(_body):
+        if not _HEALTHZ_PKG_RE.search(_payload):
             _bad.append('没有 env!("CARGO_PKG_NAME") —— 会自报共享库的名字而不是本服务')
-        if not _HEALTHZ_APP_RE.search(_body):
+        if not _HEALTHZ_APP_RE.search(_payload):
             _bad.append('没有 app 键（struct 字段 app: 或 json 键 "app":）')
         for _k in _HEALTHZ_LEAK_KEYS:
-            if re.search(r"\b%s\b" % _k, _body):
+            if re.search(r"\b%s\b" % _k, _payload):
                 _bad.append("泄漏内部拓扑字段 %s" % _k)
         if _bad:
-            err("crate '%s' 的 /healthz handler `%s()`（注册于 %s:%d，定义于 %s:%d）"
+            err("crate '%s' 的 /healthz handler `%s()`（注册于 %s:%d，定义于 %s:%d%s）"
                 "不合统一形状：%s —— 统一形状是 "
                 '{"status":"ok","app":{"name":..,"version":..}}；'
                 "形状不一致会让读 .service 的监控脚本拿到**静默的 null**"
                 % (_crate, _name, _reg_rel, _reg_line, _drel, _bline,
+                   ("，委托链 " + " -> ".join(_trail)) if _trail else "",
                    "；".join(_bad)))
 
 # 例外不能腐烂: 跳过清单里的 crate 一旦不再注册 /healthz，说明例外已失效，
@@ -1141,6 +1202,158 @@ note("healthz 断言用例 %d 个，其中 %d 个带 #[ignore]（本地无真 Po
      "只有 CI 的 e2e job 会执行 —— 改 healthz 形状时它们是盲区）"
      % (_healthz_test_n, _healthz_test_ignored))
 
+
+# ---------------------------------------------------------------------
+# 规则 12: openapi 的 `HealthResponse` 必须与 Rust 实测形状逐项对拍
+#
+# 真实事故 (2026-10-07 实证): 规格与实现之间**没有任何东西**在互相校验。
+# `/healthz` 在实现侧统一到 `{"status","app"}` 之后，openapi 里仍然写着
+# 统一前的 `service: string`；反过来，把 spec 改坏也没有任何检查会响。
+# 规格是给代码生成器和外部消费者用的 —— 两者对不上时，它对谁都是错的。
+#
+# 规则 10 只看 Rust 侧（"有没有 app 键"、"有没有泄漏 upstreams"），它不看 spec；
+# 所以这条规则填的是**两侧对不上**这个洞：两侧各自自洽 ≠ 两侧一致。
+#
+# 【必须写在这里的两个坑】
+#
+# 1. **不要把 Rust 侧的形状写成常量再和 spec 比**。那等于拿 spec 自己和自己比：
+#    写死 `["status","app"]` 的检查永远绿，改 Rust 也不响。形状必须**从源码抽**，
+#    抽完再和 spec 比。下面 `_healthz_top_keys` 就是干这个的。
+#
+# 2. 形状抽取失败必须报错，不能当成"一致"。规则 10 就是在这里栽过：
+#    它的检查循环读的是 crate 收集循环的残留 `_body`，于是 18 个 site 里有 17 个
+#    实际检查的是最后一个 crate 的代码，report-service 那个纯委托的 handler
+#    从没被看过，而门禁一直是绿的。所以这里有独立的 `_HEALTHZ_SHAPE_MIN` 阈值，
+#    抽不出形状的 site 一律 FAIL。
+
+_HEALTHZ_SHAPE_MIN = 16        # 实测 18；抽不出的 site 直接 FAIL，阈值只防整体失效
+_OPENAPI = os.path.join(ROOT, "api", "openapi", "cats-openapi-v1.0.1.yaml")
+_HEALTHZ_OBJ_ANCHORS = (
+    r'serde_json::json!\s*\(\s*\{',
+    r'json!\s*\(\s*\{',
+    r'(?P<t>[A-Z][A-Za-z0-9_]*)\s*\{',
+)
+
+
+def _split_top_level(inner):
+    """按顶层逗号切分，跳过嵌套 {}[]() 与字符串/char 字面量。"""
+    parts, buf, depth = [], [], 0
+    i, n = 0, len(inner)
+    while i < n:
+        ch = inner[i]
+        if ch == '"' or (ch == "r" and i + 1 < n and inner[i + 1] in '"#'):
+            j = _skip_rust_string(inner, i)
+            buf.append(inner[i:j])
+            i = j
+            continue
+        if ch in "{[(":
+            depth += 1
+        elif ch in "}])":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    if buf:
+        parts.append("".join(buf))
+    return parts
+
+
+def _healthz_top_keys(body):
+    """抽 `/healthz` 响应体**顶层**的键。两种写法都要认：
+
+        `json!({ "status": .., "app": .. })`      （cats-ai-gateway / cats-bff）
+        `HealthResponse { status: .., app: .. }`  （其余 16 个）
+
+    抽不到返回 None —— 调用方必须把 None 当失败，不能当"一致"。
+    """
+    if not body:
+        return None
+    for pat in _HEALTHZ_OBJ_ANCHORS:
+        m = re.search(pat, body)
+        if not m:
+            continue
+        brace = body.index("{", m.start())
+        inner, _ = _fn_body(body, brace)
+        if inner is None:
+            continue
+        keys = []
+        for part in _split_top_level(inner):
+            km = re.match(r'\s*(?:"(?P<q>[A-Za-z0-9_]+)"|'
+                          r'(?P<b>[A-Za-z_][A-Za-z0-9_]*))\s*:', part)
+            if km:
+                keys.append(km.group("q") or km.group("b"))
+        if keys:
+            return keys
+    return None
+
+
+# --- Rust 侧：逐 site 抽形状 ---
+_healthz_shapes = {}            # 排序后的键元组 -> [site 描述]
+_healthz_shape_sites = 0
+for _site in _healthz_sites:
+    _crate, _reg_rel, _reg_line, _drel, _bline, _name, _body = _site
+    _payload, _trail = _healthz_payload(_crate, _drel, _body)
+    _keys = _healthz_top_keys(_payload)
+    if _keys is None:
+        err("规则 12：crate '%s' 的 /healthz handler `%s()`（%s:%d%s）抽不出顶层键集合"
+            " —— 无法与 openapi 的 HealthResponse 对拍。**抽不出不等于一致**"
+            % (_crate, _name, _reg_rel, _reg_line,
+               ("，委托链 " + " -> ".join(_trail)) if _trail else ""))
+        continue
+    _healthz_shape_sites += 1
+    _healthz_shapes.setdefault(
+        tuple(sorted(set(_keys))),
+        []).append("%s(%s)" % (_crate, _name))
+
+if _healthz_shape_sites < _HEALTHZ_SHAPE_MIN:
+    err("规则 12 失效：只从 %d 处 /healthz 抽到形状（阈值 %d）—— "
+        "形状抽取器大概率没在查任何东西。**空结果不等于形状一致**"
+        % (_healthz_shape_sites, _HEALTHZ_SHAPE_MIN))
+else:
+    if len(_healthz_shapes) > 1:
+        for _k in sorted(_healthz_shapes):
+            err("规则 12：/healthz 顶层形状不唯一：%s —— %d 处"
+                % (list(_k), len(_healthz_shapes[_k])))
+
+    # --- spec 侧：读 openapi 的 HealthResponse ---
+    _spec_top = _spec_req = None
+    if not os.path.exists(_OPENAPI):
+        err("规则 12：找不到 %s —— 无法核对 /healthz 的规格形状" % _OPENAPI)
+    else:
+        try:
+            with io.open(_OPENAPI, encoding="utf-8") as _f:
+                _spec = yaml.safe_load(_f)
+        except Exception as _e:                      # noqa: BLE001
+            _spec = None
+            err("规则 12：%s 解析失败：%s" % (_OPENAPI, _e))
+        if _spec is not None:
+            _hr = ((_spec.get("components") or {}).get("schemas") or {}).get("HealthResponse")
+            if not _hr:
+                err("规则 12：openapi 里没有 components.schemas.HealthResponse —— "
+                    "规则 10 钉住的实现形状没有对应的规格定义，"
+                    "代码生成器/外部消费者无从知道 /healthz 返回什么")
+            else:
+                _spec_top = sorted((_hr.get("properties") or {}).keys())
+                _spec_req = sorted(_hr.get("required") or [])
+
+    if _spec_top is not None and len(_healthz_shapes) == 1:
+        _rust_top = list(next(iter(_healthz_shapes)))
+        if _spec_top != _rust_top:
+            err("规则 12：openapi 的 HealthResponse 形状与 Rust 实测不一致 —— "
+                "spec properties=%s，Rust 实测=%s%s。"
+                "两侧各自自洽但彼此对不上时，规格对代码生成器和外部消费者都是错的"
+                % (_spec_top, _rust_top,
+                   ("（Rust 侧：%d 处）" % _healthz_shape_sites) if _rust_top else ""))
+        if _spec_req != _rust_top:
+            err("规则 12：openapi 的 HealthResponse.required=%s 与实测顶层键 %s 不符"
+                " —— 少 required 会让生成出的客户端把可选字段当必填，"
+                "多 required 则可能指向一个根本不返回的键"
+                % (_spec_req, _rust_top))
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -1173,6 +1386,10 @@ print("  OK    规则 10 %d 个 crate 的 %d 处 /healthz 全部返回统一形�
 print("  OK    规则 11 %d 个断言 /healthz 的测试都不再用统一前的键"
       "（其中 %d 个 #[ignore]，本地跑不到）"
       % (_healthz_test_n, _healthz_test_ignored))
+print("  OK    规则 12 %d 处 /healthz 的实测顶层形状与 openapi HealthResponse 逐项一致"
+      "（顶层键 %s）"
+      % (_healthz_shape_sites,
+         list(next(iter(_healthz_shapes))) if len(_healthz_shapes) == 1 else "不唯一"))
 print("")
 for n in notes:
     print("  提醒  " + n)

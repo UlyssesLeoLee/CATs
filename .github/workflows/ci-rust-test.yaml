@@ -92,6 +92,14 @@ jobs:
       #             下方 e2e 步骤已改为失败累积（不早停），本条则让它在本地
       #             几秒内就红。变异验证见 D:\Temp\mutate-rule11.py（含一条
       #             "嵌套 app.name 与 .is_none() 不得误报" 的反向场景）。
+      #   规则 12   openapi 的 HealthResponse 必须与 Rust 实测形状逐项对拍
+      #             （两侧各自自洽 ≠ 两侧一致；之前两者之间没有任何检查）
+      #             真实事故: 实现侧统一到 {"status","app"} 之后，openapi 里
+      #             仍写着统一前的 `service: string`，而没有任何检查会响。
+      #             形状必须从 Rust 源码抽（抽不出即 FAIL，不能当成"一致"），
+      #             变异 D:\Temp\mutate-rule12.py 双向 5/5（Rust 加键 / spec
+      #             加键 / spec required 少列或清空 / 删掉整个 schema）
+
       - name: Lint docker-compose + envoy invariants
         if: matrix.os == 'ubuntu-latest'
         run: python deploy/scripts/lint-compose.py

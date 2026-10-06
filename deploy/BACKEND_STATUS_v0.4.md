@@ -1664,3 +1664,142 @@ CI 周期才暴露。
 2. 规则 11 的初版把"提到 healthz 的用例体"（26）当成被检查集合，与独立实现
    算出的"真的断言了键的用例"（9）不一致。阈值会虚高、误报面会放大，收紧成
    后者，并**用两个独立实现对拍**（9 / 5，两边完全一致）才收工。
+---
+
+### §4.1r 门禁自己也会假绿：规则 10 检查了 17/18 个**别人的**代码 🆕
+
+§4.1o 加了 lint 规则 10（18 个服务的 `/healthz` 必须统一形状），并在本地跑通。
+**它当时是绿的，而且绿的没有道理。**
+
+#### 怎么发现的
+
+本来是要做规则 12（openapi 的 `HealthResponse` 必须与 Rust 实测形状对拍），
+动手前先要证明"Rust 侧确实是这个形状"。当时手上只有
+`D:\Temp\check-openapi.py`，它打印了一行：
+
+```
+  matches the canonical handler shape: True
+```
+
+看着像证据。**它不是** —— 那行断言的第 40~43 行是：
+
+```python
+# The shape the 18 handlers actually emit:
+expected_top = ['status', 'app']        # 硬编码常量
+expected_app = ['name', 'version']
+ok = list(hs['properties'].keys()) == expected_top and ...
+```
+
+整个文件里**没有任何扫描 Rust 的代码**。它证明的只是"spec 自己和自己一致"。
+拿它当"Rust 与 spec 对得上"的证据，等于用同一个数去比它自己。
+
+于是写了一个真正去源码里抽形状的**独立实现**（`dump-healthz-shape.py`）。
+那个独立实现自己也错了三次，但正是这三次把规则 10 的问题顶了出来。
+
+#### 规则 10 的真 bug：检查循环读的是收集循环的残留变量
+
+```python
+for _crate in sorted(os.listdir(crates_root)):     # 收集循环
+    ...
+    _drel = _body = _bline = None
+    if _name:
+        ...
+        if _cands:
+            _drel, _body, _bline = _cands[0]      # _body 在这里被赋值
+
+for _site in _healthz_sites:                       # 检查循环（另一个循环）
+    _crate, _reg_rel, _reg_line, _drel, _bline, _name = _site
+    #                                          ↑ 元组里没有 _body
+    if not _HEALTHZ_PKG_RE.search(_body):         # 读的是上面残留的值
+```
+
+收集循环按字母序走完 18 个 crate，循环结束后 `_body` 里剩下的是**最后一个
+crate（worker-service）的 handler 函数体**。于是检查循环拿它去检查全部 18 个
+site：
+
+- **17 个 site 检查的是 worker-service 的代码**，不是它们自己的；
+- **report-service 从来没被检查过** —— 它的 handler 是纯委托
+  （`healthz()` 的整个函数体只有一句 `healthz_response()`，自身不含任何响应
+  字段）。它本该第一个报红，实际却因为"借用了 worker-service 的 body"而通过。
+
+也就是说这条规则的真实覆盖是 **1/18**，另外 17 个是恒真的。
+
+#### 变异证明（`D:\Temp\mutate-rule10-ownbody.py`，4/4）
+
+修复前后的差别用一个判据就能分开：**改坏一个 crate，门禁应当只点名那一个。**
+
+| 变异 | 修复前 | 修复后 | 判定 |
+|---|---|---|---|
+| 改坏 asr-service（**第一个** crate）丢 `app` 键 | exit 0（**假绿**） | exit 1，只点名 `asr-service` | PASS |
+| 改坏 worker-service（**最后一个**）丢 `app` 键 | exit 1，**18 个 site 全红** | exit 1，只点名 `worker-service` | PASS |
+| 改坏 report-service **被委托的工厂** `healthz_response()` | — | exit 1，点名 `report-service` | PASS |
+| cats-bff 重新泄漏 `bind_addr` | — | exit 1，点名 `cats-bff` | PASS |
+
+第一行说明旧门禁对非末尾 crate 完全失灵；第二行说明旧门禁的"红"也是假的
+（一个 crate 的问题被复制成 18 条噪音，掩盖真正的问题）。
+
+#### 修法
+
+1. `_healthz_sites` 的元组里带上 `_body` —— 检查循环不再读残留变量；
+2. 新增 `_healthz_defs[crate]`，**逐 crate 留存**函数索引（不逐 crate 留存就只有
+   最后一个 crate 的）；
+3. 新增 `_healthz_payload()`：跟随纯委托（最多 3 跳，带环检测），因为
+   report-service 的响应体在被委托的工厂里；
+4. **抽不出响应体一律 FAIL** —— 把"解析失败"当成"形状正确"正是这个 bug 的
+   表现形式。
+
+#### 规则 12：两侧各自自洽 ≠ 两侧一致
+
+规则 10 只看 Rust 侧。规格与实现之间**没有任何东西**在互相校验：实现统一到
+`{"status","app"}` 之后，openapi 里仍然写着统一前的 `service: string`；反过来
+把 spec 改坏也没有任何检查会响。规格是给代码生成器和外部消费者用的。
+
+规则 12 从 Rust 源码**抽**出每个 handler 的顶层键集合，再与
+`components.schemas.HealthResponse` 的 `properties` / `required` 逐项比。
+两个设计要点写进了代码注释：
+
+1. **Rust 侧的形状不能写成常量** —— 写死 `["status","app"]` 的检查永远绿，
+   改 Rust 也不响，等于什么都没查；
+2. 抽不出形状必须报错，不能当成"一致"（独立的 `_HEALTHZ_SHAPE_MIN` 阈值）。
+
+变异验证 5/5（`D:\Temp\mutate-rule12.py`，双向）：
+
+| 场景 | 判定 |
+|---|---|
+| 未改动树 exit 0，报"18 处实测形状与 openapi 逐项一致（顶层键 `['app','status']`）" | PASS |
+| **Rust 加顶层键** `commit_sha`，spec 不动 → 门禁红 | PASS |
+| **spec 加顶层键** `commit_sha`，Rust 不动 → 门禁红 | PASS |
+| spec 的 `required` 少列 `app` → 门禁红 | PASS |
+| spec 的 `required` 清空 → 门禁红 | PASS |
+| 删掉整个 `HealthResponse` schema → 门禁红 | PASS |
+| 还原后逐字节一致 | PASS |
+
+> 第一个变异走的是"形状不唯一"分支而非"与 spec 不符"分支：全仓形状一旦分叉，
+> 就没有"单一形状"可与 spec 比了。两个分支都说明门禁响了，要证明的是**它听见
+> 了这个新键**。
+
+#### 独立实现对拍的价值，以及它的代价
+
+那个一次性扫描器自己也栽了三次，全部是同一类错误：
+
+| # | 错误 | 症状 | 为什么没被当成"形状不统一" |
+|---|---|---|---|
+| 1 | `_HEALTHZ_FN_DEF_RE` 漏了 `re.M` | `^` 只匹配偏移 0 ⇒ 解析到 16/18 | 剩下的两个**恰好形状相同** |
+| 2 | raw string 的收尾符算成 `""`，找不到就吞到文件尾 | 后续所有 `}` 消失 ⇒ 同样解析不到 | 同上 |
+| 3 | `defs` 定义在 crate 循环内却在循环外读 | **全部 18 个 site 都解析到 worker-service 的函数体** | 全部形状相同 ⇒ 报出"1 种形状 / 18 处" |
+
+第 3 条与规则 10 的 bug **同型**。当时若只有这一个实现，它会安静地报出
+"全仓形状一致"；正因为规则 10 是另一个独立实现，两边不一致才暴露出来。
+
+代价是它一度给出**比规则 10 更不可信的结论**（16/18 "成功"其实全是错的）。
+所以每次打印形状都同时打印 `body` 的来源文件，并且断言来源必须在同一个 crate
+内（`CROSS-CRATE LEAK` 自检）—— 让"解析成功"这件事本身可被检查。
+
+#### 落到纪律上的三条
+
+1. **门禁报绿时，先证明它在看你要它看的东西**。把元组少写一个字段这种错误，
+   症状是 exit 0。
+2. **"抽不出"必须 FAIL**。任何"解析失败就跳过"的分支都会变成静默盲区，
+   而盲区的形状和"没有问题"一模一样。
+3. **判定必须能被反向证伪**。本节所有结论都配了"改坏哪一个、应当只点名哪一个"
+   的判据，而不是靠读代码确认。
