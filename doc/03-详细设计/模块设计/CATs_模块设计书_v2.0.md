@@ -1175,9 +1175,26 @@ crates/common/
 |------|------------|------|
 | **版本查询** | `pub const VERSION: &str` + `pub fn version() -> &'static str` | crate 语义版本（与 workspace.package.version 同步）|
 | **crate 名** | `pub const NAME: &str` + `pub fn name() -> &'static str` | crate 名称常量 |
-| **AppMeta** | `struct AppMeta { name: String, version: String }` + `impl AppMeta { pub fn current() -> Self }` | `/healthz` 返回 JSON 元信息（user-service `handlers::healthz` 已使用）|
+| **AppMeta** | `struct AppMeta { name: String, version: String }`（派生 `Serialize/Deserialize`）| `/healthz` 返回 JSON 元信息，形状 `{"status","app":{"name","version"}}`（2026-10-07 全仓 18 个服务统一，per `deploy/BACKEND_STATUS_v0.4.md` §4.1o）|
 | **tracing 初始化** | `pub fn init_tracing()` | 设置默认 subscriber + `EnvFilter`（`info,cats_common=debug` 默认）|
 | **serde 序列化** | `AppMeta` 派生 `Serialize/Deserialize` | 配合 healthz 响应 JSON 化 |
+
+> **更正（2026-10-07，订正本表原文）**：原文这一行写的是
+> `AppMeta { .. } + impl AppMeta { pub fn current() -> Self }`，并称
+> "user-service `handlers::healthz` 已使用"，同时把 `current()` 列为已落地能力。
+> **两条都不成立，且是个坑**：
+>
+> - `AppMeta::current()` 返回的是 **cats-common 自己**的 `CARGO_PKG_NAME` 与版本
+>   （它在自己的 crate 里被编译），所以任何用它填 `/healthz` 的服务都会自报
+>   `"cats-common"`，监控无法分辨应答方。2026-10-05 已把全部调用点改为
+>   `env!("CARGO_PKG_NAME")` / `env!("CARGO_PKG_VERSION")`（编译期按**本 crate**
+>   展开），共 9 个 crate 10 处。
+> - 因此**各服务的 handler 都不再调用 `AppMeta::current()`**。它保留在 impl 里
+>   是合理的 —— cats-common 自己的单测本就该报自己 —— 但**不要**拿它填服务侧
+>   的 healthz。
+>
+> 踩坑记录见 `crates/asr-service/src/main.rs` 里 healthz 上方的注释；常设门禁见
+> `deploy/scripts/lint-compose.py` 规则 10（形状）与规则 11（测试断言）。
 
 ### 12.3 待升能力（per §1.2 + §5.1 公共基础库规划）
 
