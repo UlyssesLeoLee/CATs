@@ -601,6 +601,21 @@ pub async fn stage_progress(
 //
 // 参数改为 `web::Data<AppState>`（而不是 `AppState`）：`main.rs` 里状态只构造一次，
 // 闭包每次连接重复消费，`web::Data` 内封 Arc 可以安全 clone。
+//
+// > **更正（2026-10-07，订正上方标题）**：标题写的是「`main.rs` 与集成测试都
+// > 从这里接进来」，**后半句不成立**。2026-10-05 把 `main.rs` 收敛到本函数之后，
+// > `crates/task-service/tests/integration.rs` **一次也没有调用 `configure_app`** ——
+// > 它的 `make_app_no_db`（`integration.rs:378`）在 `:391-399` 自己
+// > `.route(...)` 重抄了 3 条（`/healthz`、`/v1/tasks/{id}/events`、
+// > `/internal/v1/tasks/{id}/stage-progress`）。
+// >
+// > 当前这 3 条与本表的对应条目**路径、handler 都一致**，所以那 3 个用例断言的
+// > 行为生产也会发生 —— 它们现在不是假绿。但本函数上方 594~598 行警告的正是
+// > 这个陷阱（「在一张**已经与生产漂移**的路由表上测试」），而集成测试至今仍在自己
+// > 那张表上。改 `configure_app` 不会被 `integration.rs` 里的任何用例发现。
+// >
+// > 待办：把 `make_app_no_db` 改为 `.app_data(web::Data::new(state))` +
+// > `.configure(configure_app)`，让那 3 个用例真正守住生产装配。
 pub fn configure_app(cfg: &mut web::ServiceConfig, state: web::Data<AppState>) {
     cfg.app_data(state)
         .route("/healthz", web::get().to(healthz))

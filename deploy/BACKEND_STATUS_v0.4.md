@@ -1803,3 +1803,226 @@ site：
    而盲区的形状和"没有问题"一模一样。
 3. **判定必须能被反向证伪**。本节所有结论都配了"改坏哪一个、应当只点名哪一个"
    的判据，而不是靠读代码确认。
+---
+
+### §4.1s k3s 上 8 个服务的 Pod 会永远 NotReady —— 而 CI 从没看过 deploy/k3s 🆕
+
+§4.1o~§4.1q 做的都是「代码对不对」。这一节是**部署清单对不对**，问题更重：
+它不是一个会报错的配置，而是一个**看起来部署成功了**的配置。
+
+#### 症状
+
+`deploy/k3s/cats-core/` 下 10 个 Deployment 有 **8 个** 的 `readinessProbe`
+打的是 `/readyz`：
+
+| Deployment | liveness | readiness（本轮之前） | 源码里真的注册了 /readyz 吗 |
+|---|---|---|---|
+| audit-service | `/healthz` | `/readyz` | ✅ `src/handlers.rs:36` |
+| worker-service | `/healthz` | `/readyz` | ✅ `src/main.rs:64` |
+| auth-service | `/healthz` | **`/readyz`** | ❌ |
+| user-service | `/healthz` | **`/readyz`** | ❌ |
+| project-service | `/healthz` | **`/readyz`** | ❌ |
+| file-service | `/healthz` | **`/readyz`** | ❌ |
+| notification-service | `/healthz` | **`/readyz`** | ❌ |
+| report-service | `/healthz` | **`/readyz`** | ❌ |
+| task-service | `/healthz` | **`/readyz`** | ❌ |
+| cats-ai-gateway | `/healthz` | **`/readyz`** | ❌ |
+
+全仓搜 `"/readyz"` 只有 3 处命中（`worker-service/src/main.rs:64`、
+`audit-service/src/handlers.rs:36`、以及 `audit-service/src/main.rs:13` 的注释）。
+
+那 8 个服务的 Pod 会**永远 NotReady**，Service 拿不到 endpoint —— 在 k3s 上
+等于完全不可访问。失败模式最恶劣的地方在于：Pod 起来了、Deployment 有了、
+rollout 也在跑，只是**永远不 Ready**，而这恰恰是"部署成功"的长相。
+
+#### 为什么一直没被发现
+
+`deploy/k3s/` **完全不在 CI 里**。`ci-helm-lint.yaml` 只 lint `deploy/helm/`，
+`deploy/k3s/` 的每一个字节都没被任何检查看过。对照：`deploy/helm/` 的
+19 个 chart × 2 = 36 条探针**全部**是 `/healthz`，全部正确。
+
+同一个概念，两套部署清单，一套被 CI 守着、一套完全没人看 —— 于是坏的那套
+慢慢腐烂。这也是本轮唯一一处**不是**由"代码里有个变量读错了"造成的缺陷：
+它纯粹是**覆盖缺口**。
+
+#### 处置（2026-10-07 拍板）
+
+把这 8 个 Deployment 的 `readinessProbe` 改回 `/healthz`；**audit-service 与
+worker-service 保留 `/readyz`** —— 它们确实实现了，降级一个本来正确的探针与
+制造这个缺陷是同一类错误。给这 8 个服务补真正的 `/readyz`（含依赖探活）
+作为独立工单，不在本轮。
+
+顺带记录本轮核对出的另外两处部署清单不一致，**均未改动**：
+
+- `translation-core` 与 `envoy` 在 `deploy/k3s/` 下**没有任何探针**，而
+  `deploy/helm/translation-core/values.yaml` 有 liveness+readiness；
+- `deploy/docker-compose-mvp.yml` 里**12 个应用服务一个 `healthcheck` 都没有**，
+  只有 postgres / kafka 有。因此 openapi `HealthResponse` 的 description 里那句
+  「compose `healthcheck` 也只判状态码不看 body」**并不成立** —— 应用服务
+  根本没有 healthcheck（该 description 写在 `d695578`，本节是其订正）。
+
+#### 规则 13：探针路径必须在那个服务的源码里真的注册过
+
+堵的是整类问题：部署清单与源码之间没有任何交叉校验。规则 13 收集
+`deploy/helm/*/values.yaml` 与 `deploy/k3s/**.yaml` 里的每一条
+liveness/readiness/startup 探针路径，回源码查该服务注册过的路径集合（含
+`web::scope` 前缀拼接），对不上就 FAIL，并打印该服务**实际注册了什么**。
+
+范围只限自有服务，判据是 `crates/<name>/src/main.rs` 存在 —— 这一条自动排除了
+`cats-common`（库，没有 bin 目标）、`cats-mock` / `m1-s0-smoke`（测试用），
+也不必为 postgres / kafka 这类外部镜像维护名单。envoy 的 `/healthz` 是
+`direct_response` 的纯文本、根本不代理，同样不在范围内。
+
+**最有说服力的一次验证不是造变异，而是把修复退回去**：用
+`git stash push -- deploy/k3s` 还原到修复前，规则 13 精确报出那 8 条，
+每条附上该服务实际注册的路径，且**没有**误报 audit/worker 的合法 `/readyz`。
+
+变异 + 反向场景 6/6（`D:\Temp\mutate-rule13.py`）：
+
+| 场景 | 结果 |
+|---|---|
+| k3s 探针改成未注册的 `/healthcheck` | FAIL，指名 project-service |
+| helm 探针改成未注册的 `/alive` | FAIL，指名 user-service |
+| task-service 不再注册 `/healthz` | FAIL（连带 4 条，因为它 4 处清单都指这里） |
+| **反向**：audit / worker 的 `/readyz` 不得误报 | PASS |
+| **反向**：探针指向 `web::scope` 内的 `/v1/auth/login` 须认得已注册 | PASS |
+| 扫描器被致盲（`route` 正则改不可能匹配） | FAIL 54 条，不是静默放行 |
+
+倒数第三行是这条规则能不能被长期使用的关键：scope 前缀不拼的话，规则会把
+所有 scope 内的路径误报，而**在正确配置上失败的规则会被直接删掉**。
+
+---
+
+### §4.1t 并行审计查出的"潜伏假绿"清单（本轮记录，未修）
+
+派了三个只读子代理横向排查 §4.1n~§4.1r 这一类缺陷。结果如下 ——
+**没有任何一条是"重复注册路由"**（cats-ai-gateway 是全仓唯一一例，已修），
+但查出三类值得单独排期的债。
+
+#### 1. 死用例：m1-s0-smoke 的 `config()`
+
+`crates/m1-s0-smoke/src/actix_smoke.rs:27` 的 `pub fn config` 是 `#[get("/healthz")]`
+的唯一装配点，而调用者只有同文件 `#[cfg(test)] mod tests`（`:38`）。该 crate
+**没有 `main.rs`**，`Cargo.toml` 里也没有任何 crate 依赖它 —— 全仓零非测试调用者。
+这是本仓最纯粹的一例：被断言的 `/healthz` 端点只存在于测试里。
+（该 crate 已在 `HEALTHZ_SKIP` 里，不计入规则 10 的 18 个。）
+
+#### 2. 潜伏假绿：6 个 crate 的测试各自抄了一份路由表
+
+`auth-service` / `user-service` / `project-service` / `file-service` /
+`notification-service` / `task-service` 的**生产**在 `main.rs` 注册路由，
+**测试**在测试文件里内联重抄一份。逐条核对后**当前全部一致**，所以现在不是假绿。
+
+但形态与已修的 cats-bff 同源，且已经咬过一次：task-service 的
+`handlers.rs:591` 注释写着「**唯一生成表** —— `main.rs` 与集成测试都从这里接进来」，
+而后半句**不成立** —— `tests/integration.rs` 一次也没调 `configure_app`，它的
+`make_app_no_db`（`:378`）在 `:391-399` 自己 `.route(...)` 抄了 3 条。
+更讽刺的是 `handlers.rs:594~598` 警告的正是这个陷阱
+（「在一张**已经与生产漂移**的路由表上测试」），而集成测试至今还在自己那张表上。
+该注释已按"带日期的历史记录不改写"加更正块（见 `handlers.rs:602` 之后）。
+
+排期建议：照 `audit-service`（生产 `main.rs:87` 与 15 处测试**共用同一个**
+`handlers::configure`，本仓唯一做到这点的 crate）与 `cats-ai-gateway` 的样子收敛。
+
+#### 3. 反向缺口：生产注册了但零测试覆盖
+
+`worker-service`（3 条）、`report-service`（4 条）、`asr` / `ocr` / `ingestion` /
+`subtitle` / `office-converter` / `render-writer`（各 1 条 `/healthz`）——
+这些路由只有 `tests/smoke.rs` 里一行 `name_matches_crate!` 宏，没有任何请求级用例。
+`task-service` 7 条里有 4 条无覆盖。`audit-service` 的 `/readyz` 也无覆盖。
+
+子代理另外提出一条**本轮不采信**的怀疑：它说各 e2e 用例大量带
+`#[ignore = "e2e-needs-real-pg"]`，因此"绿"可能意味着没跑。该条与 §4.1q
+的结论重复，且当时未核对 CI 配置；§4.1q 已用规则 11 把 healthz 那一类变成
+静态检查，e2e 步骤也已改为失败累积（不再早停），全量 `#[ignore]` 清单待单独一轮。
+---
+
+### §4.1u 规格 ↔ 实现漂移清单（本轮核实，未修）
+
+并行审计的第三份结果。**这一节与前面几节不同：前面是"门禁在骗自己"，
+这里是"规格和实现本来就在各说各话，而没有任何检查会响"。**
+
+下面每一条都标注了核实状态。子代理的结论是**证据**，不是定论 —— 凡是写
+"已核实"的都是本轮用独立脚本从源文件重新推出来的。
+
+#### 已独立核实（可作为工单依据）
+
+**1. `POST /tasks` 的成功状态码，BFF 与后端服务彼此分歧，而 spec 只对上 BFF。**
+
+```
+openapi /tasks 声明          202
+crates/task-service          HttpResponse::Created()   -> 201
+crates/cats-bff             HttpResponse::Accepted()  -> 202
+```
+
+同一条路径，穿过和不穿过 BFF 返回不同状态码。spec 恰好与 BFF 一致，
+于是"直接调后端"的调用方拿到 201 会与 spec 冲突。这条不是任何一方的"笔误"
+能解释的 —— 它反映 BFF 与后端对"已受理"和"已创建"的语义分歧从未被对齐过。
+
+**2. 服务实际发出、但 openapi `ErrorCode` 枚举里没有的错误码：10 个。**
+
+openapi 枚举实测 **27** 个值（文档多处写"28 条"，见下）。用字符串字面量在
+各服务 `src/` 下（排除 `tests/`）重新扫了一遍真实发出的错误码，10 个在枚举外：
+
+| 错误码 | 出现在 | 错误码表提到过吗 |
+|---|---|---|
+| `project_not_found` | `project-service/src/handlers.rs` | ❌ |
+| `file_not_found` | `file-service/src/handlers.rs` | ❌ |
+| `file_too_large` | `file-service/src/handlers.rs` | ❌ |
+| `notification_not_found` | `notification-service/src/handlers.rs` | ❌ |
+| `task_not_found` | `task-service/src/handlers.rs` | ❌ |
+| `qa_blocked` | `common/src/error.rs` | ❌ |
+| `compliance_blocked` | `common/src/error.rs` | ❌ |
+| `jti_revoked` | `auth-service/src/handlers.rs` | ✅ |
+| `refresh_revoked` | `auth-service/src/handlers.rs` | ✅ |
+| `service_unavailable` | `cats-mock/src/http/response.rs` | ❌ |
+
+`CATs_错误码表` 明文写着「**不允许新增未在本表定义的错误枚举**」。上表 8 个
+连文档都没进。前 5 个是明确对外的 404/413；`qa_blocked` / `compliance_blocked`
+在 `cats-common` 里，是否真的对外**未判定**；`service_unavailable` 来自
+`cats-mock`（mock server，不算生产错误码）。
+
+> 第一遍扫描只认 `CatsError::X` / `ErrorCode::x` 两种构造，扫出 **0** 个，
+> 看起来像是子代理报错。换成字符串字面量（`ErrorBody { error: "..." }` 这种
+> 同样是真的在发码）才扫出 10 个。**"扫出 0"在这里不是"不存在"，是扫描器
+> 太窄** —— 本轮第三次栽在同一个地方。
+
+**3. openapi 枚举实测 27 条，而文档写的是 28 条**（openapi `:286`、
+错误码表 `:179/:189`、接口设计书 `:542`）。反向核对：27 个枚举值在两份错误码表里
+都有出现，所以不是"漏登记"，是**计数写错**。
+
+#### 子代理单方证据（双侧 file:line 齐备，但本轮未逐条复核）
+
+- `common/src/error.rs` 的 30 个 `CatsError` 变体与 openapi 的 27 个只是部分重叠；
+  `cats-bff/src/error.rs` 是唯一与 openapi 完全一致的一套。该文件 `:35` 的注释
+  声称"与 openapi `components.schemas.ErrorCode` 一致（per §8.5 已落地）"——
+  按上表这个声称**不成立**。
+- `ErrorBody.detail`：openapi 声明 `string`，`common/src/error.rs` 是
+  `Option<serde_json::Value>`（audit-service 走它，能序列化出对象/数组型 detail）。
+- `POST /auth/login` 请求体 openapi 把 `tenant_id` 列为 `required`，而
+  `auth-service` 的 `LoginRequest` 没有该字段；BFF 侧是 `Option` + `serde(default)`。
+- `GET /auth/me` 的 `user_not_found`：错误码表 `:289` 写 401、`:218` 写 404
+  （同一份表里自相矛盾），实现实际返回的是 `error: "invalid_token"` + 401。
+- `X-Cats-Error-Code` / `X-Cats-Request-Id` / `WWW-Authenticate` 三个错误响应头
+  错误码表有声明，实现侧只搜了字面量没找到，可能由中间件注入 —— 未穷尽。
+
+#### 为什么本轮不就此加门禁
+
+本可以照规则 12 的样子加一条"服务发出的错误码必须在 openapi 枚举内"，但
+**"这个码到底对外返回没有"无法静态判定**：`qa_blocked` 定义在 `cats-common`
+里，是否被任何 handler 用到、`service_unavailable` 来自 mock server、
+`jti_revoked` 又在错误码表里有记录。一条误报率高的门禁会被直接删掉，而被删掉的
+门禁比没有门禁更糟（它会让人以为这里被看着）。
+
+所以本轮只记录。**下一步的做法**已经想清楚：照 `HEALTHZ_SKIP` 的模式加一张
+**双向例外表** —— 已知的 10 个逐条登记并写明理由（对外 / 未对外 / mock），
+此后任何**不在表里的**新错误码一律 FAIL。例外表因此会自己腐烂（用过的可以删、
+过期的必须删），而这正是 `HEALTHZ_SKIP` 那条"例外不能腐烂"检查的用意。
+
+#### 同类：openapi 的 `/healthz` 前缀问题（未判定）
+
+openapi 的 `servers[0].url` 是 `https://api.cats.internal/v1`，而 `/healthz`
+与 `/auth/login` 同处这个 server 下 —— 拼出来是 `/v1/healthz`，但 18 个服务
+全部注册在根 `/healthz`，envoy 更是对 `/healthz` 直接 `direct_response`、
+根本不代理。`/auth/login` 因为代码里确实是 `/v1/auth/login` 所以对得上，
+`/healthz` 对不上。缺一份"envoy 是否重写前缀"的权威说明，故只记录不判定。

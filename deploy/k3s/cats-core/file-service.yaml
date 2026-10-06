@@ -33,7 +33,7 @@ spec:
             requests: { cpu: 100m, memory: 256Mi }
             limits:   { cpu: 500m, memory: 1Gi }
           livenessProbe:  { httpGet: { path: /healthz, port: 8080 } }
-          readinessProbe: { httpGet: { path: /readyz, port: 8080 } }
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
       volumes:
         - name: files-pvc
           persistentVolumeClaim: { claimName: cats-files-pvc }

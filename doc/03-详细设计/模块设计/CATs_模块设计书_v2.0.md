@@ -571,7 +571,8 @@ pub trait AuditSink: Send + Sync {
 
 #### 8.2.5 GET /healthz（per `handlers.rs:91-93`）
 
-永远返回 200 OK `{ "status": "ok", "service": "auth-service" }`，无错误（per 错误码表 §4.5）。
+永远返回 200 OK `{ "status": "ok", "app": { "name": "auth-service", "version": "<CARGO_PKG_VERSION>" } }`，无错误（per 错误码表 §4.5）。
+  <!-- 2026-10-07 更正：原文写的是统一前的 `{ "status": "ok", "service": "auth-service" }`；全仓 18 个服务已于同日统一为 `{"status","app":{"name","version"}}`（per `deploy/BACKEND_STATUS_v0.4.md` §4.1o，常设门禁 `deploy/scripts/lint-compose.py` 规则 10/11/12）。-->
 
 ### 8.3 错误响应转换（REST → gRPC status 映射）
 

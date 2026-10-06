@@ -1354,6 +1354,204 @@ else:
                 "多 required 则可能指向一个根本不返回的键"
                 % (_spec_req, _rust_top))
 
+
+# ---------------------------------------------------------------------
+# 规则 13: 每条探针（liveness / readiness / healthcheck）打的路径，
+#          必须在**那个服务的源码里真的注册过**
+#
+# 真实事故 (2026-10-07 实证): k3s 的 10 个 Deployment 有 8 个
+# （auth / user / project / file / notification / report / task / cats-ai-gateway）
+# readinessProbe 打的是 `/readyz`，而全仓只有 audit-service 和 worker-service
+# 注册了 `/readyz`。那 8 个 Pod 会永远 NotReady，Service 拿不到 endpoint，
+# 等于在 k3s 上完全不可访问 —— 而它一直没人发现，因为 **k3s 清单完全不在 CI
+# 里**（ci-helm-lint 只 lint helm/，deploy/k3s/ 一个字节都没被检查过）。
+#
+# 这条规则要堵的是那一整类：部署清单与源码之间没有任何交叉校验。探针打错
+# 路径的失败模式最恶劣的地方在于它**看起来像部署成功** —— Pod 起来了、
+# Deployment 有了，就是永远不 Ready。
+#
+# 【范围】只检查自有服务。判定"自有服务"的标准是 `crates/<name>/src/main.rs`
+# 存在：这自动排除了 cats-common（库，没有 bin 目标）、cats-mock / m1-s0-smoke
+# （测试用），也不需要为外部镜像（postgres / kafka）维护名单。
+# envoy 的 `/healthz` 是 `direct_response` 的纯文本、根本不代理，因此不在
+# 扫描范围内。
+
+_PROBE_MIN = 30                # 实测 36（helm 18 chart × 2）+ k3s 12；阈值防整体失效
+_SCOPE_RE = re.compile(r'web::scope\(\s*"(?P<p>[^"]*)"')
+_ROUTE_ANY_PATH_RE = re.compile(r'\.route\(\s*"(?P<p>[^"]*)"')
+_ATTR_ROUTE_RE = re.compile(
+    r'#\s*\[\s*(?:get|post|put|delete|patch|head|options|route)\s*\('
+    r'\s*"(?P<p>[^"]*)"')
+
+
+def _registered_paths(code):
+    """该 crate 注册的所有路径，含 `scope` 前缀拼接。
+
+    scope 必须拼上，否则 `.service(web::scope("/v1/auth").route("/login", ...))`
+    会被当成只注册了 `/login`。这里拼一层前缀（够覆盖探针这类根级路径，
+    也够覆盖单层 scope），而不是做完整的括号栈解析 —— 后者会为了一个
+    探针检查引入另一种会静默失配的实现。
+    """
+    direct = set()
+    prefixes = set()
+    for m in _ROUTE_ANY_PATH_RE.finditer(code):
+        direct.add(m.group("p"))
+    for m in _ATTR_ROUTE_RE.finditer(code):
+        direct.add(m.group("p"))
+    for m in _SCOPE_RE.finditer(code):
+        prefixes.add(m.group("p"))
+    out = set(direct)
+    for pfx in prefixes:
+        for r in direct:
+            if r.startswith("/"):
+                out.add(pfx.rstrip("/") + r)
+    return out
+
+
+# --- 源码侧：每个自有服务注册了哪些路径 ---
+_service_paths = {}          # service 名 -> set(路径)
+for _dir in sorted(os.listdir(crates_root)):
+    _main = os.path.join(crates_root, _dir, "src", "main.rs")
+    if not os.path.isfile(_main):
+        continue                      # 库 / 测试 crate：没有对外 HTTP 面
+    _paths = set()
+    for _dp, _dn, _fns in os.walk(os.path.join(crates_root, _dir, "src")):
+        _dn[:] = [d for d in _dn if d != "tests"]
+        for _fn in _fns:
+            if _fn.endswith(".rs"):
+                with io.open(os.path.join(_dp, _fn), encoding="utf-8",
+                             errors="replace") as _f:
+                    _paths |= _registered_paths(_strip_line_comments(_f.read()))
+    _service_paths[_dir] = _paths
+
+# --- 清单侧：收集每条探针 ---
+_probe_sites = []            # (来源, service, 探针类型, path)
+_HELM = os.path.join(ROOT, "deploy", "helm")
+if os.path.isdir(_HELM):
+    for _chart in sorted(os.listdir(_HELM)):
+        _vp = os.path.join(_HELM, _chart, "values.yaml")
+        if not os.path.isfile(_vp):
+            continue
+        with io.open(_vp, encoding="utf-8", errors="replace") as _f:
+            _vs = _f.read()
+        for _m in re.finditer(r'(?P<kind>[A-Za-z]*[Pp]robe[A-Za-z]*):\s*\n'
+                              r'(?:[^\n]*\n){0,8}?[ \t]+path:\s*(?P<path>\S+)',
+                              _vs):
+            _probe_sites.append(("helm/%s/values.yaml" % _chart, _chart,
+                                 _m.group("kind"), _m.group("path").rstrip(",")))
+
+_K3S = os.path.join(ROOT, "deploy", "k3s")
+if os.path.isdir(_K3S):
+    for _dp, _dn, _fns in os.walk(_K3S):
+        for _fn in sorted(_fns):
+            if not _fn.endswith((".yaml", ".yml")):
+                continue
+            _p = os.path.join(_dp, _fn)
+            _rel = "k3s/" + os.path.relpath(_p, _K3S).replace("\\", "/")
+            try:
+                with io.open(_p, encoding="utf-8", errors="replace") as _f:
+                    _docs = list(yaml.safe_load_all(_f))
+            except Exception as _e:                      # noqa: BLE001
+                err("规则 13：%s 解析失败：%s" % (_rel, _e))
+                continue
+            for _d in _docs:
+                if not isinstance(_d, dict) or _d.get("kind") != "Deployment":
+                    continue
+                _meta = _d.get("metadata") or {}
+                _svc = (_meta.get("labels") or {}).get(
+                    "app.kubernetes.io/name") or _fn.rsplit(".", 1)[0]
+                _containers = ((_d.get("spec") or {}).get("template") or {}
+                               ).get("spec", {}).get("containers") or []
+                for _c in _containers:
+                    for _kind in ("livenessProbe", "readinessProbe", "startupProbe"):
+                        _pr = _c.get(_kind)
+                        if isinstance(_pr, dict):
+                            _pg = (_pr.get("httpGet") or {}).get("path")
+                            if _pg:
+                                _probe_sites.append((_rel, _svc, _kind, _pg))
+
+if len(_probe_sites) < _PROBE_MIN:
+    err("规则 13 失效：只在部署清单里收集到 %d 条探针（阈值 %d）—— "
+        "扫描器大概率没在查任何东西。**空结果不等于没有问题**"
+        % (len(_probe_sites), _PROBE_MIN))
+
+for _src, _svc, _kind, _path in _probe_sites:
+    if _svc not in _service_paths:
+        # 外部镜像 / 库 / 非本仓服务：无从核对，不是本规则的范围
+        continue
+    if _path not in _service_paths[_svc]:
+        err("规则 13：%s 里 %s 的 %s 打的是 `%s`，但 crates/%s/src 下没有注册过"
+            "这个路径（该服务注册的路径：%s）—— 探针会永远失败。"
+            "**NotReady 的 Pod 看起来像部署成功**，Service 也拿不到 endpoint，"
+            "这个失败模式极难在部署时被察觉"
+            % (_src, _svc, _kind, _path, _svc,
+               ", ".join(sorted(_service_paths[_svc])) or "（一个都没有）"))
+
+
+# ---------------------------------------------------------------------
+# 规则 14: doc/ 里不得再出现统一前的 `/healthz` 形状
+#
+# §4.1o 把 18 个服务的 healthz 统一成 `{"status","app"}` 之后，openapi 改了
+# （规则 12 会守住它），但 doc/ 下**三处**还写着统一前的
+# `{ "status": "ok", "service": "auth-service" }`：
+#   CATs_模块设计书_v2.0.md:574 / CATs_错误码表_v1.0.1.md:295 /
+#   CATs_错误码表_v1.0.md:251
+# 它们一直是绿的 —— 规则 10/11/12 分别只扫 Rust 的实现、Rust 的测试、Rust 与
+# openapi，**没有一条规则读 doc/**。这就是"改了一处、漏了三处"能悄悄发生的原因。
+#
+# 【必须写在这里的坑】**要剥掉 HTML 注释再扫**。本规则落地时给那三处各加了一句
+# `<!-- ... 原文写的是统一前的 `{ "status": "ok", "service": ... }` ... -->` 的
+# 更正说明；不剥注释的话，规则会把自己刚写的更正当成违规 —— 与规则 11 第一版
+# 在**已经改对**的 5 个用例上报假阳性是同一类错误。
+# 推论：任何"禁止出现某个旧形状"的规则，都必须能看见注释里的旧形状并放过它。
+
+_DOC_HEALTHZ_LEGACY_RE = re.compile(r'"status"\s*:\s*"ok"[^\n]*?"service"\s*:')
+_HTML_COMMENT_RE = re.compile(r'<!--.*?-->', re.S)
+_DOC_MIN_FILES = 10            # doc/ 下实测数十个 md；阈值只防扫描路径写错
+_DOC = os.path.join(ROOT, "doc")
+
+_doc_files = 0
+if os.path.isdir(_DOC):
+    for _dp, _dn, _fns in os.walk(_DOC):
+        for _fn in sorted(_fns):
+            if not _fn.endswith(".md"):
+                continue
+            _p = os.path.join(_dp, _fn)
+            _rel = os.path.relpath(_p, ROOT).replace("\\", "/")
+            with io.open(_p, encoding="utf-8", errors="replace") as _f:
+                _text = _f.read()
+            _doc_files += 1
+            # 逐行剥注释再匹配：多行注释会跨行，剥完再按行找才能给出准确行号
+            _lines = _text.split("\n")
+            _in_comment = False
+            for _i, _ln in enumerate(_lines, 1):
+                _probe = _ln
+                if _in_comment:
+                    if "-->" in _probe:
+                        _probe = _probe.split("-->", 1)[1]
+                        _in_comment = False
+                    else:
+                        continue
+                _probe = _HTML_COMMENT_RE.sub("", _probe)
+                if _DOC_HEALTHZ_LEGACY_RE.search(_probe):
+                    err("规则 14：%s:%d 仍写着统一前的 /healthz 形状 "
+                        '（`"status": "ok"` 与 `"service":` 同现）—— 全仓已于 '
+                        "2026-10-07 统一为 "
+                        '`{"status","app":{"name","version"}}`（per '
+                        "BACKEND_STATUS §4.1o，门禁规则 10/11/12）。"
+                        "文档里的旧形状会让读规格的人按已删除的字段写客户端。"
+                        "若确需引用旧形状做对比，请把该示例放进 <!-- --> 注释里"
+                        % (_rel, _i))
+                if "<!--" in _probe and "-->" not in _probe.split("<!--", 1)[1]:
+                    _in_comment = True
+
+if _doc_files < _DOC_MIN_FILES:
+    err("规则 14 失效：doc/ 下只读到 %d 个 .md（阈值 %d）—— "
+        "扫描路径大概率写错了。**空结果不等于没有问题**"
+        % (_doc_files, _DOC_MIN_FILES))
+else:
+    note("规则 14 扫了 doc/ 下 %d 个 .md（已剥 HTML 注释）" % _doc_files)
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -1390,6 +1588,9 @@ print("  OK    规则 12 %d 处 /healthz 的实测顶层形状与 openapi Health
       "（顶层键 %s）"
       % (_healthz_shape_sites,
          list(next(iter(_healthz_shapes))) if len(_healthz_shapes) == 1 else "不唯一"))
+print("  OK    规则 13 %d 条 k8s/helm 探针的路径都在对应服务的源码里注册过"
+      % len(_probe_sites))
+print("  OK    规则 14 doc/ 下 %d 个 .md 里没有统一前的 /healthz 形状" % _doc_files)
 print("")
 for n in notes:
     print("  提醒  " + n)
