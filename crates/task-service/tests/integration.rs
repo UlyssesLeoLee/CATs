@@ -386,17 +386,18 @@ fn make_app_no_db(
         InitError = (),
     >,
 > {
-    App::new()
-        .app_data(web::Data::new(state))
-        .route("/healthz", web::get().to(task_service::handlers::healthz))
-        .route(
-            "/v1/tasks/{id}/events",
-            web::get().to(task_service::handlers::task_events_sse),
-        )
-        .route(
-            "/internal/v1/tasks/{id}/stage-progress",
-            web::post().to(task_service::handlers::stage_progress),
-        )
+    // 2026-10-07: 原来这里自己 `.route(...)` 重抄了 3 条（`/healthz`、
+    // `/v1/tasks/{id}/events`、`/internal/v1/tasks/{id}/stage-progress`）。
+    // 那 3 条当时与 `configure_app` 一致，所以用例不是假绿 —— 但改
+    // `configure_app` 不会被这里发现，而 `handlers.rs` 同一段注释警告的正是
+    // "在一张**已经与生产漂移**的路由表上测试"。现在改为直接挂生产那张表。
+    //
+    // `configure_app` 注册的是全部 7 条；其中 4 条要 DB，本文件这 3 个用例
+    // 不会打到它们（state 是 `connect_lazy` 到无效地址，调用即失败）。
+    // 注册本身不碰 DB，所以没有副作用。
+    App::new().configure(move |c| {
+        task_service::handlers::configure_app(c, web::Data::new(state))
+    })
 }
 
 #[actix_web::test]
@@ -424,15 +425,8 @@ async fn e2e_user_can_subscribe_and_receive_heartbeat() {
     let task_id = Uuid::new_v4();
 
     // 1) 先上报一个 stage-progress 事件, 让 EventBus 记录 last_state
-    let report_app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(build_state_no_pool()))
-            .route(
-                "/internal/v1/tasks/{id}/stage-progress",
-                web::post().to(task_service::handlers::stage_progress),
-            ),
-    )
-    .await;
+    //    同样挂生产那张表（见 make_app_no_db 上方的说明），不再自建路由
+    let report_app = actix_test::init_service(make_app_no_db(build_state_no_pool())).await;
 
     let report_req = actix_test::TestRequest::post()
         .uri(&format!("/internal/v1/tasks/{task_id}/stage-progress"))
