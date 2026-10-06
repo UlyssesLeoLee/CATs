@@ -455,7 +455,9 @@ cats-common"，那是错的——另外 8 个自报的是自己的名字。真�
 宏有自己的分词器，会把 `"name":` 当成 JSON 键值对解析。
 必须先 `let app = AppMeta { .. };` 再放进 `json!`。
 
-**仍未修**：6 种响应格式本身不统一。统一它要动 12 个 crate 的 handler
+**仍未修**：6 种响应格式本身不统一。统一它要动 18 个 crate 的 handler
+（"12"是当初从 §3.3「12 个 crate 共 5731 行未编译」串过来的，与本条无关；
+§4.1m 已按实测补全为 18 个服务 / 4 种在用形状 / 另有一整套 `/readyz`）
 并改共享结构，属于独立的 API 收敛工作，不在本次范围。
 
 
@@ -1164,128 +1166,216 @@ cmd /c "`"$TC\cargo-fmt.exe`" fmt --all -- --check"
 
 **判据：`$LASTEXITCODE` 为 0 不等于命令跑过了。** 任何经管道的 native 命令都不能用
 它判成功——要么不接管输出，要么把结果落文件再单独读。
+### §4.1m 把 §4.3 的"6 种响应格式"补全 —— 实测 18 个服务、4 种在用形状，外加一整套 `/readyz` 🆕
+
+§4.3 的结论来自 13 路运行时探活，那个测量本身没问题。**有问题的是它隐含的
+"已经看全了"** —— 本节做静态逐 crate 取证，补上三件 §4.3 没覆盖的事。
+
+#### §4.3 漏掉的三件事
+
+**1. 它只探到 12 个服务，实际有 18 个注册了 `/healthz`。**
+
+没被探到的 6 个是 asr / ocr / ingestion / subtitle / office-converter /
+render-writer —— 它们的 healthz 全都是 §4.3 表格第 4 行那种形状。
+
+**2. "6 种形状"里有一种不是服务。** envoy 的 `/healthz` 是纯文本 `ok`
+（`deploy/envoy-mvp.yaml:34-35` 的 `direct_response`，根本不代理），
+把它和 JSON 形状并列计数，会让"统一 healthz 格式"这个目标本身变得不清楚：
+envoy 那一行永远不需要改。所以**服务形状是 4 种在用 + 1 种被遮蔽**（见 §4.1n）。
+
+**3. `/readyz` 完全没被覆盖。** audit-service 与 worker-service 各开了一个，
+形状是 `{status: ready|not_ready, service, db: ok|fail}`，两者一致，且都真连库
+（`sqlx` 查 `SELECT 1`）。§4.3 的 13 路探活没打这两个端点。
+
+#### 4 种在用形状（按 handler 函数体逐个读出来的，不是猜的）
+
+| # | 形状 | 数量 | 服务 |
+|---|---|---|---|
+| A | `{status, app:{name, version}}` | 8 | asr / ingestion / ocr / office-converter / render-writer / subtitle / translation-core / audit |
+| B | `{status, name, version}` —— 扁平，键叫 `name` 不叫 `service` | 5 | file / notification / project / task / user |
+| C | `{status, service}` —— **没有 version** | 3 | auth（内联 `json!`）/ report（自带 struct）/ worker（自带 struct） |
+| D | `{status, service, version, bind_addr, upstreams:{5 个上游 URL}}` | 1 | cats-bff（`handlers.rs:140`，即生产在用的那个） |
+
+B 这一类是最容易被漏掉的一种：键名是 `name` 而不是 `service`，所以任何按
+`.service` 取值的监控脚本会在**这 5 个服务上静默拿到 null**，不报错。
+
+全部 18 个服务的 `/healthz` 都是**无认证**的（注册在所有 `web::scope("/v1/…")`
+之外，符合 K8s 探针惯例），这一点是一致的。
+
+#### 取证方法：以及我自己栽的四次
+
+解析 `/healthz` 路由 → 定位 handler → 读出实际返回的键。四次失败同一个形状：
+**看到 0 或整齐划一的结果，先怀疑解析器。**
+
+1. 正则 `"/healthz"[^)]*?\.to\(([^)]*)\)` —— `[^)]*?` 跨不过 `web::get()` 里的
+   右括号，一个路由都没匹配上。差点据此写"没有任何 handler 定义"。
+2. handler 定义在全仓找、命中即 `break`，于是 **16 个服务全被解析成
+   `asr-service/src/main.rs:34` 的同一个定义**。改成限定同 crate 才对。
+3. 提取键时读了函数起点往后 1400 字符，于是**每个 handler 的键集合后面都拖着
+   隔壁函数的键**（`error`/`message`/`detail`/`db`/`rbac` 全是串过来的）。
+   形状分类器据此判出"shape A 只有 1 个"这种明显荒唐的结果 —— 荒唐值本身
+   就是信号。
+4. 用 PowerShell 重定向导出时中文全成 `���`，差点判定"源文件编码坏了"。
+   那是 stdout 编码问题，不是文件问题：改用 `PYTHONIOENCODING=utf-8` 后原样输出。
+   **在断定文件有问题之前，先确认自己这一侧的读取方式。**
+
+#### 探针配置的真实数量：28 份，不是 18
+
+`deploy/` 下引用 healthz 的配置实测：
+
+```
+helm values.yaml          18 份（每个服务一份，外加 cats-common）
+k3s 服务清单              10 份（deploy/k3s/cats-core/）
+k3s envoy 自身             1 份（deploy/k3s/cats-edge/）—— 不是后端探针
+docker-compose-mvp.yml    11 处 healthcheck / depends_on
+envoy-mvp.yaml             1 处（direct_response）
+```
+
+**服务探针配置 = 18 + 10 = 28 份。** 此前记的"18 份"是 helm 单独的数，漏了 k3s。
+
+#### cats-bff 那两个多余字段：结论仍是"低"，但多了一条依据
+
+`cats-bff` 的 healthz 比别人多吐 `bind_addr` 和 5 个上游 URL。逐条查了可达性：
+
+```
+全仓有没有东西读 upstreams / bind_addr
+  -> 只有 BACKEND_STATUS_v0.4.md:431 那行文档自己，没有任何代码或脚本读
+
+envoy 的 /healthz 是什么
+  -> deploy/envoy-mvp.yaml:34-35 是 direct_response，envoy 自己应答，不代理
+  -> 且路由表里**没有 cats_bff 这个 cluster**（8 条 route 全部指向后端服务）
+
+cats-bff 的端口映射
+  -> deploy/docker-compose-mvp.yml 是 "127.0.0.1:8091:8080"，只绑回环
+```
+
+**所以它今天不是对外泄露。** 我在查到 envoy 配置之前一度判断成
+"公开入口可读到内部拓扑"，那是错的。残留风险只有一条且是假设性的：有人把
+`"127.0.0.1:8091:8080"` 改成 `"8091:8080"`（"让它能访问"是最常见的改法），
+这些字段就变成宿主网络可达的内部拓扑披露 —— 而没有任何东西读它们。
+
+**处置：不单独改。** 统一到形状 A 之后它们自然消失；单独削掉虽是一行改动，
+但会让"统一"这件事做两遍。
+
+#### 为什么仍然不做
+
+统一 healthz 要动 18 个 crate 的 handler + 28 份探针配置。探针只判 200 不看
+body，所以改 body **不影响探针**；但它是**对外 API 形状变更**（任何读
+`.status` / `.service` / `.name` / `.app.name` 的外部监控都要跟着改），属产品
+决定，不该由我自行拍板。故本节只交付取证与建议。
+
+建议的目标形状（若决定做）：
+
+```json
+{ "status": "ok", "app": { "name": "<CARGO_PKG_NAME>", "version": "<CARGO_PKG_VERSION>" } }
+```
+
+取形状 A 的理由：它已经是 8/18 的既成事实，且它是**唯一一种能同时表达
+"哪个服务 + 哪个版本"** 的形状 —— B 和 C 都缺 version（C 连 name/service 都有
+但没有版本），所以外部监控没法用它判断"跑的是哪次构建"。
+
+**不要再踩回去的坑**：`asr-service` / `ingestion` / `ocr` 等 7 个文件的注释
+记录了为什么用 `env!` 而不是 `AppMeta::current()` —— 后者返回的是
+**cats-common 自己**的包名，会让所有服务自报 `"cats-common"`（§4.3 修掉的那个坑）。
 
 ---
 
-### §4.4 v0.3 §6 其余各项未变
+### §4.1n 两条假绿：`/healthz` 被注册了两次，而 13 个用例测的是服务器不走的分支 🆕
 
-Tauri 客户端、真实 AI provider、Vault secret 注入、translation-core 接真
-project_db + pgvector、真 mTLS（per ADR-009）均未变。
+这一节的两条都不是"发现了一处不一致"，而是**发现了一处看起来全绿、实际什么都没验的地方**。
 
----
-
-## §5 检查本身的验证
-
-### §5.1 端到端：重建镜像 + `docker compose up`
+#### 一、cats-ai-gateway 把 `/healthz` 注册了两次
 
 ```
-$ docker build -f deploy/Dockerfile.runtime -t cats-runtime:latest .   # BUILD_EXIT=0
-
-$ docker logs cats-verify-translation-core
-INFO translation_core: starting translation-core bind_addr=0.0.0.0:50051
-INFO actix_web::server: starting service: "actix-web-service-0.0.0.0:50051"
+crates/cats-ai-gateway/src/main.rs:178   .route("/healthz", web::get().to(healthz))
+crates/cats-ai-gateway/src/api/mod.rs:168 .route("/healthz", web::get().to(healthz_handler))
+                                        ↑ 经 main.rs:179 的 configure_routes() 注册
 ```
 
-修复前同一容器打印的是 `bind_addr=0.0.0.0:8090`。
+两个 handler 都在编译、body 都对，但**actix-web 对同一路径注册两次时是先注册的赢**。
+这条不是查文档得出的，是实测的（`crates/cats-ai-gateway/tests/healthz_single_registration.rs`
+的 `first_registration_wins`：注册两个 body 不同的 handler，返回的是先注册那个）。
 
-按编排推导出的 13 个目标逐个探活，**13 个全 HTTP 200，0 失败**
-（`translation-core` 经宿主 50151 → 容器 50051 应答；本机 50051 被
-Windows 服务 `endpointService` 占用，故用 override 换端口，
-容器内端口与正式编排一致）。
+于是实际后果是：
 
-### §5.2 CI
+- `main.rs` 的 `healthz()` 应答，形状 A（`{status, app{name,version}}`）；
+- `api::healthz_handler`（形状 `{status, app, service, version}`）**运行时永远收不到请求**；
+- 而 `api/mod.rs:177` 的 `healthz_returns_ok` 单独 mount `configure_routes`，
+  看不到 `main.rs` 那次注册 —— **它是绿的**。
 
-| run | commit | 结果 |
-|---|---|---|
-| `37157912198` | `5a9a74a` | **4/4 绿**（含 lint 步骤） |
-| `37166472300` | `481618c` | **4/4 绿**（接线 4 个 crate 后） |
-| `37278878858` | `4a2b319` | 3/4 绿 —— ubuntu 红在 `Upload coverage`（codecov TLS 握手失败），**测试与覆盖率门禁本身通过** |
-| `37280627724` | `3d8f96b` | **4/4 绿**（加 `continue-on-error` 后，同一位置不再拖红） |
-| `37281458555` | `6eb069b` | **4/4 绿**（healthz 修复后） |
+一条永远不会被调用的 handler，配一个只测它自己的测试。这就是"实现是权威、
+测试是过时的"最标准的形态：测试本身没有写错，它只是测错了对象。
 
-#### run `37278878858` 暴露的 CI 脆弱点（已修）
+**已修**：删掉 `main.rs` 的 `healthz()` + `struct HealthResponse` + 那次注册，
+`/healthz` 的唯一归属变成 `configure_routes()`。同时把上面那段实测语义写成
+注释留在 `main.rs` 里，说明为什么不能再加一次。
 
-`Upload coverage` 步骤红，错误是
+**常设门禁**（`tests/healthz_single_registration.rs`，3 个用例）：
+
+| 用例 | 钉住什么 |
+|---|---|
+| `first_registration_wins` | actix 的重复路径语义。actix 若改语义，这个用例会失败，届时 `main.rs` 的注释要一起改 |
+| `main_rs_registers_healthz_nowhere` | `main.rs` 里不再出现 `/healthz` 注册（只看代码，跳过注释）|
+| `configure_routes_serves_healthz` | 反向防"修过头"—— `configure_routes()` 必须仍然服务 `/healthz`，且 `app.name` 必须是本 crate 包名 |
+
+变异验证 **3/3**（`D:\Temp\mutate-healthz-gate.py`）：把 `/healthz` 注册原样放回
+`main.rs` → 用例失败且**指名 `src/main.rs:<行号>`**；还原 → 恢复全绿；
+还原后 `main.rs` 与变异前**逐字节相同**。
+
+写这个门禁时它先把自己判失败了：因为 `main.rs` 里我写的注释也含 `/healthz`
+字面量，整行扫描把注释当成了注册。已改成只扫 `//` 之前的代码部分。
+
+#### 二、cats-bff 的 13 个路由用例，测的是服务器从不执行的分支
+
+`crates/cats-bff/tests/bff_routes_passthrough.rs`（`4d988f5` 加的，13 个用例 + 2 个变异验证）
+用 `routes::configure` 构造被测 App。而：
 
 ```
-Error: write EPROTO ...: ssl3_read_bytes: ssl/tls alert handshake failure
+生产注册在哪        crates/cats-bff/src/main.rs:63-76
+                   handlers::login / refresh / logout / me
+                   handlers::list_projects / create_project / dispatch_task
+                   handlers::healthz_handler
+                   路径前缀 /v1/...（无 /api/v1）
+
+测试注册在哪        tests/bff_routes_passthrough.rs:164
+                   .configure(routes::configure)
+                   路径前缀 /api/v1/...
+
+routes::configure 的调用者，全仓只有那一个测试文件
 ```
 
-同一个 job 里 `Run tests` 与 `Coverage gate (fail-under 40%)` 都通过，
-macOS / Windows / e2e 也全绿 —— 整条流水线只因为「把报告传到第三方」
-而变红。
+`routes.rs` 的文件头（20-21 行）其实已经写明"当前生效的路由注册在 `main.rs`"，
+但 `configure` 自己的文档注释写的是"注册全部路由（lib.rs 调用 + 测试 bind 用）"——
+**`lib.rs` 从没调用过它**。两处说法打架，我按实测把 `configure` 那句改成了事实。
 
-**`fail_ci_if_error: false` 挡不住**：那是 codecov 解析/上传失败时的开关，
-而 TLS 握手失败是 action 内部的 JS 硬错误，绕过了该开关。
-真正能兜住的是 `continue-on-error: true`。
+判定 `routes.rs` 是被取代的草稿，依据是产品规格而不是我的口味：
 
-改动的安全性依据：覆盖率真正的门禁是**上一行**的
-`cargo llvm-cov --fail-under-lines 40`，它在上传之前就已给出结论。
-上传只是把报告送到 codecov 做可视化。让一个纯上报动作拥有否决整条
-流水线的权力，等于把第三方服务的可用性混进了代码质量的判定里。
+```
+api/openapi/cats-openapi-v1.0.1.yaml 的 paths 段共 7 条
+  /auth/login  /auth/refresh  /auth/logout  /auth/me
+  /healthz  /projects  /tasks
 
+- 没有 /api/v1/ 前缀（envoy 与 openapi 用的都是 /v1/...）
+- 没有任何 translate 端点
+- translate_commit 本身就是 501 stub（"proto UpdateTMMatch RPC pending v1.1"）
+- envoy 路由表 8 条 route 里没有 cats_bff —— 这个服务在当前配置下
+  只有 127.0.0.1:8091 回环可达
+```
 
-### §5.3 各闸门的反向验证
+**已修（不预设处置方式的部分）**：三处不实注释改成事实 ——
+`routes.rs` 的 `configure` 文档、`lib.rs:30` 的"接完本 crate 孤儿清零"
+（"接线"在这里只指参与编译，不是挂上服务）、测试里 `bff_app` 上"`routes::configure`
+这张**唯一的**路由表"。另外给 `healthz_is_local_and_200_without_any_upstream`
+加注记：它断言的"不碰任何上游恒 200"只对 `routes::healthz` 成立，生产应答的
+`handlers::healthz_handler` 会读 `web::Data<Config>` 并吐出 `upstreams`。
 
-| 检查 | 反例 | 正例 |
-|---|---|---|
-| lint 规则 6 | 喂修复前的 compose → **恰好 7 项违规**，全是死 env 变量 | 当前 compose → **0 项** |
-| lint 规则 7 | 塞一个 `probe_orphan.rs` → **FAIL**（提醒行数 5731→5734 同步变） | 移除后 → 0 项 |
-| 探针清单推导 | —— | 从编排推导出 **13 个**目标，含 translation-core |
-| `resolve_bind_addr` | —— | 3 个单测（优先级 / 兼容 / 默认值）全过 |
-| 死文件断言 | `error.rs` 注入语法错误 → `cargo check` **仍退出 0** | —— |
+**未做（需要拍板）**：这 13 个用例里有 8 个断言的是透传行为（401/503/201 原样透传、
+502 on unreachable、`cats-*` 头注入），这些行为**生产那套 `handlers::*` 是否一样，
+目前没有集成测试覆盖**。要让它们真正有约束力，得把 `main.rs` 的 App 装配抽成
+可测函数并让测试改用它 —— 这是对生产代码的重构，且牵动"translate 那套未上线的
+能力是接线还是删掉"。两者都属结构性决定，不自行拍板。
 
-> 一次翻车值得记：第一次做规则 6 的反向验证时，用 PowerShell
-> `Out-File` 写出对照文件，编码被破坏，脚本对着一个坏文件报了 19 项，
-> 差点当成真结论。**对照组本身要先验字节**——否则你比较的不是版本差异，
-> 是编码差异。
->
-> 同类还有一次：查容器清单时用 `Select-String "catsverify"` 过滤，
-> 而容器实际叫 `cats-verify-*`，于是误判成"只剩 9 个容器在跑"。
-> **断言"不存在"之前，先确认搜索模式能命中真实命名。**
-
-
----
-
-## §6 拍板记录（2026-10-04）
-
-| 事项 | 决议 | 依据与后果 |
-|---|---|---|
-| 5731 行孤儿代码怎么处理 | **接 translation-core + worker-service** | 已执行，见 §4.1。实测发现真正的根因是 `common/src/error.rs`（共享错误体系）从未被打开，必须先接它 |
-| audit-service 取消按月分区是否符合设计意图 | **接受降级，保持现状** | schema 迁就代码，优先保证 Kafka 至少一次投递的幂等键正确。恢复分区需先拆一张非分区去重表，属独立变更。**这是显式降级，不是遗漏** |
-| PR #19 审批 | Ulysses 本人执行 | `dev` 要求 1 人审批且 `enforce_admins`，admin 无法自批 |
-
-> 拍板选项均以 `(推荐)` 标注推荐项，3 项均选中推荐项。
-
-## §7 修订历史
-
-| 版本 | 日期 | 变更 |
-|---|---|---|
-| v0.1 | — | 初始启动状态 |
-| v0.2 | — | 45 个测试未执行的根因分析 |
-| v0.3 | — | 45 个 e2e 首次跑通；`docker compose up` 从 0 可用性到跑通（12 处缺陷） |
-| **v0.4** | **2026-10-04** | 撤回 v0.3 §4 的"12 路 healthz 全绿"覆盖表述；新增 lint 规则 6/7；抓出 translation-core P0 + 7 处死 env + 5731 行未编译代码；**接线 4 个 crate（约 1450 行），根因是共享错误体系从未打开** |
-
-## 附：本轮新增/修改
-
-**闸门**
-- `deploy/scripts/lint-compose.py` — 新增规则 6（env 变量名交叉，含仓内 path 依赖）、规则 7（死文件 + 基线）；失败路径也输出提醒；支持位置参数以便对历史版本做双向验证
-- `deploy/scripts/mvp-backend-up.sh` — 探针清单改为从 compose 推导，闭合覆盖漏洞；支持多端口 service
-
-**编排**
-- `deploy/docker-compose-mvp.yml` — 删 7 个死变量 + 1 个无人读取的卷；translation-core 补 HTTP healthz 端口；worker-service 恢复 `DATABASE_URL`（接线后它真的读了）
-- `.github/workflows/ci-rust-test.yaml` — lint 步骤注释更新为 7 条规则各自的实证口径
-
-**接线（本次新活）**
-- `crates/common/src/lib.rs` — 加 `pub mod error;` + 根路径 re-export
-- `crates/common/Cargo.toml` — 加 `actix-web` / `tonic` / `sqlx`
-- `crates/cats-rbac/src/lib.rs` — 加 `pub mod service_helpers;`
-- `crates/cats-rbac/Cargo.toml` — 加 `actix-web` / `uuid`
-- `crates/translation-core/` — `lib.rs` 声明 6 个模块；`main.rs` 改为 tonic gRPC(50051) + HTTP healthz(8080) 双监听；`Cargo.toml` 加 `async-trait` / `uuid`
-- `crates/translation-core/src/{service,qa,ai_gateway}.rs` — 修 prost 类型名、枚举 i32 转换、`code()` 方法名、一个 move-after-borrow
-- `crates/worker-service/` — `lib.rs` 声明 3 个模块；`main.rs` 改为建池 + 启动调度器 + 注册 3 条路由；`Cargo.toml` 加 `cats-rbac` / `uuid`
-
-**文档**
-- `deploy/COMPOSE_UP_DEFECTS_v1.0.md` — 追加缺陷 13/14/15 与 §更正
-- `deploy/BACKEND_STATUS_v0.4.md` — 本文件
-
+**这一条同时说明规则 9 抓不到它**：规则 9 查的是"零引用的 `pub` 函数"，
+而 `routes::healthz` 被测试引用着，所以它合规。要抓这类"引用只在测试里"的
+情况，需要另一条规则（**生产代码的可达性**，即从 `main` 出发的调用图），
+那是独立的一条门禁，不在本轮范围。

@@ -136,7 +136,13 @@ fn fake_upstream_app(
         .route("/v1/projects", web::get().to(capture_get))
 }
 
-/// 用 `routes::configure` 这张**唯一的**路由表构造 BFF
+/// 用 `routes::configure` 这张路由表构造 BFF
+///
+/// **注意它不是生产路由表。** 原文写的是"唯一的"，不成立：
+/// `main.rs:63-76` 注册的是另一套（`handlers::*` + `/v1/*`，无 `/api/v1` 前缀），
+/// 而 `routes::configure` 的唯一调用者就是这个测试文件。
+/// 于是本文件里针对透传路径的断言**不能**用来推断生产行为 —— 它们证明的是
+/// 这张表自己能用。生产那套 `handlers::*` 的对应行为目前没有集成测试覆盖。
 fn bff_app(
     auth_base: String,
     project_base: String,
@@ -395,6 +401,11 @@ async fn list_projects_returns_502_when_upstream_unreachable() {
 
 #[actix_web::test]
 async fn healthz_is_local_and_200_without_any_upstream() {
+    // 注意这条**只对 `routes::healthz` 成立**，不能当成生产行为：
+    //   - 它不碰任何上游，确实恒 200；
+    //   - 但生产应答的是 `handlers::healthz_handler`（main.rs:63），那个
+    //     handler 读 `web::Data<Config>`，会吐出 `bind_addr` 和 5 个上游 URL。
+    // 两者 payload 不同（这个没有 version 之外的字段、那个有 upstreams）。
     let app = test::init_service(bff_app(dead_base(), dead_base())).await;
     let req = test::TestRequest::get().uri("/healthz").to_request();
     let body: Value = test::call_and_read_body_json(&app, req).await;

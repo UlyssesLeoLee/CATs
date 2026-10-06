@@ -185,7 +185,14 @@ fn proxy_status(status: reqwest::StatusCode, json: Value) -> HttpResponse {
     builder.json(json)
 }
 
-/// 注册全部路由（lib.rs 调用 + 测试 bind 用）
+/// 本模块的路由表 —— **`main.rs` 不调用它**
+///
+/// 原文写的是"注册全部路由（lib.rs 调用 + 测试 bind 用）"，前半句不成立：
+/// `lib.rs` 只有 `pub mod routes;`，没有调用过 `configure`；生产注册在
+/// `main.rs:63-76`，走 `handlers::*`（见本文件头 20-21 行）。
+///
+/// 唯一调用者是 `tests/bff_routes_passthrough.rs`，即**只有测试在跑这张表**。
+/// 所以针对它写的断言不能用来推断生产行为 —— 该测试文件对此已加注记。
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(healthz))
         .route("/api/v1/auth/login", web::post().to(auth_login))

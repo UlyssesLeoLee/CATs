@@ -10,7 +10,6 @@
 //! - GRPC_BIND_ADDR (默认 0.0.0.0:50061)
 
 use actix_web::{web, App, HttpServer};
-use cats_common::AppMeta;
 use std::env;
 use tonic::transport::Server;
 use tracing::info;
@@ -117,27 +116,6 @@ fn tonic_status_from_provider_error(e: &ProviderError) -> tonic::Status {
     tonic::Status::new(code, e.to_string())
 }
 
-/// 健康检查 JSON (含 gRPC server 状态)
-#[derive(serde::Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    app: AppMeta,
-}
-
-async fn healthz() -> actix_web::HttpResponse {
-    actix_web::HttpResponse::Ok().json(HealthResponse {
-        status: "ok",
-        // 2026-10-05: 原来用 AppMeta::current(), 它返回的是 **cats-common 自己的**
-        // CARGO_PKG_NAME —— 于是所有 service 的 /healthz 都自报 "cats-common",
-        // 监控无法区分是哪个服务应答的, 版本号也是共享库的版本。
-        // env! 是编译期按**本 crate** 展开的, 所以这里报的是本服务自己。
-        app: AppMeta {
-            name: env!("CARGO_PKG_NAME").to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        },
-    })
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     cats_common::init_tracing();
@@ -175,7 +153,14 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(svc_data.clone())
-            .route("/healthz", actix_web::web::get().to(healthz))
+            // `/healthz` 由 `configure_routes()`（api/mod.rs:168）注册，这里
+            // **不能**再注册一次。actix-web 对同一路径注册两次时**先注册的赢**
+            // （实测见 `tests/healthz_single_registration.rs` 的
+            // `first_registration_wins`：注册两次且 body 不同，返回先注册那个）。
+            // 本行曾经是第二次注册，于是 `api::healthz_handler` 运行时永远收不到
+            // 请求，而它自己的测试 `healthz_returns_ok` 单独 mount
+            // `configure_routes`、看不到这次覆盖，照样是绿的 —— 一条假绿。已删。
+            // 同文件的 `main_rs_registers_healthz_nowhere` 守住这个约束。
             .configure(configure_routes)
     })
     .bind(&cfg.rest_bind_addr)?

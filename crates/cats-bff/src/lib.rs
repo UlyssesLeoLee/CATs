@@ -27,7 +27,10 @@ pub mod grpc_clients;
 //
 //
 // 2026-10-05 接线第 3 步（共 3 步）：`routes.rs`（178 行），
-// `/api/v1/*` 前缀那一套路由。接完本 crate 孤儿清零。
+// `/api/v1/*` 前缀那一套路由。注意"接线"在这里只指**参与编译**
+// （`pub mod routes;` + 适配改写），不是"挂上服务"——`routes::configure`
+// 的唯一调用者是 `tests/bff_routes_passthrough.rs`，`main.rs` 不调用它，
+// 见 `routes.rs` 里 `configure` 的文档注释。
 pub mod routes;
 pub mod upstream_passthrough;
 
