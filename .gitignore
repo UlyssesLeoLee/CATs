@@ -39,6 +39,9 @@ worktrees/
 
 # === 客户端构建产物 ===
 apps/cats-client/src-tauri/target/
+# 2026-10-06: E:\DevCache\cargo\ 整棵树执行被拒时的本地备用 target 目录
+# （见 BACKEND_STATUS_v0.4 §4.1l）。必须 gitignore，否则会被误提交。
+/.target-verify/
 apps/cats-client/dist/
 apps/cats-client/node_modules/
 

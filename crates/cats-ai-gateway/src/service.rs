@@ -15,6 +15,11 @@ use crate::router::Router;
 pub struct AiGatewayService {
     router: Router,
     quota: QuotaTracker,
+    /// 重试策略。**当前恒为 `RetryPolicy::default()`**（max_attempts=3 / base_backoff=100ms）：
+    /// 它没有任何 env / Config 入口，唯一能设置它的 `with_retry_policy` 已在 2026-10-06
+    /// 作为零引用代码删除。要做成可配需要补 `Config` 字段 + env + Helm values + compose，
+    /// 属新增功能，不在死代码清理范围内。这里写明事实，以免下一个读代码的人
+    /// 误以为它已经可配。
     retry_policy: RetryPolicy,
     compliance: ComplianceGate,
 }
@@ -37,8 +42,8 @@ impl AiGatewayService {
     }
 
     // 2026-10-05 死代码清理：删除 `with_retry_policy`。
-    // 全仓零调用；生产路径 (`main.rs`) 只走 `AiGatewayService::new(...).with_compliance(...)`，
-    // retry 策略没有任何 env / Config 入口，恒为 `RetryPolicy::default()`。
+    // 全仓零调用；生产路径 (`main.rs`) 只走 `AiGatewayService::new(...).with_compliance(...)`。
+    // 删除后 `retry_policy` 字段恒为 `RetryPolicy::default()`（见字段上的注释）。
 
     /// 引用 router
     pub fn router(&self) -> &Router {

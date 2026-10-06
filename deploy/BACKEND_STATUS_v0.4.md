@@ -998,10 +998,10 @@ M2  is_expired 恒 true（反向过度修正）         3/4 新增用例变红�
 
 - `crates/cats-mock/.aci.json:195` 仍对外宣称有 `translation_unit_schema`，
   且**没有任何测试校验 `.aci.json` 的文本与代码一致**。
-- `cats-mock::infra::redis::MockRedis` 之外，`UserFactory.password_hash` 现在恒为 `None`，
-  喂的是一条死分支 `.unwrap_or_else(...)`。
-- `cats-ai-gateway` 的 `retry_policy` **根本没有配置入口**（无 env、无 `Config` 字段、
-  无调用方），但 `chat()` 一直在读它 ⇒ 重试行为不可配置。
+- ~~`UserFactory.password_hash` 恒为 `None`，喂着一条死分支~~ —— **2026-10-06 已修**（§4.1l）。
+- ~~`cats-ai-gateway` 的 `retry_policy` 没有配置入口~~ —— **仍存在，但已在代码里写明**
+  （§4.1l）：字段上注明它恒为 `RetryPolicy::default()`、要可配需要补 `Config` + env +
+  Helm values + compose，属新增功能而非死代码清理，故本次只记录事实、不擅自加配置面。
 - 零引用扫描器本身还放在临时目录、**未入库**，因此没有成为常设门禁；
   它的 3 条自检夹具已因本节改动而过期（`run_migrations` 已删、`configure_app` 已接线、
   `snapshot` 已接线），下次复用前须先更新夹具。
@@ -1077,6 +1077,93 @@ M2 是最重要的一条：**它对应的是"门禁在自己失效时仍然显�
 入库后必须让 CI 端到端可接受。把"多次全扫"换成"一次收集 + 查表"之后，
 278 个定义 / 163 个文件只要 0.3s。**把一次性排查脚本变成常设门禁时，
 扫描成本必须一起重新设计**——它从"偶尔跑一次"变成"每次 push 都跑"。
+
+### §4.1l 收掉 §4.1j 留下的三处遗留 🆕
+
+§4.1j 的子代理在报告末尾列出了三条"发现了但超出我的文件所有权"的问题。它们当时没有
+归属人，本节处理。
+
+#### ① `UserFactory.password_hash` 的恒假分支
+
+子代理删掉 `with_password_hash()`（全仓零调用）之后，工厂侧的
+`password_hash: Option<String>` 只剩 `new()` 里写死的 `None` 一个写入口，于是
+`build_one` 的 `self.password_hash.clone().unwrap_or_else(|| …)` 变成
+**只有 else 分支可达**。
+
+把字段与那条分支一起删掉，并把原来那个 `format!` 提为常量——它的两个实参都是字面量，
+结果是一个恒定字符串，却每次 `build_one` 都要重新拼一遍：
+
+```rust
+const FAKE_PASSWORD_HASH: &str =
+    "$argon2id$v=19$m=19456,t=2,p=1$fakesalt0123456789$fakehash0123456789";
+```
+
+**一处误读留个记录**：我一度以为 `as_db_row` 里那行
+`password_hash: self.password_hash.clone()` 也是死的。核实后不是——那是 `User`
+自己的 `String` 字段，与工厂那个 `Option` 是两个东西。
+
+#### ② `.aci.json` 声称存在一个已删函数
+
+`crates/cats-mock/.aci.json` 里 `schema` 模块的 description 写着
+"SchemaSet + 5 schema fns: … / translation_unit_schema"，而
+`translation_unit_schema` 在 §4.1j 已被删除，源码里现在只有 4 个 schema fn。
+订正为 4 个，并断言"描述里声称的 schema fn 集合 == 源码里实际存在的集合"。
+
+**相邻的一份文件刻意没动**：`crates/cats-mock/docs/regression-report-stage1-module-switch-2026-09-25.md`
+第 32 行同样写着 5 个，但那是**带日期的历史记录**（`日期: 2026-09-26 JST`），
+它对当时的描述是准确的。按"禁回溯叙事"的规矩，不把历史记录改成今天的样子。
+
+#### ③ `retry_policy`：写明事实，但不擅自加配置面
+
+`AiGatewayService.retry_policy` 恒为 `RetryPolicy::default()`
+（`max_attempts_per_provider=3` / `base_backoff_ms=100`），因为 `with_retry_policy`
+已被删除且没有任何 env / `Config` 入口。
+
+判断：**这是能力缺口，不是缺陷**。重试本身工作正常，删掉可调性比重试更糟；
+而"把参数做成可配"要补 `Config` 字段 + env + Helm values + compose，
+是**新增功能**，不在死代码清理的范围内。所以在字段上写明事实，
+免得下一个读代码的人误以为它已经可配：
+
+> `retry_policy` 当前恒为 `RetryPolicy::default()`……要做成可配需要补
+> `Config` + env + Helm values + compose，属新增功能，不在死代码清理范围内。
+
+#### 验证
+
+```
+cargo test  -p cats-mock --lib                      98 passed / 0 failed
+cargo clippy -p cats-mock -p cats-ai-gateway
+             --all-targets --locked --offline -D warnings     exit 0
+cargo fmt --all -- --check                                    exit 0
+lint-compose.py（9 条规则）                                    exit 0
+```
+
+#### 顺带记一条工具链故障与它的双重伪装
+
+本机 `E:\DevCache\cargo\` 整棵树（含 `bin/` 与 `target/`）突然变成**执行被拒**，
+但目录可列、文件可读、`.rustup` 下同一份工具链正常 ⇒ 按路径判定的执行授权问题。
+
+它伪装了**两次**，两次都差点让我得出错误结论：
+
+1. `cargo test … | Select-Object …` 报 `ResourceUnavailable ... 拒绝访问`，
+   而 `$LASTEXITCODE` 给出了 **0**——看起来"测试通过"，实际是
+   **cargo 一次都没被启动**（PowerShell 在启动原生进程之前就失败了）。
+2. 换 `.rustup` 的 cargo 后又炸在 `could not execute process … build-script-build
+   (never executed)`，这个文本**长得像 build script 写错了**，
+   实际是 target 目录执行被拒。
+   且 `cargo-clippy` / `cargo-fmt` 子命令是从 `CARGO_HOME`（也指向被拒的路径）
+   解析的，换 cargo 二进制**并不够**。
+
+可用组合（`--offline` 需要 registry，所以不能改 `CARGO_HOME`）：
+
+```powershell
+$TC = "$env:USERPROFILE\.rustup\toolchains\1.98-x86_64-pc-windows-msvc\bin"
+$env:CARGO_TARGET_DIR = 'D:\…\.target-verify'      # 必须一起覆盖
+cmd /c "`"$TC\cargo-clippy.exe`" clippy … --locked --offline -j 6 -- -D warnings"
+cmd /c "`"$TC\cargo-fmt.exe`" fmt --all -- --check"
+```
+
+**判据：`$LASTEXITCODE` 为 0 不等于命令跑过了。** 任何经管道的 native 命令都不能用
+它判成功——要么不接管输出，要么把结果落文件再单独读。
 
 ---
 
