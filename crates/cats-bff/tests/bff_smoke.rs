@@ -79,6 +79,10 @@ fn sign_token_missing_token_type(secret: &str, exp_offset_secs: i64) -> String {
 }
 
 /// 构造测试 App (无上游 server, 但路由和 RBAC 都启用)
+///
+/// 路由表用 `handlers::configure_routes` —— 与 `main.rs` 同一张。2026-10-07
+/// 之前这里内联了第三份副本（第一份在 `main.rs`，第二份在已删除的 `routes.rs`），
+/// 三份各自演化，正是"测试挂的表和服务器跑的表不是同一张"的来源。
 fn test_app() -> App<
     impl actix_web::dev::ServiceFactory<
         actix_web::dev::ServiceRequest,
@@ -100,20 +104,8 @@ fn test_app() -> App<
         .app_data(web::Data::new(projects))
         .app_data(web::Data::new(tasks))
         .app_data(web::Data::new(rbac))
-        .route("/healthz", web::get().to(handlers::healthz_handler))
-        .service(
-            web::scope("/v1/auth")
-                .route("/login", web::post().to(handlers::login))
-                .route("/refresh", web::post().to(handlers::refresh))
-                .route("/logout", web::post().to(handlers::logout))
-                .route("/me", web::get().to(handlers::me)),
-        )
-        .service(
-            web::scope("/v1/projects")
-                .route("", web::get().to(handlers::list_projects))
-                .route("", web::post().to(handlers::create_project)),
-        )
-        .service(web::scope("/v1/tasks").route("", web::post().to(handlers::dispatch_task)))
+        .app_data(handlers::json_config())
+        .configure(handlers::configure_routes)
 }
 
 #[actix_web::test]

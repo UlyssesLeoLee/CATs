@@ -25,21 +25,24 @@ use uuid::Uuid;
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
-    pub service: &'static str,
+    pub app: cats_common::AppMeta,
 }
 
 pub async fn healthz() -> impl Responder {
-    HttpResponse::Ok().json(HealthResponse {
-        status: "ok",
-        service: "report-service",
-    })
+    healthz_response()
 }
 
 /// `healthz_response` 工厂 (per lib re-export 约定)
+///
+/// 形状 per BACKEND_STATUS §4.1m 统一后的全仓唯一形状：
+/// `{"status":"ok","app":{"name":...,"version":...}}`
 pub fn healthz_response() -> HttpResponse {
     HttpResponse::Ok().json(HealthResponse {
         status: "ok",
-        service: "report-service",
+        app: cats_common::AppMeta {
+            name: env!("CARGO_PKG_NAME").to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
     })
 }
 

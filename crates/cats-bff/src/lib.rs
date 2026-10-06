@@ -4,35 +4,21 @@
 //! 引用: doc/02-基础设计/技术选型/CATs_技术基线_v1.0.md §1
 //! 引用: api/openapi/cats-openapi-v1.0.1.yaml §paths
 
+// 2026-10-07 删除三个模块：`grpc_clients.rs`(125) / `upstream_passthrough.rs`(144)
+// / `routes.rs`(178)，共 447 行。
+//
+// 它们是一条"接了 3 步但没挂上服务"的链：`routes::configure` 是链的顶端，而它
+// 唯一的调用者是一个测试文件，`main.rs` 从不调用。判定它是废弃草稿的依据是规格：
+//   - `api/openapi/cats-openapi-v1.0.1.yaml` 的 7 条 path 里没有 `/api/v1` 前缀
+//   - 也没有任何 translate 端点，而 `routes::translate_commit` 本身就是 501 stub
+//   - `deploy/envoy-mvp.yaml` 的 8 条 route 里没有 cats_bff
+// 即"编译通过、类型检查通过、但运行时不可达"。路由表已收进
+// `handlers::configure_routes`，`main.rs` 与两个集成测试挂的是同一张。
 pub mod config;
 pub mod error;
 pub mod handlers;
 pub mod principal;
 pub mod upstream;
-
-// 2026-10-05 接线第 2 步（共 3 步）：`grpc_clients.rs`（125 行），
-// translation-core gRPC 客户端。详见该文件头部的适配说明。
-//
-// 注意步骤顺序被调整过：原计划是 routes → grpc_clients，但 routes.rs
-// `use crate::grpc_clients::{TmCommitAck, TmLookupResponse, TranslationClient}`
-// —— 它硬依赖本文件，所以 grpc_clients 必须排在前面。
-pub mod grpc_clients;
-
-// 2026-10-05 接线第 1 步（共 3 步）：`upstream_passthrough.rs`（144 行）。
-//
-// 它与 `src/upstream/` 是两条平行设计 —— 本文件是共享 reqwest client + 裸
-// `serde_json::Value` 透传，`src/upstream/` 是三个强类型客户端（main.rs 实际
-// 注册路由用的那套）。文件头原本写着"直接接入不可行——依赖的 4 个 API 在当前
-// `Config` 上均不存在"，本步已逐条处理，详见该文件头部的新说明。
-//
-//
-// 2026-10-05 接线第 3 步（共 3 步）：`routes.rs`（178 行），
-// `/api/v1/*` 前缀那一套路由。注意"接线"在这里只指**参与编译**
-// （`pub mod routes;` + 适配改写），不是"挂上服务"——`routes::configure`
-// 的唯一调用者是 `tests/bff_routes_passthrough.rs`，`main.rs` 不调用它，
-// 见 `routes.rs` 里 `configure` 的文档注释。
-pub mod routes;
-pub mod upstream_passthrough;
 
 /// 当前 crate 语义版本
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

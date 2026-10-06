@@ -703,6 +703,320 @@ else:
             "请把它从基线里删掉（否则基线会腐烂）" % _nm)
 _deadcode_n = len(_dead)
 
+# ---------------------------------------------------------------------
+# 规则 10: `GET /healthz` 的响应形状全仓统一
+#
+# 真实事故（2026-10-07 之前，18 个注册了 `/healthz` 的服务对"自己叫什么"
+# 有 4 种不同答案）:
+#   8 个  {"status":"ok","app":{"name":...,"version":...}}   —— 正确
+#   5 个  {"status":"ok","name":...,"version":...}           —— key 是 name 不是 service
+#   3 个  {"status":"ok","service":...}                      —— 连 version 都没有
+#   1 个  {"status":"ok","service":...,"version":...,"bind_addr":...,"upstreams":{5 个上游}}
+#
+# 运行期后果不是报错，是**静默的 null**: 任何读 `.service` 的监控脚本在那 5 个
+# 服务上拿到 null —— 没有异常、没有告警，只是少了数据。更糟的是那 3 个连
+# version 都没有，于是"这个响应是哪一版程序吐的"根本无法回答。
+#
+# 唯一形状（2026-10-07 起全仓统一）:
+#   {"status":"ok","app":{"name":"<CARGO_PKG_NAME>","version":"<CARGO_PKG_VERSION>"}}
+#
+# `env!("CARGO_PKG_NAME")` 是这条规则的关键: 它按**本 crate** 在编译期展开，
+# 所以服务自报的一定是自己，而不是共享库 cats-common 的名字。2026-10-05 修过
+# 10 处"自报 cats-common"的同类问题（见 crates/audit-service/tests/
+# rbac_audit_read.rs 的回归钉子），本条是它的静态版本。
+#
+# `upstreams` / `bind_addr` 一律不许回来 —— 它们是内部拓扑，全仓没有任何
+# 消费者，而且换个部署形态就过期。
+#
+# 【静态检查的边界】本条证明的是"源码里写的是这个形状"，**不等于运行时真的
+# 返回了它**。要证明端点确实这么回，仍然必须 up 一次、curl 一次。
+#
+# 不在本条范围内: 形状之外的 healthz 语义（是否真的探活 DB 等）由 /readyz 负责。
+HEALTHZ_SKIP = {
+    # cats-mock 是给集成测试用的 mock server，不是部署单元（规则 8 的 matrix
+    # 里也没有它）。它的 /healthz 故意只有 {"status":"ok"}，而且 handler 是
+    # 一个闭包而不是具名函数 —— 被它 mock 的正是"服务自己"，测试替身不该长得
+    # 比被替身复杂。
+    "cats-mock": "集成测试的 mock server，不是部署单元；healthz 只有 status",
+    # m1-s0-smoke 是烟雾测试工具二进制（规则 8 的 NOT_A_SERVICE 里也列了它，
+    # 同一份"有意识的例外"记两处）。它的 `#[get("/healthz")]` 只用来确认
+    # actix 起来了，不是服务探针。
+    "m1-s0-smoke": "烟雾测试二进制，不是服务；#[get(\"/healthz\")] 只证明 actix 起得来",
+}
+
+# 扫描器有效性断言。2026-10-07 实证: crates/*/src/ 下受本规则检查的
+# `/healthz` 注册共 **18 处**，跨 18 个 crate（每个 service crate 恰好一处）；
+# 加上 2 个被跳过的非服务 crate（cats-mock / m1-s0-smoke）共 20 处。
+#
+# 阈值取 16 = 18 往下留 2 处余量给合法删除（某个 service 整体下线）。
+# 掉到 16 以下几乎不可能是"服务真的少了"，更可能是 route 正则或 crates/ 路径
+# 写坏了 —— 而那会让本条恒绿，是最危险的失效方式（同规则 8/9 的失效方式）。
+# 空结果不等于没有问题。
+#
+# 计数口径是**注册处**而不是 crate 数: 某个 crate 若在同一路径注册两次，两处
+# 都会被检查（重复注册本身另有提醒），那时站点数会 > crate 数，这是有意的。
+_HEALTHZ_MIN_SITES = 16
+
+# `.route("/healthz", ...)`：ANY 版只认"这里注册了 healthz"（handler 可以是
+# 闭包，见 cats-mock），FN 版才去取具名 handler。允许跨行 —— notification-service
+# 与 project-service 的 main.rs 把参数拆成了 3 行。
+_HEALTHZ_ROUTE_ANY_RE = re.compile(r'\.route\(\s*"/healthz"')
+_HEALTHZ_ROUTE_FN_RE = re.compile(
+    r'\.route\(\s*"/healthz"\s*,\s*web::get\(\s*\)\s*\.\s*to\(\s*'
+    r'(?P<h>[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)\s*\)')
+# 属性宏形式（m1-s0-smoke）: `#[get("/healthz")]`
+_HEALTHZ_ATTR_RE = re.compile(r'#\s*\[\s*get\(\s*"/healthz"\s*\)\s*\]')
+# 函数**定义**: 必须在语句开头，不能是 `handlers::healthz` / `self.healthz`
+# 这种调用点或路径末段（`(?:^|(?<=[{};]))` + re.M 排除 `::` / `.` 前缀）。
+_HEALTHZ_FN_DEF_RE = re.compile(
+    r'(?:^|(?<=[{};]))\s*'
+    r'(?:#\s*\[[^\]\n]*\]\s*)*'
+    r'(?:pub(?:\([^)\n]*\))?\s+)?'
+    r'(?:default\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?'
+    r'fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)', re.M)
+_HEALTHZ_RAWSTR_RE = re.compile(r'r(#+)?"')
+
+_HEALTHZ_PKG_RE = re.compile(r'env!\(\s*"CARGO_PKG_NAME"\s*\)')
+# struct 字段 `app:` 或 json 键 `"app":`。`\b` 挡住 `my_app:`（`_` 是词字符，
+# app 前面没有边界）；`"app":` 里 app 与 `:` 之间隔着引号，故要单列一条。
+_HEALTHZ_APP_RE = re.compile(r'\bapp\s*:|"app"\s*:')
+_HEALTHZ_LEAK_KEYS = ("upstreams", "bind_addr")
+
+
+def _strip_line_comments(src):
+    """丢掉每行 `//` 之后的全部内容，**保留换行**以便行号不变。
+
+    只做行注释，不做 `/* */` 解析（本仓库在这件事上不用块注释）。这一步是
+    必需的: 源码里大量注释直接写着 `/healthz`（例如
+    crates/cats-ai-gateway/src/main.rs 关于该路径归属的说明），
+    不剥掉就会被当成注册点 —— 这正是
+    crates/cats-ai-gateway/tests/healthz_single_registration.rs 踩过的坑。
+
+    但**不能**用 `ln.split("//")[0]` 一刀切: 字符串字面量里出现 `//`（典型是
+    URL）不是注释。误剪会把该行后半截连同右大括号一起吃掉，于是括号配平失败、
+    函数体解析不出来 —— 而"重新长出 upstreams"恰恰就是本规则要抓的改动，
+    那 5 个上游 URL 一旦回来，这条规则就会瞎。逐字符跳过字符串/字符字面量
+    才能既剥注释又不伤字符串。
+    """
+    out = []
+    for ln in src.splitlines():
+        i = 0
+        n = len(ln)
+        cut = None
+        while i < n:
+            c = ln[i]
+            if c == '"' or (c == "r" and i + 1 < n and ln[i + 1] in '"#'):
+                i = _skip_rust_string(ln, i)
+                continue
+            if c == "'":
+                i = _skip_rust_char(ln, i)
+                continue
+            if c == "/" and ln[i + 1:i + 2] == "/":
+                cut = i
+                break
+            i += 1
+        out.append(ln if cut is None else ln[:cut])
+    return "\n".join(out)
+
+
+def _skip_rust_string(code, i):
+    """i 指向 `"` 或 raw 串前缀 `r`/`r#`；返回闭引号之后的位置。"""
+    if code[i] == "r":
+        m = _HEALTHZ_RAWSTR_RE.match(code, i)
+        if m:
+            close = '"' + m.group(1)
+            j = code.find(close, m.end())
+            return len(code) if j < 0 else j + len(close)
+        return i + 1
+    j = i + 1
+    while j < len(code):
+        if code[j] == "\\":
+            j += 2
+            continue
+        if code[j] == '"':
+            return j + 1
+        j += 1
+    return len(code)
+
+
+def _skip_rust_char(code, i):
+    """i 指向 `'`。字符字面量则整体跳过；生命周期（'static/'a）只前进一格。"""
+    if i + 1 < len(code) and code[i + 1] == "\\":
+        j = code.find("'", i + 2)
+        return len(code) if j < 0 else j + 1
+    if i + 2 < len(code) and code[i + 2] == "'":
+        return i + 3
+    return i + 1
+
+
+def _fn_body(code, start):
+    """从 `fn` 定义处按大括号配平取函数体，跳过字符串 / raw 串 / 字符字面量。
+
+    不配平就会把下一个函数的尾巴也算进来，于是"本函数没有 upstreams"会被
+    下一个函数里的 upstreams 误判为违规（或反之）。
+    返回 (body, body 起始行号)；找不到大括号返回 (None, None)。
+    """
+    i = code.find("{", start)
+    if i < 0:
+        return None, None
+    n = len(code)
+    depth = 0
+    open_i = i
+    while i < n:
+        c = code[i]
+        if c == '"' or (c == "r" and i + 1 < n and code[i + 1] in '"#'):
+            i = _skip_rust_string(code, i)
+            continue
+        if c == "'":
+            i = _skip_rust_char(code, i)
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return (code[open_i + 1:i],
+                        code.count("\n", 0, open_i) + 1)
+        i += 1
+    return None, None
+
+
+_healthz_sites = []          # 受本规则检查的注册点（已剔除 HEALTHZ_SKIP）
+_healthz_crates = set()       # 上面这些注册点跨了多少个 crate
+_healthz_all_sites = defaultdict(int)   # 每个 crate 的注册点总数（含被跳过的）
+_healthz_skip_sites = defaultdict(int)  # 每个被跳过 crate 实际找到的注册点数
+
+for _crate in sorted(os.listdir(crates_root)):
+    _src_dir = os.path.join(crates_root, _crate, "src")
+    if not os.path.isdir(_src_dir):
+        continue
+    _code = {}
+    for _dp, _dn, _fns in os.walk(_src_dir):
+        # 只看生产代码。tests/ 不在 src/ 之下，但仍显式剪掉 src/tests/，
+        # 免得将来某个 crate 在那里放测试专用路由把计数抬高。
+        _dn[:] = [d for d in _dn if d != "tests"]
+        for _fn in sorted(_fns):
+            if not _fn.endswith(".rs"):
+                continue
+            _full = os.path.join(_dp, _fn)
+            _rel = os.path.relpath(_full, ROOT).replace("\\", "/")
+            with io.open(_full, encoding="utf-8", errors="replace") as _f:
+                _code[_rel] = _strip_line_comments(_f.read())
+
+    # 具名函数体索引: fn 名 -> [(相对路径, body, body 行号)]
+    _defs = defaultdict(list)
+    for _rel in sorted(_code):
+        for _m in _HEALTHZ_FN_DEF_RE.finditer(_code[_rel]):
+            _body, _bline = _fn_body(_code[_rel], _m.start())
+            _defs[_m.group("name")].append((_rel, _body, _bline))
+
+    for _rel in sorted(_code):
+        _src = _code[_rel]
+        _hits = []          # (注册行号, 解析用的 handler 名或 None)
+        for _m in _HEALTHZ_ROUTE_ANY_RE.finditer(_src):
+            _fnm = _HEALTHZ_ROUTE_FN_RE.match(_src, _m.start())
+            _hits.append((_src.count("\n", 0, _m.start()) + 1,
+                          _fnm.group("h") if _fnm else None))
+        for _m in _HEALTHZ_ATTR_RE.finditer(_src):
+            _fnm = _HEALTHZ_FN_DEF_RE.search(_src, _m.end())
+            _hits.append((_src.count("\n", 0, _m.start()) + 1,
+                          _fnm.group("name") if _fnm else None))
+
+        for _reg_line, _handler in _hits:
+            _healthz_all_sites[_crate] += 1
+            if _crate in HEALTHZ_SKIP:
+                _healthz_skip_sites[_crate] += 1
+                continue
+            _healthz_crates.add(_crate)
+            _name = _handler.split("::")[-1] if _handler else None
+            _hint = _handler.split("::")[-2] if _handler and "::" in _handler else None
+            _drel = _body = _bline = None
+            if _name:
+                # 同文件优先；其次文件里带最后一级模块名（`handlers::healthz` →
+                # handlers.rs）；再否则取第一个候选。两处都会检查，取最可能的那个。
+                # body 为 None 的候选直接排除 —— 括号没配平（而不是真的没函数体）
+                # 不该悄悄当成"通过"，否则解析失败会变成假绿。
+                _cands = sorted((c for c in _defs.get(_name, []) if c[1] is not None),
+                                key=lambda t: (0 if t[0] == _rel else 1,
+                                               0 if _hint and _hint in os.path.basename(t[0]) else 1,
+                                               t[0]))
+                if _cands:
+                    _drel, _body, _bline = _cands[0]
+            _healthz_sites.append((_crate, _rel, _reg_line, _drel, _bline, _name))
+
+_healthz_n_sites = len(_healthz_sites)
+_healthz_n_crates = len(_healthz_crates)
+
+# 扫描器有效性断言: 正则失效 / crates/ 路径写错 ⇒ 一处都收集不到，下面两条
+# 校验都拿到空集 ⇒ **门禁恒绿**。这与规则 8/9 的失效方式同型（§4.1h）。
+if _healthz_n_sites < _HEALTHZ_MIN_SITES:
+    err("规则 10 失效：crates/*/src/ 下只收集到 %d 处 /healthz 注册"
+        "（阈值 %d）—— 扫描器大概率没在查任何东西。"
+        "请检查 _HEALTHZ_ROUTE_ANY_RE / crates_root 路径；"
+        "**空结果不等于没有问题**" % (_healthz_n_sites, _HEALTHZ_MIN_SITES))
+else:
+    for _site in _healthz_sites:
+        _crate, _reg_rel, _reg_line, _drel, _bline, _name = _site
+        if _drel is None:
+            err("crate '%s' 的 %s:%d 注册了 /healthz，但解析不到 handler 的函数体"
+                "（handler=%s；可能是闭包/method 值，也可能大括号没配平）—— "
+                "无法确认它返回统一形状。"
+                "若这是有意为之的闭包 handler，请把该 crate 加进 HEALTHZ_SKIP "
+                "并写下理由" % (_crate, _reg_rel, _reg_line, _name))
+            continue
+        _bad = []
+        if not _HEALTHZ_PKG_RE.search(_body):
+            _bad.append('没有 env!("CARGO_PKG_NAME") —— 会自报共享库的名字而不是本服务')
+        if not _HEALTHZ_APP_RE.search(_body):
+            _bad.append('没有 app 键（struct 字段 app: 或 json 键 "app":）')
+        for _k in _HEALTHZ_LEAK_KEYS:
+            if re.search(r"\b%s\b" % _k, _body):
+                _bad.append("泄漏内部拓扑字段 %s" % _k)
+        if _bad:
+            err("crate '%s' 的 /healthz handler `%s()`（注册于 %s:%d，定义于 %s:%d）"
+                "不合统一形状：%s —— 统一形状是 "
+                '{"status":"ok","app":{"name":..,"version":..}}；'
+                "形状不一致会让读 .service 的监控脚本拿到**静默的 null**"
+                % (_crate, _name, _reg_rel, _reg_line, _drel, _bline,
+                   "；".join(_bad)))
+
+# 例外不能腐烂: 跳过清单里的 crate 一旦不再注册 /healthz，说明例外已失效，
+# 必须删掉 —— 否则下一个真的不合规的 healthz 会被这条豁免静默放过。
+for _skip_crate, _reason in sorted(HEALTHZ_SKIP.items()):
+    if _healthz_skip_sites.get(_skip_crate, 0) == 0:
+        err("HEALTHZ_SKIP 里列了 crate '%s'（%s），但它的 src/ 下已经找不到 "
+            "/healthz 注册了 —— 请把它从 HEALTHZ_SKIP 删掉（否则例外会腐烂，"
+            "下一个真的不合规的 healthz 会被静默放过）" % (_skip_crate, _reason))
+
+# 同一 crate 多于一处注册不是本条的错误（两处都被检查了），但重复注册本身
+# 值得看一眼：同一路径注册两次，至少有一处收不到请求。
+#
+# 哪一处收不到，本仓库**实测过**：actix-web 4.15.0 下**先注册的赢**。证据是
+# crates/cats-ai-gateway/tests/healthz_single_registration.rs 的
+# `first_registration_wins`（注册两个 body 不同的 handler，返回的是先注册那个），
+# 该用例在 CI 上通过。cats-ai-gateway 正是因为把 `/healthz` 注册了两次
+# （main.rs 一次、api/mod.rs 一次）而让其中一个 handler 运行时永远收不到请求，
+# 而它自己的测试因为只 mount 其中一张表所以一直是绿的 —— 见
+# BACKEND_STATUS §4.1n。
+#
+# 所以这里只陈述"重复了"，不替 actix 下结论：语义可能随版本变，而
+# `first_registration_wins` 一旦变红就说明本段结论要重新核。
+_healthz_dupe = sorted(c for c in _healthz_all_sites
+                       if c not in HEALTHZ_SKIP and _healthz_all_sites[c] > 1)
+if _healthz_dupe:
+    note("规则 10 附带发现：%s 在 src/ 下各有 %s 处 /healthz 注册 —— "
+         "两处都已被本规则检查，但重复注册意味着其中一处收不到请求"
+         "（本仓库实测：先注册的赢，见 healthz_single_registration.rs）"
+         % (", ".join(_healthz_dupe),
+            "/".join(str(_healthz_all_sites[c]) for c in _healthz_dupe)))
+
+# B: 可被外部 diff 的计数出口（LINT_HEALTHZ_COUNT_ONLY=1 时只打印数字，
+# 退出 0，不跑其它规则 —— 便于与"18"直接对拍）。
+if os.environ.get("LINT_HEALTHZ_COUNT_ONLY"):
+    print("healthz_crates=%d healthz_sites=%d healthz_sites_all=%d"
+          % (_healthz_n_crates, _healthz_n_sites, sum(_healthz_all_sites.values())))
+    sys.exit(0)
+
 
 print("=" * 66)
 print("compose 静态不变量检查")
@@ -729,6 +1043,10 @@ print("  OK    规则 7  src/ 下没有新增的未编译 .rs 文件")
 print("  OK    规则 8  每个产出二进制的 crate 都在 ci-docker-build 的 matrix 里")
 print("  OK    规则 9  没有零调用的 pub fn（扫了 %d 个定义 / %d 个文件）"
       % (_n_defs, _n_files))
+print("  OK    规则 10 %d 个 crate 的 %d 处 /healthz 全部返回统一形状"
+      "（另跳过 %d 个非服务 crate：%s）"
+      % (_healthz_n_crates, _healthz_n_sites, len(HEALTHZ_SKIP),
+         ", ".join(sorted(HEALTHZ_SKIP))))
 print("")
 for n in notes:
     print("  提醒  " + n)

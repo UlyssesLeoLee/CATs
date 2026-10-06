@@ -73,6 +73,17 @@ jobs:
       #             指着 50051 的 P0
       #   规则 7    塞一个没被 mod 声明的 .rs 即 FAIL。这条抓出 12 个 crate 共
       #             5731 行从未编译的代码（已列入基线，新增即 FAIL）
+      #   规则 8-9  同一条命令跑两条规则（产出二进制的 crate 进 matrix；
+      #             全仓零调用的 pub fn）。各自带"扫描器有效性"阈值断言 ——
+      #             正则失效导致空结果时它们自己会 FAIL，不会恒绿
+      #   规则 10   18 个 crate 的 GET /healthz 必须统一返回
+      #             {"status":"ok","app":{"name":..,"version":..}}。
+      #             修这条之前 18 个服务有 4 种不同形状，读 .service 的监控
+      #             在其中 5 个上拿到**静默的 null**。带收集数下限断言（少于
+      #             16 处即判定扫描器失效）。变异验证见
+      #             D:\Temp\mutate-rule10.py（4 组变异 + 1 组例外列表变异，
+      #             逐字节还原）。
+      #             注意: 这是静态检查，不替代真的 up 一次 curl 一次。
       - name: Lint docker-compose + envoy invariants
         if: matrix.os == 'ubuntu-latest'
         run: python deploy/scripts/lint-compose.py

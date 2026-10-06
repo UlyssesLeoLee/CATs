@@ -37,16 +37,24 @@ use uuid::Uuid;
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
-    name: &'static str,
-    version: &'static str,
+    app: cats_common::AppMeta,
 }
 
 /// `GET /healthz` — 存活/就绪探针
+///
+/// 响应形状 = 全仓统一后的唯一形状（per BACKEND_STATUS §4.1m）：
+/// `{"status":"ok","app":{"name":...,"version":...}}`
+///
+/// 用 `env!("CARGO_PKG_NAME")` 而不是 `AppMeta::current()` —— 后者返回的是
+/// **cats-common 自己**的包名，会让每个服务都自报 "cats-common"，监控分不出
+/// 是谁应答的。这个坑见 asr-service/src/main.rs 里的同款注释。
 pub async fn healthz() -> impl Responder {
     HttpResponse::Ok().json(HealthResponse {
         status: "ok",
-        name: env!("CARGO_PKG_NAME"),
-        version: env!("CARGO_PKG_VERSION"),
+        app: cats_common::AppMeta {
+            name: env!("CARGO_PKG_NAME").to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
     })
 }
 

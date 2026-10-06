@@ -15,13 +15,22 @@
 //! 打到所有受保护端点，可用窗口从 1h 变相延长到 24h。现在 `verify_jwt` 额外校验
 //! `claims.token_type == "access"`，其它值一律按 `invalid_token_type` 拒绝。
 //!
-//! **已知留尾（本次修复范围之外，需要单独跟进）**：`auth-service` 签发的真实 JWT
-//! (`crates/auth-service/src/models.rs::Claims`) 目前根本不包含 `roles` 声明——即便
-//! 签名验证通过，`Principal.roles` 在生产环境下也永远是空的，所有走 `RbacChecker`
-//! 的鉴权检查都会因为角色集为空而被拒绝。这不是本次修复引入的新问题，而是修复
-//! "签名不校验"之后暴露出的下一层缺口：角色本身目前没有任何合法来源（无论是否验签）。
-//! 落地角色来源（例如按 `sub` 查 user-service，或由 auth-service 在签发时把角色写入
-//! JWT）需要另开工单跟进，本次不在 ULYS-149 的"JWT 验签"范围内顺手处理。
+//! **"角色来源"这一层已于 2026-10-07 核对为已闭合**（此前本段写的是"未闭合"，
+//! 属过时记录，在此订正）。原文说 `auth-service` 签发的真实 JWT 根本不包含
+//! `roles` 声明、于是 `Principal.roles` 在生产恒为空、所有走 `RbacChecker`
+//! 的鉴权检查都会被拒。实测不成立：
+//! - `auth-service/src/models.rs:66-67` 的 `Claims` **有** `roles: Vec<String>`；
+//! - `auth-service/src/auth.rs:84` 的 `issue_jwt` 把它写进 payload；
+//! - `auth-service/src/handlers.rs:201` 的 login 传的是 `default_roles_for(&user)`，
+//!   值为 `["User"]`（username == "admin" 时为 `["User","Sponsor"]`），
+//!   refresh 则从旧 claims 复刻 —— 不是空 vec。
+//! - 端到端已验证：`tests/bff_upstream_passthrough.rs` 的
+//!   `list_projects_forwards_bearer_token_to_upstream` 用 `roles=["User"]` 的
+//!   签名 token 打 `GET /v1/projects`，穿过验签与 RBAC 并拿到上游 200。
+//!
+//! 仍然存在的真实限制（不是本段能解决的）：角色来源是硬编码的简化逻辑，
+//! 不来自 user-service / workspace-membership —— 那是 M1 阶段的取舍
+//! （`auth-service/src/handlers.rs:21-24` 有记录）。要按 workspace 授权需另开工单。
 //!
 //! 引用:
 //! - 接口设计书 v2.0 §1.3 错误信封 + §3 JWT 转发
@@ -39,9 +48,9 @@ use std::sync::Arc;
 
 /// JWT payload（已验签）
 ///
-/// 字段对齐 `auth-service::models::Claims`（签发方）。注意真实 token **不含 `roles`**——
-/// 这里保留 `roles` 字段只是为了不破坏 `Principal` 的既有接口形状，`#[serde(default)]`
-/// 保证字段缺失时反序列化不报错，实际值目前恒为空数组（见上方模块文档"已知留尾"）。
+/// 字段对齐 `auth-service::models::Claims`（签发方）。`roles` 由签发方
+/// `issue_jwt(.., default_roles_for(&user))` 填入（M1 阶段为 `["User"]`，
+/// admin 额外 `Sponsor`），不是恒空；见本文件模块文档"角色来源"那一段。
 ///
 /// `token_type` 与 `roles` 不同：真实 token 一定带这个字段（签发方 `issue_jwt` 强制写入，
 /// 见 `auth-service::auth::issue_jwt`），所以这里**不加 `#[serde(default)]`**——缺失该字段

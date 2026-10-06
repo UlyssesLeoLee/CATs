@@ -118,8 +118,24 @@ async fn build_audit(
 // =====================================================================
 
 /// GET /healthz
+///
+/// 响应形状 = 全仓统一后的唯一形状（per BACKEND_STATUS §4.1m）：
+/// `{"status":"ok","app":{"name":...,"version":...}}`
+///
+/// 用 `env!("CARGO_PKG_NAME")` 而不是 `AppMeta::current()` —— 后者返回的是
+/// **cats-common 自己**的包名，会让每个服务都自报 "cats-common"，监控分不出
+/// 是谁应答的。这个坑见 asr-service/src/main.rs 里的同款注释。
 pub async fn healthz() -> impl Responder {
-    HttpResponse::Ok().json(json!({"status": "ok", "service": "auth-service"}))
+    // 先建成变量再放进 `json!`：宏有自己的分词器，在其值位置内嵌 struct
+    // 字面量并在里面写 `"key": value` 会被它当成 JSON 的键值对解析。
+    let app = cats_common::AppMeta {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    HttpResponse::Ok().json(json!({
+        "status": "ok",
+        "app": app,
+    }))
 }
 
 // =====================================================================

@@ -48,32 +48,11 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(projects_client.clone()))
             .app_data(web::Data::new(tasks_client.clone()))
             .app_data(web::Data::new(rbac_checker.clone()))
-            .app_data(web::JsonConfig::default().error_handler(|err, _req| {
-                actix_web::error::InternalError::from_response(
-                    err,
-                    actix_web::HttpResponse::BadRequest().json(cats_bff::error::ErrorBody {
-                        error: cats_bff::error::ErrorCode::InvalidPayload,
-                        message: "invalid request body".to_string(),
-                        detail: None,
-                    }),
-                )
-                .into()
-            }))
+            .app_data(handlers::json_config())
             // ---- 8 endpoint ----
-            .route("/healthz", web::get().to(handlers::healthz_handler))
-            .service(
-                web::scope("/v1/auth")
-                    .route("/login", web::post().to(handlers::login))
-                    .route("/refresh", web::post().to(handlers::refresh))
-                    .route("/logout", web::post().to(handlers::logout))
-                    .route("/me", web::get().to(handlers::me)),
-            )
-            .service(
-                web::scope("/v1/projects")
-                    .route("", web::get().to(handlers::list_projects))
-                    .route("", web::post().to(handlers::create_project)),
-            )
-            .service(web::scope("/v1/tasks").route("", web::post().to(handlers::dispatch_task)))
+            // 路由表在 handlers::configure_routes 里，与集成测试共用同一张
+            // （原先内联在这里，测试只能去挂另一张没人用的表，见该函数注释）
+            .configure(handlers::configure_routes)
     })
     .bind(&bind_addr)?
     .run()

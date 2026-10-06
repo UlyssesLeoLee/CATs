@@ -11,13 +11,16 @@ use sqlx::PgPool;
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
-    service: &'static str,
+    app: cats_common::AppMeta,
 }
 
 pub async fn healthz() -> impl Responder {
     HttpResponse::Ok().json(HealthResponse {
         status: "ok",
-        service: "worker-service",
+        app: cats_common::AppMeta {
+            name: env!("CARGO_PKG_NAME").to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
     })
 }
 

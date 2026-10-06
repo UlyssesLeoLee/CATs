@@ -1379,3 +1379,184 @@ api/openapi/cats-openapi-v1.0.1.yaml 的 paths 段共 7 条
 而 `routes::healthz` 被测试引用着，所以它合规。要抓这类"引用只在测试里"的
 情况，需要另一条规则（**生产代码的可达性**，即从 `main` 出发的调用图），
 那是独立的一条门禁，不在本轮范围。
+
+
+---
+
+### §4.1o 把 `/healthz` 统一到唯一形状，并把它变成常设门禁（lint 规则 10）🆕
+
+§4.1m 只交付了取证与建议。**本节是执行**：按拍板统一到形状 A，并加规则 10 防止漂移。
+
+```json
+{ "status": "ok", "app": { "name": "<CARGO_PKG_NAME>", "version": "<CARGO_PKG_VERSION>" } }
+```
+
+#### 改了哪 9 个 crate
+
+8 个本来就已经是这个形状，一行没动（asr / audit / ingestion / ocr /
+office-converter / render-writer / subtitle / translation-core）。改的 9 个：
+
+| crate | 原形状 | 备注 |
+|---|---|---|
+| file / notification / project / user | `{status, name, version}` | 键叫 `name` 不叫 `service` —— 读 `.service` 的监控静默拿 null |
+| task | 内联 `json!`，同上形状 | 必须先 `let app = AppMeta{..}` 再放进 `json!`（宏分词器会把内嵌字面量里的 `"key":` 当 JSON 键值对）|
+| report / worker | `{status, service}` | **完全没有 version** ⇒ 外部监控无法判断跑的是哪次构建 |
+| auth | 一行 `json!`，`{status, service}` | 同上 |
+| cats-bff | `{status, service, version, bind_addr, upstreams{5}}` | 削掉 `bind_addr` 与 5 个上游 URL（§4.1m 已论证不是当前泄露，但没有任何消费者）|
+
+`cats-bff` 顺带修了一处连带问题：`healthz_handler` 不再需要 `web::Data<Config>`，
+参数去掉后 `use crate::config::Config;` 也就没有别的用处了，一并删除
+（否则 clippy `-D warnings` 报 unused）。
+
+`report-service` 另有一个 `healthz_response()` 工厂按旧字段构造结构体，
+改成同一形状，并让 `healthz()` 委托给它，避免两份定义。
+
+`cats-ai-gateway` 的 `api::healthz_handler` 原本多吐顶层 `service` 与 `version`
+（§4.1n 说过它此前被重复注册遮蔽；遮蔽去掉后它就是真正应答的那个），也削齐。
+
+#### 顺带订正一处已被证伪的注释
+
+`cats-bff/src/principal.rs` 的模块文档原写："`auth-service` 签发的真实 JWT
+根本不包含 `roles`，于是 `Principal.roles` 在生产恒为空，所有走 `RbacChecker`
+的鉴权检查都会被拒" —— 即"生产里所有 RBAC 端点恒 403"。**这条不成立**：
+
+- `auth-service/src/models.rs:66-67` 的 `Claims` **有** `roles: Vec<String>`；
+- `auth-service/src/auth.rs:84` 的 `issue_jwt` 把它写进 payload；
+- `auth-service/src/handlers.rs:201` 的 login 传 `default_roles_for(&user)`，
+  值是 `["User"]`（username == "admin" 时为 `["User","Sponsor"]`），不是空 vec；
+- 端到端验证：新的 `bff_upstream_passthrough.rs` 用 `roles=["User"]` 的签名
+  token 打 `GET /v1/projects`，穿过验签与 RBAC 并拿到上游 200
+  （`list_projects_forwards_bearer_token_to_upstream`）。
+
+仍然成立的限制是另一件事，已在新注释里写明：角色来源是 M1 阶段的硬编码简化
+逻辑，不来自 user-service / workspace-membership。
+
+#### lint 规则 10：形状漂移从此会红
+
+`deploy/scripts/lint-compose.py` 新增规则 10，检查 `crates/*/src/` 下每一处
+`/healthz` 注册所指向的 handler 函数体：必须含 `env!("CARGO_PKG_NAME")`、必须
+有 `app` 键、不得含 `upstreams` / `bind_addr`。
+
+```
+OK  规则 10  18 个 crate 的 18 处 /healthz 全部返回统一形状
+             （另跳过 2 个非服务 crate：cats-mock, m1-s0-smoke）
+```
+
+四个设计决定：
+
+1. **自带扫描器有效性断言**（`_HEALTHZ_MIN_SITES = 16`，实测 18）。
+   正则一旦写坏，收集数归零，本条会 FAIL 而不是恒绿 —— 与规则 8/9 同源的失效方式。
+2. **双向例外表**：`HEALTHZ_SKIP` 里若列了某个 crate、而它 `src/` 下已找不到
+   `/healthz` 注册，同样 FAIL。防止例外表腐烂后静默放过下一个不合规的实现。
+3. **两个显式跳过项**并各写理由：`cats-mock` 是集成测试的 mock server
+   （不是部署单元，healthz 故意只有 `{"status":"ok"}`），`m1-s0-smoke` 是烟雾
+   测试二进制（`#[get("/healthz")]` 只用来证明 actix 起得来）。
+4. **剥注释要认字符串字面量**：第一版按 `//` 截断，结果 `upstreams` 里那些
+   `http://...` URL 会把后续代码整段吃掉，让规则**看不见**真正的泄漏。
+   这是变异验证抓出来的（见下）。
+
+**变异验证 12/12**（`D:\Temp\mutate-rule10.py`）：
+
+| 场景 | 结果 |
+|---|---|
+| 未改动的树 exit 0 且报出 18 | PASS |
+| 把 worker-service 退回扁平 `service:` 形状 | FAIL，且点名 `crates/worker-service/src/handlers.rs:17` |
+| 把 `upstreams` / `bind_addr` 加回去 | FAIL，报"泄漏内部拓扑字段" |
+| 把 route 正则改坏（恒返回空集） | FAIL，报"只收集到 0 处……空结果不等于没有问题" |
+| 还原后与变异前**逐字节一致** | PASS（sha256 相同）|
+| 附加：注释里写 `/healthz` 不算注册点 | PASS（计数仍是 18/18）|
+| 附加：`HEALTHZ_SKIP` 里塞过期例外 | FAIL |
+
+#### 本地验证
+
+```
+cargo fmt --all -- --check                                       exit 0
+cargo test（10 个受影响 crate, -j 2）                             exit 0
+cargo clippy --all-targets -D warnings（分两批，-j 2）             exit 0 / exit 0
+lint-compose.py（10 条规则）                                       exit 0
+```
+
+`cargo test` 必须带 `-j 2`：10 个 crate 并行编译会撞 `os error 1455`
+（提交限制耗尽）→ `rustc-LLVM ERROR: out of memory`，症状看起来像代码问题，
+实际是资源问题。CI 上是分 job 跑的，不受此影响。
+
+---
+
+### §4.1p cats-bff：删掉 447 行"接了 3 步但没挂上服务"的链，并让测试挂上真跑的那张表 🆕
+
+§4.1n 记录了"13 个用例测的是服务器不走的分支"，但没有动结构。本节按拍板处置。
+
+#### 删掉三个模块（447 行）
+
+```
+crates/cats-bff/src/routes.rs               178 行
+crates/cats-bff/src/grpc_clients.rs         125 行
+crates/cats-bff/src/upstream_passthrough.rs 144 行
+```
+
+判定依据是**规格**而不是口味：
+
+```
+api/openapi/cats-openapi-v1.0.1.yaml 的 paths 共 7 条
+  /auth/login /auth/refresh /auth/logout /auth/me /healthz /projects /tasks
+  - 没有 /api/v1 前缀（envoy 与 openapi 用的都是 /v1/...）
+  - 没有任何 translate 端点
+  - routes::translate_commit 本身就是 501 stub（"proto UpdateTMMatch RPC pending v1.1"）
+deploy/envoy-mvp.yaml 的 8 条 route 里没有 cats_bff（只有 127.0.0.1:8091 回环可达）
+```
+
+三者是一条链：`routes::configure` 是链顶，`grpc_clients` 被它依赖，
+`upstream_passthrough` 被它依赖；而链顶唯一的调用者是那个测试文件。
+**编译通过、类型检查通过、运行时不可达。**
+
+#### 生产装配抽成可测函数，三份副本并成一份
+
+改之前 `main.rs`、`routes.rs`、`tests/bff_smoke.rs` 各有一份路由表，三份各自演化
+—— 这正是"测试挂的表和服务器跑的表不是同一张"的来源。现在：
+
+```
+handlers::configure_routes(cfg: &mut ServiceConfig)   <- 唯一一张
+handlers::json_config() -> JsonConfig                  <- 400 错误信封（app_data 只能挂 App）
+  ^ 被 main.rs、tests/bff_smoke.rs、tests/bff_upstream_passthrough.rs 三处共用
+```
+
+形状与 `audit-service` 里既有的同名 `configure` 一致，沿用仓库约定。
+
+#### 13 个用例改挂生产，并逐条核对旧断言
+
+旧的 13 个用例打的是 `routes::configure`。逐条核对后发现 **8 条透传断言没有一条
+对生产成立**：
+
+| 旧断言 | 生产实际 |
+|---|---|
+| 请求打 `/api/v1/auth/login` | 生产是 `/v1/auth/login`（无 `api` 段）|
+| 上游 401 **原样透传** | `BffError::UpstreamError` → **502 `dependency_unavailable`**（`error.rs:188`）|
+| 上游 201 **原样透传** | 201 走 `status.is_success()` 分支，根本不会变成错误 |
+| 注入 `X-Cats-User-Id` / `X-Cats-Org-Id` | 生产只发 `Authorization: Bearer`（`upstream/projects.rs:87`）|
+| `/api/v1/translate/*` 两端点 | 端点不存在，且从未进过 openapi |
+| body **原样透传** | 走强类型 DTO 往返：`tenant_id` 被补成 `null`，projects 的三个可选字段被物化成 `null` |
+| `detail` 是嵌套对象 | `ErrorBody.detail` 是 `Option<String>`，装的是上游**原文**不解析 |
+
+所以这不是"把路径改一下"，是**断言对象整个换掉了**。新文件
+`tests/bff_upstream_passthrough.rs`（13 个用例）断言的是真跑的那张表能证明的东西：
+
+| 契约 | 靠什么证据 |
+|---|---|
+| URL 拼装（含 trailing-slash trim） | 假上游记下 method + path |
+| 上游非 2xx 的处理 | 502 `dependency_unavailable` + `message` 含上游状态码 + `detail` 保留原文 |
+| **本地校验早于网络** | 空 username → 400，**且断言假上游一次都没被调用** |
+| **鉴权早于网络** | 无 token → 401，断言上游一次都没被调用 |
+| RBAC 真的生效 | `roles=["Guest"]` → 403，且上游一次都没被调用；`roles=["User"]` → 200 |
+| access token 转发 | 假上游记下 `Authorization`，并**钉住"不发 `X-Cats-*`"** |
+| healthz 形状 | `app.name` == 本 crate 包名；无 `service`/`name`/`upstreams`/`bind_addr`；纯本地不碰上游 |
+
+首轮跑出 3 条红，逐条查证后确认是**我写错了断言、不是生产有问题**：
+`detail` 是字符串不是对象、请求体会被 DTO 补 `tenant_id: null`、响应里可选字段
+被物化成 `null`。三处都改成对真实契约的断言，并把两个用例名里的 "verbatim"
+去掉（它们本来就不逐字）。
+
+#### 规则 9 为什么抓不到这一整类
+
+规则 9 查的是"零引用的 `pub` 函数"，而 `routes::healthz` 被测试引用着，所以合规。
+要抓"引用只在测试里、生产不可达"这类，需要另一条门禁：**从 `main` 出发的
+生产可达性**（生产入口到该函数的调用图）。那是独立的一条，不在本轮范围。

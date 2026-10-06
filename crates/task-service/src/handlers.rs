@@ -109,10 +109,15 @@ fn server_error(detail: &str) -> HttpResponse {
 
 /// `GET /healthz` — 存活探针 + 启动探针复用
 pub async fn healthz() -> impl Responder {
+    // 先建成变量再放进 `json!`：宏有自己的分词器，在其值位置内嵌 struct
+    // 字面量并在里面写 `"key": value` 会被它当成 JSON 的键值对解析。
+    let app = cats_common::AppMeta {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
     HttpResponse::Ok().json(serde_json::json!({
         "status": "ok",
-        "name": env!("CARGO_PKG_NAME"),
-        "version": env!("CARGO_PKG_VERSION"),
+        "app": app,
     }))
 }
 

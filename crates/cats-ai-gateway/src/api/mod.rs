@@ -153,8 +153,6 @@ pub async fn healthz_handler() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({
         "status": "ok",
         "app": app,
-        "service": "cats-ai-gateway",
-        "version": crate::version(),
     }))
 }
 
