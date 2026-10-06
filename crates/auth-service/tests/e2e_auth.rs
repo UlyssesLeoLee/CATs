@@ -258,7 +258,9 @@ async fn e2e_healthz_returns_200() {
     assert_eq!(resp.status().as_u16(), 200);
     let body: serde_json::Value = actix_test::read_body_json(resp).await;
     assert_eq!(body["status"], json!("ok"));
-    assert_eq!(body["service"], json!("auth-service"));
+    // 形状 per BACKEND_STATUS §4.1m 统一后的全仓唯一形状
+    assert_eq!(body["app"]["name"], json!(env!("CARGO_PKG_NAME")));
+    assert!(body["app"]["version"].as_str().unwrap().starts_with("0.1."));
 }
 
 // === (e) GET /v1/auth/me 成功 → 200 + user_id/username/email ===

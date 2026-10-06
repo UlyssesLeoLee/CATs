@@ -1560,3 +1560,107 @@ handlers::json_config() -> JsonConfig                  <- 400 错误信封（app
 规则 9 查的是"零引用的 `pub` 函数"，而 `routes::healthz` 被测试引用着，所以合规。
 要抓"引用只在测试里、生产不可达"这类，需要另一条门禁：**从 `main` 出发的
 生产可达性**（生产入口到该函数的调用图）。那是独立的一条，不在本轮范围。
+
+
+---
+
+### §4.1q 一次"本地全绿、只有 CI 红"的回归：e2e 断言是本地盲区 🆕
+
+§4.1o 统一了 18 个服务的 `/healthz` 形状。本地验证是绿的：
+
+```
+cargo fmt --all -- --check                                    exit 0
+cargo test（10 个受影响 crate, -j 2）                          exit 0
+cargo clippy --all-targets -D warnings（分两批）               exit 0 / exit 0
+lint-compose.py（10 条规则）                                    exit 0
+```
+
+**但 CI 的 `e2e (real PostgreSQL)` 红了**：
+
+```
+thread 'e2e_healthz_returns_200' panicked at
+  crates/auth-service/tests/e2e_auth.rs:261:5:
+assertion `left == right` failed
+  left: Null
+ right: String("auth-service")
+
+test result: FAILED. 7 passed; 1 failed
+```
+
+#### 两个洞叠在一起
+
+**洞 1：断言旧形状的用例全部是 `#[ignore]`，本地一条都不跑。**
+
+`cargo test -p auth-service` 的本地输出是 `2 passed; 9 ignored` —— 那 9 条
+`#[ignore = "e2e-needs-real-pg"]` 的用例被直接跳过。全仓扫下来，断言
+`/healthz` 响应体的用例共 **9 个，其中 5 个是 `#[ignore]`**：
+
+| 文件 | 断言的键（统一前） |
+|---|---|
+| `auth-service/tests/e2e_auth.rs:251` | `["service"]` |
+| `file-service/tests/integration.rs:108` | `["name"]` |
+| `notification-service/tests/integration.rs:108` | `["name"]` |
+| `project-service/tests/integration.rs:109` | `["name"]` `["version"]` |
+| `user-service/tests/e2e_t02.rs:85` | `["name"]` `["version"]` |
+
+也就是说"本地全绿"对这 5 个断言**完全没有覆盖**，而它当时被当成了证据。
+这不是粗心，是验证手段本身有盲区 —— 本地没有真 PostgreSQL，那 5 条本来
+就不可能跑。
+
+**洞 2：CI 的 e2e 步骤撞到第一个失败就中止，5 个坏 suite 只报得出 1 个。**
+
+原步骤是 `set -euo pipefail` + 顺序调用，于是 auth-service 一红，后面的
+user / project / file / notification **四个 suite 根本没执行**。
+一次 shape 变更打中 5 个 suite，CI 只报了 1 个，其余 4 个每个都要再等一个
+CI 周期才暴露。
+
+用 stub `cargo` 对照验证（`D:\Temp\prove-e2e-old-aborts.py` vs
+`prove-e2e-accumulate.py`）：
+
+```
+旧版（set -e，无累积）：实际执行 1 / 6 个 suite，退出码 101
+新版（失败累积）      ：实际执行 6 / 6 个 suite，退出码 1，且点名全部失败 suite
+```
+
+#### 处置
+
+**改 e2e 步骤为失败累积**（保留串行 —— 这些测试共用固定表名，并发会互相污染
+种子数据；只是不再早停）。行为已用 stub `cargo` 实证，不是靠读代码。
+
+**改那 5 个断言**，并顺手把硬编码的 crate 名换成 `env!("CARGO_PKG_NAME")`：
+测试就在该 crate 的 `tests/` 下，这个宏拿到的正是它自己的包名，以后再改名
+不会漏改断言。
+
+**新增 lint 规则 11**：无论用例是不是 `#[ignore]`，只要它对 `/healthz` 响应体
+做断言，就不许用统一前的键。带收集数下限自检（阈值 5，实测 9），并在每次运行
+时打印"其中 N 个是 `#[ignore]`"—— 把这个盲区的大小**显式摆在输出里**。
+
+#### 规则 11 的两个设计坑
+
+1. **只能判顶层访问。** `body["name"]` 是旧扁平形状，`body["app"]["name"]` 是
+   统一后的形状；朴素子串搜索分不开这两者 —— 第一版因此在**已经改对的 5 个
+   用例**上报了 5 个假阳性。正则是 `(?<!\])\["key"\]`。
+   *门禁在正确代码上失败比门禁不响更糟*，它会在下一次争论里被删掉。
+2. **负向断言要豁免。** `body.get("service").is_none()` 是"这个键必须不出现"，
+   那是规则 10 在服务侧钉的事，在测试侧钉住是合理的，不能报。
+
+变异验证 5/5（`D:\Temp\mutate-rule11.py`）：
+
+| 场景 | 结果 |
+|---|---|
+| 未改动树 exit 0 且报出 9 个 / 5 个 `#[ignore]` | PASS |
+| 把旧形状放回一个 `#[ignore]` 用例 | FAIL，指名 `file:line` 并注明该用例 `#[ignore]` |
+| 改坏扫描器正则 | FAIL，报"规则 11 失效……空结果不等于没有问题" |
+| **反向**：嵌套 `body["app"]["name"]` 与 `.is_none()` 负向断言不得误报 | PASS |
+| 还原后与变异前逐字节一致 | PASS |
+
+#### 扫描器自身的两个 bug（本轮第三次栽在同一类地方）
+
+写扫描器时又出现"0 结果当结论"，第三次：
+
+1. 第一版要求 `#[test]` 与 `fn` 同行，而 actix 写在**上一行** ⇒ 扫出 0 个，
+   差一步就写成"没有这样的测试"。加了"扫到的测试函数总数 < 200 即判定扫描器
+   可疑"的自检（实测 455）才暴露。
+2. 规则 11 的初版把"提到 healthz 的用例体"（26）当成被检查集合，与独立实现
+   算出的"真的断言了键的用例"（9）不一致。阈值会虚高、误报面会放大，收紧成
+   后者，并**用两个独立实现对拍**（9 / 5，两边完全一致）才收工。

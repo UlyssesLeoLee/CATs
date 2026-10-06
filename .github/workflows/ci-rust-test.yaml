@@ -84,6 +84,14 @@ jobs:
       #             D:\Temp\mutate-rule10.py（4 组变异 + 1 组例外列表变异，
       #             逐字节还原）。
       #             注意: 这是静态检查，不替代真的 up 一次 curl 一次。
+      #   规则 11   测试不得再断言统一前的 healthz 形状。这条是为了堵一个
+      #             具体的洞: 那 5 个断言旧形状的用例全部带
+      #             #[ignore = "e2e-needs-real-pg"]，本地 cargo test 直接跳过，
+      #             于是形状统一后**本地全绿**、只有本 job 的 e2e 红；而本 job
+      #             原本是 set -e + 顺序调用，一次打中 5 个 suite 只报得出 1 个。
+      #             下方 e2e 步骤已改为失败累积（不早停），本条则让它在本地
+      #             几秒内就红。变异验证见 D:\Temp\mutate-rule11.py（含一条
+      #             "嵌套 app.name 与 .is_none() 不得误报" 的反向场景）。
       - name: Lint docker-compose + envoy invariants
         if: matrix.os == 'ubuntu-latest'
         run: python deploy/scripts/lint-compose.py
@@ -232,20 +240,29 @@ jobs:
 
       # 串行执行：这些测试共用固定表名（users_credential / files / projects /
       # notifications），并发会互相污染对方的种子数据。
+      #
+      # 但**不让第一个失败中止整批**（2026-10-07 改）。此前是 `set -e` + 顺序
+      # 调用，于是 auth-service 的 e2e 一红，后面的 user / project / file /
+      # notification 四个 suite 根本不会执行：/healthz 形状统一一次打中 5 个
+      # suite，CI 只报了 1 个，其余 4 个每个都要再等一个 CI 周期才暴露。
+      # 串行必须保留（表名冲突），失败改为累积，最后统一非零退出。
       - name: Run DB-backed e2e
         run: |
-          set -euo pipefail
+          set -uo pipefail        # 注意：不再用 -e，否则第一个失败就中止整批
+          failed=""
           run_suite() {
             local pkg="$1" db="$2" target="${3:-}"
             local url="postgres://postgres:postgres@127.0.0.1:5432/${db}"
             if [ -n "$target" ]; then
               echo "=== ${pkg} --test ${target} -> ${db} ==="
               DATABASE_URL="$url" cargo test -p "$pkg" --test "$target" \
-                --all-features --locked -- --ignored --test-threads=1 --nocapture
+                --all-features --locked -- --ignored --test-threads=1 --nocapture \
+                || failed="${failed} ${pkg}/${target}"
             else
               echo "=== ${pkg} (all targets) -> ${db} ==="
               DATABASE_URL="$url" cargo test -p "$pkg" --all-features --locked \
-                -- --ignored --test-threads=1 --nocapture
+                -- --ignored --test-threads=1 --nocapture \
+                || failed="${failed} ${pkg}/all"
             fi
           }
           run_suite auth-service         auth_db         e2e_auth
@@ -254,3 +271,8 @@ jobs:
           run_suite project-service      project_db      integration
           run_suite file-service         file_db         integration
           run_suite notification-service notification_db integration
+          if [ -n "$failed" ]; then
+            echo "### 以下 e2e suite 失败（串行跑完才汇总，不早停）:${failed}"
+            exit 1
+          fi
+          echo "### 全部 e2e suite 通过"

@@ -1018,6 +1018,129 @@ if os.environ.get("LINT_HEALTHZ_COUNT_ONLY"):
     sys.exit(0)
 
 
+# ---------------------------------------------------------------------
+# 规则 11: 测试不得再断言统一前的 `/healthz` 形状
+#
+# 真实事故 (2026-10-07 实证): 把 18 个服务的 healthz 统一到形状 A 之后，
+# **本地 `cargo test` 全绿**，CI 的 `e2e (real PostgreSQL)` 却红了
+# (`body["service"]` 变成 null)。原因有两层叠加：
+#
+#  1. 那 5 个断言旧形状的用例全部带 `#[ignore = "e2e-needs-real-pg"]`，
+#     本地没有真 PostgreSQL，`cargo test` 直接跳过 —— 本地验证对它们
+#     **完全没有覆盖**，而"本地全绿"被当成了证据。
+#  2. CI 的 e2e 步骤是 `set -e` + 顺序调用，所以 auth-service 一红，
+#     后面的 user / project / file / notification 四个 suite 根本不会跑。
+#     一次变更打中 5 个 suite，CI 只报了 1 个，其余 4 个每个都要再等一个
+#     CI 周期才暴露。（第 2 点已在 ci-rust-test.yaml 里改成失败累积。）
+#
+# 规则 11 把第 1 点变成静态检查：无论用例是不是 `#[ignore]`，只要它对
+# `/healthz` 的响应体做断言，就不许用统一前的键。
+#
+# 【一个必须写在这里的坑】判断"用没用旧键"**只能看顶层访问**。
+# `body["name"]` 是旧扁平形状，`body["app"]["name"]` 是统一后的形状；
+# 朴素的子串搜索分不开这两者 —— 本规则的第一版就因为分不开，在**已经改对**
+# 的 5 个用例上报了 5 个假阳性（"门禁在正确代码上失败"，比门禁不响更糟）。
+# 所以正则是 `(?<!\])\["key"\]`。
+#
+# 负向断言（`.is_none()`）不违规：那是"这个键必须不出现"，正是规则 10
+# 在服务侧钉的那件事，在测试侧钉住是合理的。
+
+_HEALTHZ_TEST_MIN = 5        # 实测 9 个 healthz 断言用例；阈值留一半余量
+_LEGACY_HEALTHZ_KEYS = ("service", "name", "version", "upstreams", "bind_addr")
+_TEST_ATTR_RE = re.compile(r"#\[(?:actix_web::test|test|tokio::test)")
+_IGNORE_ATTR_RE = re.compile(r"#\[ignore")
+_TEST_FN_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)")
+
+_healthz_test_hits = []      # (rel, line, fn, [旧键])
+_healthz_test_n = 0
+_healthz_test_ignored = 0
+
+for _dp, _dn, _fns in os.walk(os.path.join(ROOT, "crates")):
+    _dn[:] = [d for d in _dn if d not in ("target", ".target-verify", ".git")]
+    for _fn in _fns:
+        if not _fn.endswith(".rs"):
+            continue
+        _full = os.path.join(_dp, _fn)
+        _rel = os.path.relpath(_full, ROOT).replace("\\", "/")
+        _lines = io.open(_full, encoding="utf-8", errors="replace").read().splitlines()
+        _i = 0
+        while _i < len(_lines):
+            _m = _TEST_FN_RE.match(_lines[_i])
+            if not _m:
+                _i += 1
+                continue
+            # 上方连续的 #[...] 属性块
+            _j = _i - 1
+            _attrs, _ign = [], False
+            while _j >= 0 and _lines[_j].strip().startswith("#["):
+                _attrs.append(_lines[_j])
+                if _IGNORE_ATTR_RE.match(_lines[_j].strip()):
+                    _ign = True
+                _j -= 1
+            if not any(_TEST_ATTR_RE.search(a) for a in _attrs):
+                _i += 1
+                continue
+            _name = _m.group(1)
+            # 函数体：到下一个"带属性块的 fn"为止
+            _body, _k = [], _i
+            while _k < len(_lines) and _k < _i + 80:
+                if _k > _i and _TEST_FN_RE.match(_lines[_k]):
+                    _b = _k - 1
+                    _is_attr = False
+                    while _b >= 0 and _lines[_b].strip().startswith("#["):
+                        _is_attr = True
+                        _b -= 1
+                    if _is_attr:
+                        break
+                _body.append(_lines[_k])
+                _k += 1
+            _blob = "\n".join(_body)
+            if "healthz" in _blob:
+                # 只把"真的对响应体键做了断言"的用例算进被检查集合。
+                # 只提到 healthz（比如 make_app 里注册了路由）但没断言键的用例与
+                # 本规则无关，算进去会把阈值虚高、并放大函数体窗口串到隔壁代码
+                # 造成的误报面。
+                _all_keys = [k for k in ("status", "app") + _LEGACY_HEALTHZ_KEYS
+                             if re.search(r'(?<!\])\[\s*"%s"\s*\]' % k, _blob)
+                             or re.search(r'get\(\s*"%s"\s*\)' % k, _blob)
+                             or re.search(r'pointer\(\s*"/app/%s"' % k, _blob)]
+                if not _all_keys:
+                    _i += 1
+                    continue
+                _healthz_test_n += 1
+                if _ign:
+                    _healthz_test_ignored += 1
+                _bad = []
+                for _key in _LEGACY_HEALTHZ_KEYS:
+                    _top = re.search(r'(?<!\])\[\s*"%s"\s*\]' % _key, _blob)
+                    _get = re.search(r'get\(\s*"%s"\s*\)' % _key, _blob)
+                    if not (_top or _get):
+                        continue
+                    # 负向断言豁免
+                    if re.search(r'(?<!\])\[\s*"%s"\s*\]\s*\.is_none\(\)' % _key, _blob) \
+                       or re.search(r'get\(\s*"%s"\s*\)\s*\.is_none\(\)' % _key, _blob):
+                        continue
+                    _bad.append(_key)
+                if _bad:
+                    _healthz_test_hits.append((_rel, _i + 1, _name, _bad, _ign))
+            _i += 1
+
+if _healthz_test_n < _HEALTHZ_TEST_MIN:
+    err("规则 11 失效：只找到 %d 个断言 /healthz 的测试（阈值 %d）—— 扫描器大概率没在查"
+        "任何东西（属性回溯或 fn 正则坏了）。**空结果不等于没有问题**"
+        % (_healthz_test_n, _HEALTHZ_TEST_MIN))
+else:
+    for _rel, _line, _name, _bad, _ign in _healthz_test_hits:
+        _ign_note = "（该用例 #[ignore]，本地跑不到）" if _ign else ""
+        err("测试 %s:%d 的 `%s()` 仍断言统一前的 /healthz 形状的键 %s%s —— "
+            "统一后的形状是 {\"status\",\"app\":{\"name\",\"version\"}}，"
+            "请改成 body[\"app\"][\"name\"]"
+            % (_rel, _line, _name, _bad, _ign_note))
+
+note("healthz 断言用例 %d 个，其中 %d 个带 #[ignore]（本地无真 PostgreSQL 跑不到，"
+     "只有 CI 的 e2e job 会执行 —— 改 healthz 形状时它们是盲区）"
+     % (_healthz_test_n, _healthz_test_ignored))
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -1047,6 +1170,9 @@ print("  OK    规则 10 %d 个 crate 的 %d 处 /healthz 全部返回统一形�
       "（另跳过 %d 个非服务 crate：%s）"
       % (_healthz_n_crates, _healthz_n_sites, len(HEALTHZ_SKIP),
          ", ".join(sorted(HEALTHZ_SKIP))))
+print("  OK    规则 11 %d 个断言 /healthz 的测试都不再用统一前的键"
+      "（其中 %d 个 #[ignore]，本地跑不到）"
+      % (_healthz_test_n, _healthz_test_ignored))
 print("")
 for n in notes:
     print("  提醒  " + n)
