@@ -546,6 +546,164 @@ else:
         err("ci-docker-build matrix 里的 crate '%s' 不再产出二进制"
             "（src/main.rs 没了）—— 请从 matrix 里删掉" % _stale)
 
+# ---------------------------------------------------------------------
+# 规则 9: 全仓库零引用的 pub 函数
+#
+# 规则 7 管的是"文件级"孤儿（.rs 从未被编译）；这一条管**函数级**：
+# 文件在编译、pub 函数也在编译，但没有任何调用方——既无生产调用，也无
+# 任何测试引用（内联 #[cfg(test)] mod tests 与 tests/ 目录同样算引用）。
+#
+# 2026-10-06 新增。一次性清掉 22 个（20 删 + 2 接线），基线因此为空。
+# 详见 BACKEND_STATUS_v0.4 §4.1j。
+#
+# 扫描算法：不用正则找调用点，而是**一次遍历收集每个候选名在全仓库的出现位置**，
+# 再把命中按"是否落在 #[cfg(test)] 块内"分成 DEF / PROD-USE / TEST-USE，
+# 只有 DEF>=1 且 PROD-USE=0 且 TEST-USE=0 的才算零引用。
+#
+#   （早前两版扫描器分别漏掉裸调用 `foo(x)`、以及只统计 tests/ 目录而漏掉
+#     内联 #[cfg(test)] mod tests。两次都把"已被调用"误报成"零引用"。）
+
+_DEADCODE_MIN_PUB_FNS = 120
+
+# 名称本身由 derive / trait / 框架消费，不存在文本调用点
+_DEADCODE_SKIP = {
+    "new", "default", "from", "into", "from_str", "from_slice", "clone", "fmt",
+    "get", "set", "iter", "next", "build", "run", "start", "main", "as_ref",
+    "as_str", "as_bytes", "as_mut", "drop", "eq", "ne", "hash", "deref",
+    "deref_mut", "to_string", "to_vec", "to_path_buf", "clone_from",
+    "serialize", "deserialize", "source", "cause", "add", "sub", "not",
+    "serialize_struct", "serialize_field", "end", "visit_str", "visit_map",
+}
+
+# 已知存量。新增即 FAIL；本表里已不成立的条目同样 FAIL（要顺手删掉）。
+# 新增例外必须在这里加一行并写下理由，强制一次有意识的决定。
+DEADCODE_BASELINE = {
+    # 2026-10-06 一次性清零：22 个（20 删 + 2 接线），故基线为空。
+}
+
+
+def _cfg_test_lines(lines):
+    """{行号: 是否在 #[cfg(test)] 块内}，按大括号配平计算。"""
+    flags = {}
+    in_test = False
+    depth = 0
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not in_test:
+            if re.search(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]", line):
+                j = i
+                while j < len(lines) and "{" not in lines[j]:
+                    j += 1
+                if j < len(lines):
+                    depth = lines[j].count("{") - lines[j].count("}")
+                    in_test = True
+                    for k in range(i, j + 1):
+                        flags[k + 1] = True
+                    i = j + 1
+                    continue
+        else:
+            depth += line.count("{") - line.count("}")
+            flags[i + 1] = True
+            if depth <= 0:
+                in_test = False
+        i += 1
+    for k in range(1, len(lines) + 1):
+        flags.setdefault(k, False)
+    return flags
+
+
+_FN_DEF_RE = re.compile(r"^\s*pub(?:\([^)]*\))?\s+(?:default\s+)?(?:const\s+)?"
+                        r"(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)")
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _deadcode_scan():
+    """返回 (零引用清单, 收集到的 pub fn 总数, 扫描文件数)"""
+    # 未编译文件由规则 7 的 ORPHAN_BASELINE 记账，不参与本规则（否则重复报）
+    orphan = set()
+    for crate, names in ORPHAN_BASELINE.items():
+        sub = SERVICE_DIR.get(crate, crate)
+        for n in names:
+            orphan.add("crates/%s/src/%s" % (sub, n))
+
+    files = []
+    for dp, dn, fns in os.walk(os.path.join(ROOT, "crates")):
+        dn[:] = [d for d in dn if d not in ("target", ".git")]
+        for fn in fns:
+            if not fn.endswith(".rs"):
+                continue
+            full = os.path.join(dp, fn)
+            rel = os.path.relpath(full, ROOT).replace("\\", "/")
+            if rel in orphan:
+                continue
+            lines = io.open(full, encoding="utf-8", errors="replace").read().splitlines()
+            files.append((rel, lines, _cfg_test_lines(lines)))
+
+    # 第一遍：所有 pub fn 定义
+    defs = defaultdict(list)
+    for rel, lines, _flags in files:
+        for i, line in enumerate(lines, 1):
+            m = _FN_DEF_RE.match(line)
+            if m:
+                defs[m.group(1)].append((rel, i))
+
+    candidates = set(n for n in defs
+                     if n not in _DEADCODE_SKIP and not n.startswith("test_"))
+
+    # 第二遍：一次遍历收集每个候选名的出现位置
+    occ = defaultdict(list)
+    for fi, (_rel, lines, _flags) in enumerate(files):
+        for i, line in enumerate(lines, 1):
+            for m in _IDENT_RE.finditer(line):
+                nm = m.group(0)
+                if nm in candidates:
+                    occ[nm].append((fi, i))
+
+    zero = []
+    for nm, ds in defs.items():
+        if nm not in candidates:
+            continue
+        n_def = n_prod = n_test = 0
+        for fi, i in occ.get(nm, []):
+            rel, lines, flags = files[fi]
+            line = lines[i - 1]
+            if (re.search(r"\bfn\s+%s\b" % re.escape(nm), line)
+                    and not re.search(r"::\s*fn\s+%s\b" % re.escape(nm), line)):
+                n_def += 1
+            elif flags.get(i) or "/tests/" in rel:
+                n_test += 1
+            else:
+                n_prod += 1
+        if n_def >= 1 and n_prod == 0 and n_test == 0:
+            for rel, i in ds:
+                zero.append((rel, i, nm))
+    zero.sort()
+    return zero, len(defs), len(files)
+
+
+_dead, _n_defs, _n_files = _deadcode_scan()
+
+# 扫描器有效性断言。若 FN_DEF 正则失效 / crates/ 路径写错，一个 pub 函数都
+# 收集不到，零引用清单自然是空，下面两条比较都会得到空集 => **门禁恒绿**。
+# 这与规则 8 第一版的失效方式同型（正则恒返回空集），见 §4.1h。
+if _n_defs < _DEADCODE_MIN_PUB_FNS:
+    err("规则 9 失效：只收集到 %d 个 pub fn（阈值 %d）——扫描器大概率没在查任何东西。"
+        "请检查 FN_DEF 正则与 crates/ 路径；**空结果不等于没有问题**"
+        % (_n_defs, _DEADCODE_MIN_PUB_FNS))
+else:
+    _found = set(n for _r, _l, n in _dead)
+    for _nm in sorted(_found - set(DEADCODE_BASELINE)):
+        _where = ["%s:%d" % (r, l) for r, l, n in _dead if n == _nm]
+        err("pub fn `%s()` 全仓库零调用方（%d 个定义，prod=0 test=0）: %s"
+            " —— 请删掉或接线；**不要用 #[allow(dead_code)] 把门禁刷绿**"
+            % (_nm, len(_where), ", ".join(_where[:3])))
+    for _nm in sorted(set(DEADCODE_BASELINE) - _found):
+        err("DEADCODE_BASELINE 里列了 `%s()`，但它现在已有调用方了，"
+            "请把它从基线里删掉（否则基线会腐烂）" % _nm)
+_deadcode_n = len(_dead)
+
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -569,6 +727,8 @@ print("  OK    规则 5  envoy 每个 filter 都有 typed_config")
 print("  OK    规则 6  compose 注入的每个 env 变量都被源码读过")
 print("  OK    规则 7  src/ 下没有新增的未编译 .rs 文件")
 print("  OK    规则 8  每个产出二进制的 crate 都在 ci-docker-build 的 matrix 里")
+print("  OK    规则 9  没有零调用的 pub fn（扫了 %d 个定义 / %d 个文件）"
+      % (_n_defs, _n_files))
 print("")
 for n in notes:
     print("  提醒  " + n)
