@@ -1375,6 +1375,18 @@ else:
 # （测试用），也不需要为外部镜像（postgres / kafka）维护名单。
 # envoy 的 `/healthz` 是 `direct_response` 的纯文本、根本不代理，因此不在
 # 扫描范围内。
+#
+# 【只收 httpGet，且这不是遗漏 —— 但要知道边界在哪】
+# 本规则只认 `httpGet.path`。`tcpSocket` / `exec` 探针**不在范围内**：它们不
+# 指向任何 HTTP 路径，"路径有没有被注册"这个问题对它们不成立。
+# 现实里这两个类型都在用：translation-core 的 liveness/readiness 是
+# `tcpSocket: 50051`（gRPC 端口），envoy 是 `tcpSocket: 8080`。
+#
+# 写下这段是因为本轮我犯过一次相反的错误：脚本读 `probe.httpGet.path`，对上面
+# 两个 Deployment 都返回 `None`，我据此写下"k3s 里没有探针"并写进了文档 ——
+# 而真实情况是**探针存在，只是类型不同**。凡是 `x.get("a", {}).get("b")` 返回
+# `None`，它同时意味着三件不同后果的事（a 不存在 / a 里没有 b / b 的值真是
+# None）。判"不存在"之前必须先把**类型**打出来，不能只看路径字段。
 
 _PROBE_MIN = 30                # 实测 36（helm 18 chart × 2）+ k3s 12；阈值防整体失效
 _SCOPE_RE = re.compile(r'web::scope\(\s*"(?P<p>[^"]*)"')

@@ -33,10 +33,15 @@ paths:
           application/json:
             schema:
               type: object
-              required: [username, password, tenant_id]
+              required: [username, password]
               properties:
                 username: { type: string }
                 password: { type: string }
+                # 可选：auth-service 的 LoginRequest **没有**这个字段
+                # (models.rs:9-12)，而 cats-bff 侧是 Option + serde(default)
+                # (upstream/auth.rs:22-27)。原文把它列为 required，会让按本
+                # 规格生成的客户端强制发送一个后端并不读取的字段。
+                # per BACKEND_STATUS §4.1u。
                 tenant_id: { type: string }
       responses:
         '200':
@@ -45,10 +50,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [access_token, refresh_token, expires_in]
                 properties:
                   access_token: { type: string }
                   refresh_token: { type: string }
                   expires_in: { type: integer }
+                  # 原文漏了这三个：实现（models.rs:16-23）确实返回它们，
+                  # 漏声明会让生成的客户端读不到 token_type / user_id /
+                  # username —— 登录后无法直接渲染当前用户。
+                  # per BACKEND_STATUS §4.1u。
+                  token_type: { type: string, example: "Bearer" }
+                  user_id: { type: string }
+                  username: { type: string }
         '400':
           description: Validation Error (per 错误码表 §3.2)
           content:
@@ -88,10 +101,13 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [access_token, refresh_token, expires_in]
                 properties:
                   access_token: { type: string }
                   refresh_token: { type: string }
                   expires_in: { type: integer }
+                  # 同样漏了 token_type（models.rs:33-38）
+                  token_type: { type: string, example: "Bearer" }
         '401':
           description: Token Invalid / Revoked / Wrong Type (per 错误码表 §3.3)
           content:
@@ -121,6 +137,16 @@ paths:
       responses:
         '200':
           description: Logout Success
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked, revoked_at]
+                properties:
+                  # 原文的 200 完全没有 body schema，而实现返回这两个字段
+                  # （models.rs:136-139）。客户端无从判断登出是否真的生效。
+                  revoked: { type: boolean }
+                  revoked_at: { type: string, format: date-time }
         '401':
           description: Token Invalid
           content:

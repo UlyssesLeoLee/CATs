@@ -1854,8 +1854,17 @@ worker-service 保留 `/readyz`** —— 它们确实实现了，降级一个本
 
 顺带记录本轮核对出的另外两处部署清单不一致，**均未改动**：
 
-- `translation-core` 与 `envoy` 在 `deploy/k3s/` 下**没有任何探针**，而
-  `deploy/helm/translation-core/values.yaml` 有 liveness+readiness；
+- ~~`translation-core` 与 `envoy` 在 `deploy/k3s/` 下**没有任何探针**，而
+  `deploy/helm/translation-core/values.yaml` 有 liveness+readiness；~~
+  > **更正（2026-10-07，订正上一条的第一句）**：**这句是错的，而且是我自己的
+  > 检查器给的。** 当时的脚本读的是 `probe.httpGet.path`，两者都返回 `None`，
+  > 我读成了"没有探针"。实际重新解析（打印探针的**类型**而不是 path）后：
+  > `translation-core` 的 liveness/readiness 都是 **`tcpSocket: 50051`**（gRPC 端口，
+  > 与它唯一声明的 containerPort 一致），`envoy` 是 **`tcpSocket: 8080`**。两者都
+  > 有探针，而且都是**正确**的写法。
+  > 教训写进了规则 13 的代码注释：`get("a", {}).get("b")` 返回 `None` 同时意味着
+  > 三件事（`a` 不存在 / `a` 里没有 `b` / `b` 真的是 None），而后两者后果完全不同。
+  > 下面第二条仍然成立。
 - `deploy/docker-compose-mvp.yml` 里**12 个应用服务一个 `healthcheck` 都没有**，
   只有 postgres / kafka 有。因此 openapi `HealthResponse` 的 description 里那句
   「compose `healthcheck` 也只判状态码不看 body」**并不成立** —— 应用服务
@@ -1991,6 +2000,25 @@ openapi 枚举实测 **27** 个值（文档多处写"28 条"，见下）。用�
 错误码表 `:179/:189`、接口设计书 `:542`）。反向核对：27 个枚举值在两份错误码表里
 都有出现，所以不是"漏登记"，是**计数写错**。
 
+**4. auth 三个端点的 schema 与实现对不上 —— 已修**（用内联 schema 重读后确认；
+子代理第一次读的是 `$ref`，而这些 schema 是内联的，所以它给的字段数要重取）。
+
+逐字段对拍（spec ↔ `crates/auth-service/src/models.rs`）：
+
+| 端点 | 原文 | 实现 | 处置 |
+|---|---|---|---|
+| `POST /auth/login` 请求 | `required: [username, password, **tenant_id**]` | 只有 `username, password` | `tenant_id` 降为可选 |
+| `POST /auth/login` 200 | 3 字段 | **6** 字段（多 `token_type`/`user_id`/`username`） | 补齐 3 个 |
+| `POST /auth/refresh` 200 | 3 字段 | **4** 字段（多 `token_type`） | 补齐 1 个 |
+| `POST /auth/logout` 200 | **完全没有 body schema** | `{revoked, revoked_at}` | 补上 |
+| `GET /auth/me` 200 | 3 字段 | 3 字段 | ✅ 本来就一致 |
+
+`tenant_id` 保留为可选属性而不是删掉：`cats-bff` 侧是
+`Option<String>` + `#[serde(default)]`（`upstream/auth.rs:22-27`），**线上格式
+允许它存在**，错的只是把它标成必填。
+
+`POST /auth/logout` 那条最实际：客户端根本无从判断登出有没有生效。
+
 #### 子代理单方证据（双侧 file:line 齐备，但本轮未逐条复核）
 
 - `common/src/error.rs` 的 30 个 `CatsError` 变体与 openapi 的 27 个只是部分重叠；
@@ -1999,8 +2027,6 @@ openapi 枚举实测 **27** 个值（文档多处写"28 条"，见下）。用�
   按上表这个声称**不成立**。
 - `ErrorBody.detail`：openapi 声明 `string`，`common/src/error.rs` 是
   `Option<serde_json::Value>`（audit-service 走它，能序列化出对象/数组型 detail）。
-- `POST /auth/login` 请求体 openapi 把 `tenant_id` 列为 `required`，而
-  `auth-service` 的 `LoginRequest` 没有该字段；BFF 侧是 `Option` + `serde(default)`。
 - `GET /auth/me` 的 `user_not_found`：错误码表 `:289` 写 401、`:218` 写 404
   （同一份表里自相矛盾），实现实际返回的是 `error: "invalid_token"` + 401。
 - `X-Cats-Error-Code` / `X-Cats-Request-Id` / `WWW-Authenticate` 三个错误响应头
