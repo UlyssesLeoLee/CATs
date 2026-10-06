@@ -104,13 +104,11 @@ fn make_app(
     // `web::Data<AppState>`. Registering only a bare pool makes actix fail the
     // extractor, which surfaces as 500 "Requested application data is not
     // configured correctly" on every route — not as a 401. Mirror main.rs.
+    //
+    // 2026-10-07: 挂生产的 `handlers::configure_routes`，不再自己抄一份路由
+    // （原来漏了 `/v1/auth/logout`，per BACKEND_STATUS §4.1t）。
     let state_data = web::Data::new(handlers::AppState::new(pool));
-    App::new()
-        .app_data(state_data)
-        .route("/healthz", web::get().to(handlers::healthz))
-        .route("/v1/auth/login", web::post().to(handlers::login))
-        .route("/v1/auth/refresh", web::post().to(handlers::refresh))
-        .route("/v1/auth/me", web::get().to(handlers::me))
+    App::new().configure(move |c| handlers::configure_routes(c, state_data.clone()))
 }
 
 // === (a) POST /v1/auth/login 成功 → 200 + JWT ===

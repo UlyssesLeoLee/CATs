@@ -552,3 +552,27 @@ fn unauthorized_token(reason: &str) -> HttpResponse {
         detail: None,
     })
 }
+
+// =====================================================================
+// **唯一路由表** —— `main.rs` 与集成测试都从这里接进来
+// =====================================================================
+//
+// 2026-10-07。这 5 条原本内联在 `main.rs` 里，而三个测试文件
+// （`tests/e2e_auth.rs`、`tests/e2e_t01.rs` 的两个 make_app）各自抄了
+// 3~4 条 —— 合计三到四张表。**当时逐条核对是一致的，所以不是假绿**，
+// 但形态本身是隐患：改这张表不会被任何测试发现。
+//
+// 现在与 `task-service`（`configure_app`）和 `audit-service`（`configure`）
+// 一样收敛到单一事实来源，17 个用例全部挂到这里。
+//
+// 参数用 `web::Data<AppState>`（而不是 `AppState`）：`main.rs` 里状态只
+// 构造一次，HttpServer 的闭包每次连接重复消费，`web::Data` 内封 Arc 可以
+// 安全 clone。测试侧同理。
+pub fn configure_routes(cfg: &mut web::ServiceConfig, state: web::Data<AppState>) {
+    cfg.app_data(state)
+        .route("/healthz", web::get().to(healthz))
+        .route("/v1/auth/login", web::post().to(login))
+        .route("/v1/auth/refresh", web::post().to(refresh))
+        .route("/v1/auth/logout", web::post().to(logout))
+        .route("/v1/auth/me", web::get().to(me));
+}

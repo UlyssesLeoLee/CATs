@@ -16,7 +16,10 @@
 use actix_web::{test as actix_test, web, App};
 use auth_service::audit::{AuditSink, DbAuditSink, InMemoryAuditSink};
 use auth_service::db;
-use auth_service::handlers::{login, logout, me, refresh, AppState};
+// 2026-10-07: 路由改由 `configure_routes` 统一挂载，不再需要逐个 import
+// handler 函数（原来 import 的 login/logout/me/refresh 全部只出现在
+// 字符串与注释里，没有一处是函数引用）。
+use auth_service::handlers::{configure_routes, AppState};
 use auth_service::models::{
     ErrorBody, LogoutRequest, LogoutResponse, RefreshRequest, RefreshResponse,
 };
@@ -93,12 +96,8 @@ fn make_app_with_inmem_audit(
 > {
     let state = AppState::new_with_sink(pool, sink);
     let state_data = web::Data::new(state);
-    App::new()
-        .app_data(state_data)
-        .route("/v1/auth/login", web::post().to(login))
-        .route("/v1/auth/refresh", web::post().to(refresh))
-        .route("/v1/auth/logout", web::post().to(logout))
-        .route("/v1/auth/me", web::get().to(me))
+    // 2026-10-07: 挂生产的 `handlers::configure_routes`（per §4.1t）
+    App::new().configure(move |c| configure_routes(c, state_data.clone()))
 }
 
 /// 构造带 DbAuditSink 的 App (生产默认, 验证 audit 落库)
@@ -116,12 +115,8 @@ fn make_app_with_db_audit(
     let sink: Arc<dyn AuditSink> = Arc::new(DbAuditSink::new(pool.clone()));
     let state = AppState::new_with_sink(pool, sink);
     let state_data = web::Data::new(state);
-    App::new()
-        .app_data(state_data)
-        .route("/v1/auth/login", web::post().to(login))
-        .route("/v1/auth/refresh", web::post().to(refresh))
-        .route("/v1/auth/logout", web::post().to(logout))
-        .route("/v1/auth/me", web::get().to(me))
+    // 2026-10-07: 同上，挂生产的路由表
+    App::new().configure(move |c| configure_routes(c, state_data.clone()))
 }
 
 // =============================================================

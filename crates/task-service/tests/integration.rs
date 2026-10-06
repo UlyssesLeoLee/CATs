@@ -395,9 +395,7 @@ fn make_app_no_db(
     // `configure_app` 注册的是全部 7 条；其中 4 条要 DB，本文件这 3 个用例
     // 不会打到它们（state 是 `connect_lazy` 到无效地址，调用即失败）。
     // 注册本身不碰 DB，所以没有副作用。
-    App::new().configure(move |c| {
-        task_service::handlers::configure_app(c, web::Data::new(state))
-    })
+    App::new().configure(move |c| task_service::handlers::configure_app(c, web::Data::new(state)))
 }
 
 #[actix_web::test]
