@@ -100,9 +100,13 @@ fn make_app(
         InitError = (),
     >,
 > {
-    let pool_data = web::Data::new(pool);
+    // main.rs registers AppState (pool + audit sink), and every handler takes
+    // `web::Data<AppState>`. Registering only a bare pool makes actix fail the
+    // extractor, which surfaces as 500 "Requested application data is not
+    // configured correctly" on every route — not as a 401. Mirror main.rs.
+    let state_data = web::Data::new(handlers::AppState::new(pool));
     App::new()
-        .app_data(pool_data)
+        .app_data(state_data)
         .route("/healthz", web::get().to(handlers::healthz))
         .route("/v1/auth/login", web::post().to(handlers::login))
         .route("/v1/auth/refresh", web::post().to(handlers::refresh))
@@ -314,12 +318,15 @@ async fn e2e_me_missing_token_returns_401() {
         .uri("/v1/auth/me")
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
-    assert_eq!(
-        resp.status().as_u16(),
-        401,
-        "me without Authorization header should be 401"
+    let status = resp.status().as_u16();
+    let body_bytes = actix_test::read_body(resp).await;
+    eprintln!(
+        "[e2e diag] missing-token status={status} body={}",
+        String::from_utf8_lossy(&body_bytes)
     );
-    let body: ErrorBody = actix_test::read_body_json(resp).await;
+    assert_eq!(status, 401, "me without Authorization header should be 401");
+    let body: ErrorBody =
+        serde_json::from_slice(&body_bytes).expect("diag: body must be ErrorBody");
     assert_eq!(body.error, "invalid_token");
 }
 

@@ -36,11 +36,10 @@ impl AuthContext {
         !self.roles.is_empty() && !self.roles.contains(&Role::Guest)
     }
 
-    pub fn principal_id(&self) -> String {
-        self.user_id
-            .map(|u| u.to_string())
-            .unwrap_or_else(|| "anonymous".to_string())
-    }
+    // 2026-10-05 删除 `principal_id()`: 全仓 0 调用方。本 crate 的 `user_id`
+    // 仅在未文档化的可选形式 `cats-role:<uuid>:<roles>` 下才非 None (文档形式
+    // `cats-role:User` 恒为 None), 且没有任何消费方读取主体 id; 真实主体由
+    // cats-bff 的验签 Principal (JWT sub) 提供。
 }
 
 /// 从请求头提取用户角色 (M1 简化模式)

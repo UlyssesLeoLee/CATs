@@ -11,6 +11,7 @@
 //!   TASK_SERVICE_URL    默认 `http://localhost:8084`
 //!   TRANSLATION_CORE_URL 默认 `http://localhost:8086`
 //!   UPSTREAM_TIMEOUT_SECS 默认 `5`
+//!   TRANSLATION_CORE_GRPC 默认 `http://127.0.0.1:50051`（gRPC，非 REST）
 
 use std::env;
 
@@ -31,6 +32,10 @@ pub struct Config {
     pub translation_core_url: String,
     /// 上游调用 timeout (秒)
     pub upstream_timeout_secs: u64,
+    /// translation-core 的 **gRPC** URL（`grpc_clients` 用）。
+    ///
+    /// 注意与上面的 `translation_core_url` 是两回事：后者是 REST 基址。
+    pub translation_core_grpc: String,
 }
 
 impl Config {
@@ -52,8 +57,32 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5),
+            // per 守门 #11 缺标比错标：缺标用默认值，不打 fail-fast。
+            // 50051 是 compose 里 translation-core 映射出来的宿主 gRPC 端口。
+            translation_core_grpc: env::var("TRANSLATION_CORE_GRPC")
+                .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string()),
         }
     }
+
+    /// 测试专用构造：只覆盖两个上游基址，其余取默认值。
+    ///
+    /// 2026-10-05 接线 `upstream_passthrough` 时补的 —— 那个文件的测试原本调
+    /// `Config::for_test(auth, project, translation_core_grpc)` 三个参数，但
+    /// **第三个在该测试里压根没被用到**（只断言了前两个）。这里按实际需要只收
+    /// 两个参数；等 `grpc_clients` 接线、真的需要 gRPC URL 时再加第三个，
+    /// 免得先加一个此刻无人使用的字段。
+    pub fn for_test(auth_service_url: String, project_service_url: String) -> Self {
+        Self {
+            auth_service_url,
+            project_service_url,
+            ..Self::from_env()
+        }
+    }
+
+    // 2026-10-05 死代码清理：删除 `for_test_grpc`（只覆盖 gRPC URL 的测试构造）。
+    // 全仓零调用 —— `grpc_clients::connect(&Config)` 取的是 `from_env()` 读到的
+    // TRANSLATION_CORE_GRPC；`tests/bff_routes_passthrough.rs` 自带字面量 channel，
+    // 用不到本构造。gRPC 测试真要覆盖 URL 时再按实际需要加回 (勿再加没人用的参数)。
 }
 
 #[cfg(test)]

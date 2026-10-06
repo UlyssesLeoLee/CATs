@@ -139,9 +139,20 @@ pub struct UsageQuery {
 /// GET /healthz handler
 pub async fn healthz_handler() -> impl Responder {
     use cats_common::AppMeta;
+    // 2026-10-05: 原来用 `AppMeta::current()`, 它返回的是 **cats-common 自己的**
+    // CARGO_PKG_NAME —— 于是本 service 在 healthz 里自报 "cats-common",
+    // 认不出是哪个服务, 版本号也是共享库的版本。`env!` 在编译期按**本 crate**
+    // 展开, 所以这里报的是 cats-ai-gateway 自己。
+    //
+    // 先建成变量再放进 `json!`: 宏有自己的分词器, 在其值位置内嵌一个
+    // struct 字面量并在里面写 `"key": value` 会被它当成 JSON 的键值对解析。
+    let app = AppMeta {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
     HttpResponse::Ok().json(serde_json::json!({
         "status": "ok",
-        "app": AppMeta::current(),
+        "app": app,
         "service": "cats-ai-gateway",
         "version": crate::version(),
     }))

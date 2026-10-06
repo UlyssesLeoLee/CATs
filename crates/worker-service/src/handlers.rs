@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use actix_web::{web, HttpResponse, Responder};
-use cats_common::{cats_error_to_response, CatsError, ErrorCode};
+use cats_common::error::cats_error_to_response;
 use cats_rbac::service_helpers::{extract_user_id_and_roles, require_roles};
 use cats_rbac::{Action, Resource, Role};
 use serde::Serialize;
@@ -28,7 +28,10 @@ pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
         service: &'static str,
         db: &'static str,
     }
-    let db_ok = sqlx::query(r#"SELECT 1"#).execute(pool.get_ref()).await.is_ok();
+    let db_ok = sqlx::query(r#"SELECT 1"#)
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
     HttpResponse::Ok().json(ReadyResponse {
         status: if db_ok { "ready" } else { "not_ready" },
         service: "worker-service",

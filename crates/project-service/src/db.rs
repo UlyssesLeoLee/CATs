@@ -8,7 +8,8 @@
 //! 设计选择 (per 缺标比错标安全):
 //! - 与 user_db 8 逻辑库边界一致, 各自独立 schema
 //! - 不直连 user_db / workspace_db, 跨服务 user_id/workspace_id 一致性由调用方保证 (per T-02 schema 注释)
-//! - migrate 由 main.rs 调用 sqlx::migrate! 走 migrations/ 目录
+//! - migration **不由本服务负责**：`deploy/scripts/init-databases.sh`（compose 的 db-init）创建逻辑库并按名序遍历 `*.sql` 全部应用。
+//!   原写法“migrate 由 main.rs 调用 sqlx::migrate!”不成立：全仓没有这个调用点
 
 use crate::models::{Project, ProjectStatus};
 use anyhow::{Context, Result};

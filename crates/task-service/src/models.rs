@@ -119,10 +119,11 @@ impl Task {
         TaskStatus::parse(&self.status).unwrap_or(TaskStatus::Pending)
     }
 
-    /// 解析 task_type 字段为 enum
-    pub fn task_type_enum(&self) -> TaskType {
-        TaskType::parse(&self.task_type).unwrap_or(TaskType::Translate)
-    }
+    // 2026-10-05 死代码清理：删除 `task_type_enum`。
+    // 全仓零调用；DB 有 CHECK 约束 `task_type IN ('translate','review','export')`
+    // (migrations/20260920_0001_init.sql:22)，其 `unwrap_or(Translate)` 兜底不可达。
+    // 存活的消费方都直接取原值 (db.rs `task_type.as_str()` / `TaskView.task_type: String`)，
+    // 真要 DB→enum 时用仍然公开的 `TaskType::parse` 即可。
 }
 
 // =====================================================================

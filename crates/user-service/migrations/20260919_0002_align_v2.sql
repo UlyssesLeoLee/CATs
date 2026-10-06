@@ -31,12 +31,15 @@ BEGIN
        AND NOT EXISTS (
            SELECT 1 FROM pg_trigger WHERE tgname = 'user_profile_set_updated_at'
        ) THEN
-        CREATE OR REPLACE FUNCTION trg_set_updated_at() RETURNS trigger AS $$
+        -- 内层函数体必须用不同的 dollar-quote tag：PostgreSQL 的 dollar-quote
+        -- 不支持嵌套，内层与外层相同的 tag 会提前关闭外层 DO 块，
+        -- 导致 BEGIN 变成裸语句而语法错误 (syntax error at or near "BEGIN")。
+        CREATE OR REPLACE FUNCTION trg_set_updated_at() RETURNS trigger AS $func$
         BEGIN
             NEW.updated_at = now();
             RETURN NEW;
         END;
-        $$ LANGUAGE plpgsql;
+        $func$ LANGUAGE plpgsql;
 
         CREATE TRIGGER user_profile_set_updated_at
             BEFORE UPDATE ON user_profile

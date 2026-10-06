@@ -41,9 +41,45 @@ COPY proto ./proto
 # 复制所有 crate 源码（注意：tonic-build 在 cats-proto/build.rs 中调用）
 COPY crates ./crates
 
-# 构建：仅目标 crate（避免链接整个 workspace）
-# 注：tonic-build 需要所有 crate 可见以解析 crate 间依赖，因此这里 build 整个 workspace
-# 但只把目标 crate 的二进制 COPY 到 runtime
+# 构建：仅目标 crate
+#
+# 历史（2026-10-05，9f745e5 改过一次，a63ddac 之后又撤回）：
+# 当时把这里改成 `cargo build --release --workspace`，想让这一层与 CRATE_NAME 无关，
+# 这样 ci-docker-build 的 18 个 matrix job 可以共享同一个 cache key。
+# 想法在结构上是对的——原来的 `ENV CRATE_NAME=${CRATE_NAME}` 那层 digest 随 ARG 取值而变，
+# 18 个 job 的父链摘要互不相同，谁也复用不了谁的编译层。
+#
+# 但它在本仓库**兑现不了**，因为共享 cache key 有一个前提：缓存得真的能跨 run 存活。
+# 这个前提由 ci-docker-build.yaml 决定，不由本文件决定，而当前不满足：
+#   - cache-to: type=gha,mode=max 未指定 scope，18 个 job 争抢同一个默认 scope
+#   - concurrency.cancel-in-progress: true，而单 job 需 27~53 min，本分支平均
+#     6~54 min 就来一个 push —— 被取消的 job 走不到 cache-to
+#   - 最近 7 次连续提交里有 4 次改动了 crates/ 与 Cargo.lock，即使 run 跑完，
+#     COPY crates 那层也会失效
+# 佐证：全量 23 次 run = 15 cancelled / 3 success / 4 failure；唯一一次完整成功的
+# run 37298809794 的 CACHED 计数为 0。
+#
+# 也就是说：共享带来的好处一次也没兑现，代价（冷缓存下每 job 从编 1 个二进制
+# 变成编全部 20 个）却每次都付。**收益不兑现而代价照付的改动是纯亏损**，故撤回。
+#
+# 真正的解法是换结构或换 workflow，不是换这一层：
+#   ① 先修取消策略（单独 concurrency group 或 cancel-in-progress: false），
+#      让 27~53 min 的长 job 有机会跑完 —— 这是其余一切的前提
+#   ② 加 paths: 过滤，纯文档 push 不再拉起 18 个 job
+#   ③ 设 max-parallel 消掉冷缓存踩踏；cache-to 加 scope
+#   ④ 或改结构为「1 个 build job 编 workspace + 18 个 job 只做装配」
+# 详见 deploy/BACKEND_STATUS_v0.4.md §4.1i。
+#
+# 实测支撑（基线 run 37298809794，唯一一次完整成功，17 job，墙钟 53.3 min），
+# 其中最快的 ingestion-service：
+#     #26 [linux/amd64 builder 9/9] RUN cargo build --release --bin ingestion-service   161.3s
+#     #32 [linux/arm64 builder 9/9] RUN cargo build --release --bin ingestion-service  1506.8s
+# 161.3 + 1506.8 = 1668s ≈ 27.8 min，正好等于该 job 的 Build and push 总耗时：
+# 单 job 耗时几乎全是这两步，arm64 占约 90%（QEMU 慢 9.3 倍）。
+# 根治 arm64 要靠原生 arm64 runner 或交叉编译，不是调这一层。
+#
+# 方法论备注：不要拿「某次 run 的完成数」与「另一次 run 的完成数」直接比较来
+# 判定改动快慢——被 cancel-in-progress 取消的 run 会给出偏低的完成数，两边不可比。
 ARG CRATE_NAME
 ENV CRATE_NAME=${CRATE_NAME}
 

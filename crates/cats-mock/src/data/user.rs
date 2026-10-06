@@ -9,6 +9,9 @@
 //! - 固定 id (用于幂等测试)
 //! - 批量 (默认 count=1)
 //! - 边界: inactive / 重复 username / 长 username
+//!
+//! 已清理: `with_password_hash()` — 全仓零调用; 它是 `password_hash` 字段的唯一写入口,
+//! 移除后该字段恒为 `None`, `build_one` 只会产出固定 argon2 占位串
 
 use super::{now_utc, random_past_within_days, Factory};
 use fake::faker::internet::en::Username;
@@ -97,12 +100,6 @@ impl UserFactory {
     /// 自定义 email
     pub fn with_email(mut self, email: impl Into<String>) -> Self {
         self.email = Some(email.into());
-        self
-    }
-
-    /// 自定义 password_hash
-    pub fn with_password_hash(mut self, hash: impl Into<String>) -> Self {
-        self.password_hash = Some(hash.into());
         self
     }
 

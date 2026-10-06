@@ -4,6 +4,10 @@
 //!
 //! 注意: 这是 DDL 的**测试快照**, 与各 service 的 migrations 同步
 //! (每次 service migration 变更, 这里需要同步更新 — 由 Test Quality Lead 兜底)
+//!
+//! 已清理 (全仓零调用): `audit_only()` / `users_only()` — 均为 `audit_log_schema()` /
+//! `users_schema()` 的单行别名, 直接调底层 fn 即可; `translation_unit_schema()` —
+//! 无任何 migration 或测试引用, 16 个 service crate 对本 crate 只用 `name_matches_crate`
 
 /// Schema 集合: 一组表 + 索引的 DDL
 #[derive(Debug, Clone, Default)]
@@ -36,16 +40,6 @@ impl SchemaSet {
             .merge(projects_schema())
             .merge(tasks_schema())
             .merge(audit_log_schema())
-    }
-
-    /// 仅 audit_log (auth-service 用)
-    pub fn audit_only() -> SchemaSet {
-        audit_log_schema()
-    }
-
-    /// 仅 users (user-service 用)
-    pub fn users_only() -> SchemaSet {
-        users_schema()
     }
 
     /// pgvector 扩展 (translation-core 用)
@@ -146,24 +140,6 @@ pub fn audit_log_schema() -> SchemaSet {
         .push("CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);")
         .push("CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type);")
         .push("CREATE INDEX IF NOT EXISTS idx_audit_log_occurred_at ON audit_log(occurred_at);")
-}
-
-/// pgvector translation_unit schema (per translation-core)
-pub fn translation_unit_schema() -> SchemaSet {
-    SchemaSet::new()
-        .push("CREATE EXTENSION IF NOT EXISTS vector;")
-        .push(
-            r#"
-            CREATE TABLE IF NOT EXISTS translation_unit (
-                id         UUID PRIMARY KEY,
-                project_id UUID NOT NULL,
-                source     TEXT NOT NULL,
-                target     TEXT,
-                embedding  vector(384),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-        "#,
-        )
 }
 
 #[cfg(test)]

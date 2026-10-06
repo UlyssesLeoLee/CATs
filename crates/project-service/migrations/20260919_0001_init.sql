@@ -14,27 +14,22 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- gen_random_uuid() 兜底(不依赖 pgcrypto schema 路径)
 
--- projects 主表
-CREATE TABLE IF NOT EXISTS projects (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id              UUID NOT NULL,
-    name                TEXT NOT NULL,
-    source_lang         TEXT NOT NULL,                  -- BCP-47
-    target_lang         TEXT NOT NULL,
-    domain              TEXT NOT NULL DEFAULT '',
-    force_local_model   BOOLEAN NOT NULL DEFAULT false,
-    status              TEXT NOT NULL DEFAULT 'active'
-                            CHECK (status IN ('active','archived')),
-    created_by          UUID NOT NULL,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects (org_id);
+-- projects 主表已停用，权威 schema 见 20260920_0001_init.sql。
+-- 本文件的 projects 用 org_id，而 project-service 代码只用 workspace_id
+-- （src/db.rs 中 workspace_id 出现 18 次，org_id 零引用）。
+-- 本文件排在权威版之前且同样 CREATE TABLE IF NOT EXISTS projects，会抢先建表，
+-- 权威版随后被静默跳过、其索引 ON projects (workspace_id, ...) 报
+-- column "workspace_id" does not exist —— 在全新数据库上 project_db 初始化
+-- 无法完成，生产首次部署同样会踩到。
+-- 下方 terms / glossary_versions / translation_memory / tm_vectors /
+-- outbox_event 不与权威版冲突，保留。
+
+-- projects 表：故意留空，权威 schema 见 20260920_0001_init.sql
 
 -- terms (项目级术语)
 CREATE TABLE IF NOT EXISTS terms (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id      UUID NOT NULL,
     source_term     TEXT NOT NULL,
     target_term     TEXT NOT NULL,
     domain_tag      TEXT NOT NULL DEFAULT '',
@@ -48,7 +43,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_terms_project_source ON terms (project_id, 
 -- glossary_versions (术语变更历史)
 CREATE TABLE IF NOT EXISTS glossary_versions (
     id              BIGSERIAL PRIMARY KEY,
-    project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id      UUID NOT NULL,
     version         INT NOT NULL,
     changed_term_id UUID NOT NULL,
     change_kind     TEXT NOT NULL
@@ -61,7 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_glossary_versions_project
 -- translation_memory 主表 (按 project_id HASH 分区, 16 个分区)
 CREATE TABLE IF NOT EXISTS translation_memory (
     id              BIGSERIAL,
-    project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id      UUID NOT NULL,
     source_lang     TEXT NOT NULL,
     target_lang     TEXT NOT NULL,
     source_text     TEXT NOT NULL,
@@ -125,12 +120,34 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS projects_set_updated_at ON projects;
-CREATE TRIGGER projects_set_updated_at
-    BEFORE UPDATE ON projects
-    FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+-- projects 的 updated_at trigger 已随该表一并停用（权威版自带等价 trigger）；
+-- 此处保留会在表尚未建出时报 relation "projects" does not exist。
 
 DROP TRIGGER IF EXISTS terms_set_updated_at ON terms;
 CREATE TRIGGER terms_set_updated_at
     BEFORE UPDATE ON terms
     FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+
+-- projects(id) 由 20260920_0001_init.sql 建立（版本号更大、更晚执行），
+-- 故上列内联 REFERENCES 已移除，等权威版建出 projects 后在此统一补外键。
+-- 注意：整段必须包在动态 EXECUTE 里——即便 projects 此刻不存在，
+-- 直接写 REFERENCES projects(id) 也会在解析期报错
+-- (relation "projects" does not exist)，条件判断救不了。
+DO $fk$
+DECLARE
+    t TEXT;
+BEGIN
+    IF to_regclass('projects') IS NOT NULL THEN
+        FOREACH t IN ARRAY ARRAY['terms','glossary_versions','translation_memory'] LOOP
+            IF to_regclass(t) IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM pg_constraint WHERE conname = t || '_project_id_fkey'
+               ) THEN
+                EXECUTE format(
+                    'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE',
+                    t, t || '_project_id_fkey');
+            END IF;
+        END LOOP;
+    END IF;
+END
+$fk$;

@@ -26,6 +26,14 @@ sqlx.workspace        = true
 # 跨服务 gRPC 契约（per translation_core.proto）
 cats-proto.workspace = true
 tonic.workspace       = true
+# 这两个是接线时暴露出来的缺失依赖: ai_gateway.rs 用了 `async_trait::async_trait`、
+# service.rs/db.rs 用了 `uuid`。在此之前这三个文件从来没进过编译,
+# 所以没人发现 Cargo.toml 里少了它们。
+async-trait.workspace = true
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 cats-mock = { workspace = true }
+# 起一个真监听端口的 gRPC server，用 TcpListenerStream 把 tokio 的 listener
+# 喂给 tonic 的 serve_with_incoming（否则只能挑固定端口，测试会 flaky）。
+tokio-stream = { version = "0.1", features = ["net"] }

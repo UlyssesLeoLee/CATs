@@ -7,6 +7,9 @@
 //! 注意: 当前实现是 actix-web test server (in-process, 适合单测),
 //!       不是 OS-level 端口绑定; 如果需要跨进程 e2e, 用 standalone mode
 //!       (把 cfg 转 actix_web::HttpServer 跑在 tokio runtime)
+//!
+//! 已清理: `MockServerConfig::auth_user_only()` — 全仓零调用; 该 struct 字段全 pub,
+//! 调用方直接写字面量即可 (见下方 start_healthz_only)
 
 use actix_web::{App, HttpServer};
 use std::net::TcpListener;
@@ -33,16 +36,6 @@ impl MockServerConfig {
             include_task: true,
             include_audit: true,
             include_healthz: true,
-        }
-    }
-
-    /// 仅 auth + user
-    pub fn auth_user_only() -> Self {
-        Self {
-            include_auth: true,
-            include_user: true,
-            include_healthz: true,
-            ..Default::default()
         }
     }
 }
