@@ -195,6 +195,25 @@ pub async fn update_user(
 }
 
 // =====================================================================
+// **唯一路由表** —— `main.rs` 与集成测试都从这里接进来
+// =====================================================================
+//
+// 2026-10-07。这 4 条原本内联在 `main.rs`，而 `tests/e2e_t02.rs` 的
+// `make_app` 逐条抄了一份（4 = 4，逐条核对完全一致，所以改之前不是假绿）。
+// 与 `auth-service` / `task-service` / `audit-service` 一样收敛到单一事实来源。
+//
+// 这里的 app_data 是 `web::Data<PgPool>`（不是自定义 AppState）：三个 handler
+// 直接取连接池。`main.rs` 的 HttpServer 闭包是 `Fn`，每个 worker 线程各调一次，
+// 所以要**先 clone 再 move**（`web::Data` 内封 Arc，clone 廉价）。
+pub fn configure_routes(cfg: &mut web::ServiceConfig, pool: web::Data<PgPool>) {
+    cfg.app_data(pool)
+        .route("/healthz", web::get().to(healthz))
+        .route("/v1/users", web::post().to(create_user))
+        .route("/v1/users/{id}", web::get().to(get_user))
+        .route("/v1/users/{id}", web::put().to(update_user));
+}
+
+// =====================================================================
 // 测试辅助: 单元测试覆盖字段校验逻辑
 // =====================================================================
 

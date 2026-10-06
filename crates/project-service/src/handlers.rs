@@ -364,6 +364,41 @@ pub async fn delete_project(
 }
 
 // =====================================================================
+// **唯一路由表** —— `main.rs` 与集成测试都从这里接进来
+// =====================================================================
+//
+// 2026-10-07。这 6 条原本内联在 `main.rs`，而 `tests/integration.rs` 的
+// `make_app` 逐条抄了一份（6 = 6，逐条核对完全一致，所以改之前不是假绿）。
+// 与 auth / task / user / audit 一样收敛到单一事实来源。
+//
+// 这个 crate 有**两个** app_data：连接池与 RBAC checker。测试漏注册 RBAC 那个时，
+// actix 的 extractor 取不到，表现为 500 "Requested application data is not
+// configured correctly" 而非业务断言失败 —— 很容易误判成认证/RBAC 逻辑坏了。
+// 把它们一起收进本函数，这类"忘了注册"的错就只剩一种写法。
+//
+// `main.rs` 的 HttpServer 闭包是 `Fn`（每个 worker 线程各调一次），要
+// **先 clone 再 move**（`web::Data` 内封 Arc，clone 廉价）。
+pub fn configure_routes(
+    cfg: &mut web::ServiceConfig,
+    pool: web::Data<PgPool>,
+    rbac: web::Data<Arc<RbacChecker>>,
+) {
+    cfg.app_data(pool)
+        .app_data(rbac)
+        .route("/healthz", web::get().to(healthz))
+        // POST   /v1/projects                  — 创建 (RBAC: Project Create)
+        .route("/v1/projects", web::post().to(create_project))
+        // GET    /v1/projects                  — 列表 (RBAC: Project Read)
+        .route("/v1/projects", web::get().to(list_projects))
+        // GET    /v1/projects/{id}             — 详情 (RBAC: Project Read)
+        .route("/v1/projects/{id}", web::get().to(get_project))
+        // PATCH  /v1/projects/{id}             — 部分更新 (RBAC: Project Update)
+        .route("/v1/projects/{id}", web::patch().to(patch_project))
+        // DELETE /v1/projects/{id}             — 软删除 (RBAC: Project Delete)
+        .route("/v1/projects/{id}", web::delete().to(delete_project));
+}
+
+// =====================================================================
 // 测试辅助
 // =====================================================================
 

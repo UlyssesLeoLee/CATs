@@ -36,30 +36,20 @@ async fn main() -> std::io::Result<()> {
     // 共享 RbacChecker (per ULYS-152 切片 B-4 §"RBAC 中间件挂在每个 endpoint")
     let rbac_data = web::Data::new(Arc::new(RbacChecker::new()));
     HttpServer::new(move || {
-        App::new()
-            .app_data(pool_data.clone())
-            .app_data(bus_data.clone())
-            .app_data(rbac_data.clone())
-            .route(
-                "/healthz",
-                web::get().to(notification_service::handlers::healthz),
+        // 路由表只有这一份 —— main.rs 与集成测试共用
+        // `handlers::configure_routes`（per BACKEND_STATUS §4.1t）。
+        // 先 clone 再 move：这个闭包是 `Fn`。
+        let pool = pool_data.clone();
+        let bus = bus_data.clone();
+        let rbac = rbac_data.clone();
+        App::new().configure(move |c| {
+            notification_service::handlers::configure_routes(
+                c,
+                pool.clone(),
+                bus.clone(),
+                rbac.clone(),
             )
-            .route(
-                "/v1/notifications",
-                web::get().to(notification_service::handlers::list_notifications),
-            )
-            .route(
-                "/v1/notifications",
-                web::post().to(notification_service::handlers::create_notification),
-            )
-            .route(
-                "/v1/notifications/{id}/read",
-                web::patch().to(notification_service::handlers::mark_notification_read),
-            )
-            .route(
-                "/v1/notifications/ws",
-                web::get().to(notification_service::handlers::notification_stream),
-            )
+        })
     })
     .bind(&bind_addr)?
     .run()

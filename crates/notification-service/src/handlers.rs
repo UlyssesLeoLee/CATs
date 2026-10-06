@@ -305,3 +305,36 @@ pub async fn notification_stream(
 pub struct StreamQuery {
     pub user_id: Uuid,
 }
+
+// =====================================================================
+// **唯一路由表** —— `main.rs` 与集成测试都从这里接进来
+// =====================================================================
+//
+// 2026-10-07。这 5 条原本内联在 `main.rs`，而 `tests/integration.rs` 的
+// `make_app` 逐条抄了一份（5 = 5，逐条核对完全一致，所以改之前不是假绿）。
+// 与 auth / task / user / project / file 一样收敛到单一事实来源。
+//
+// 这个 crate 有**三个** app_data：连接池、事件总线、RBAC checker。测试漏注册
+// 时 actix extractor 取不到 → 500 "Requested application data is not
+// configured correctly"，而 /healthz 不吃这些 extractor，于是表现成
+// "healthz 过、其余全挂"，极易误判成 RBAC 或事件总线坏了。
+//
+// `main.rs` 的 HttpServer 闭包是 `Fn`，要**先 clone 再 move**。
+pub fn configure_routes(
+    cfg: &mut web::ServiceConfig,
+    pool: web::Data<PgPool>,
+    bus: web::Data<EventBus>,
+    rbac: web::Data<Arc<RbacChecker>>,
+) {
+    cfg.app_data(pool)
+        .app_data(bus)
+        .app_data(rbac)
+        .route("/healthz", web::get().to(healthz))
+        .route("/v1/notifications", web::get().to(list_notifications))
+        .route("/v1/notifications", web::post().to(create_notification))
+        .route(
+            "/v1/notifications/{id}/read",
+            web::patch().to(mark_notification_read),
+        )
+        .route("/v1/notifications/ws", web::get().to(notification_stream));
+}

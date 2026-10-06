@@ -38,30 +38,14 @@ async fn main() -> std::io::Result<()> {
     let pool_data = web::Data::new(pool);
     let rbac_data = web::Data::new(rbac_checker);
     HttpServer::new(move || {
-        App::new()
-            .app_data(pool_data.clone())
-            .app_data(rbac_data.clone())
-            .route("/healthz", web::get().to(file_service::handlers::healthz))
-            .route(
-                "/v1/files",
-                web::post().to(file_service::handlers::upload_file),
-            )
-            .route(
-                "/v1/files",
-                web::get().to(file_service::handlers::list_files),
-            )
-            .route(
-                "/v1/files/{id}",
-                web::get().to(file_service::handlers::download_file),
-            )
-            .route(
-                "/v1/files/{id}",
-                web::delete().to(file_service::handlers::delete_file),
-            )
-            .route(
-                "/v1/files/{id}/metadata",
-                web::get().to(file_service::handlers::get_file_metadata),
-            )
+        // 路由表只有这一份 —— main.rs 与集成测试共用
+        // `handlers::configure_routes`（per BACKEND_STATUS §4.1t）。
+        // 先 clone 再 move：这个闭包是 `Fn`。
+        let pool = pool_data.clone();
+        let rbac = rbac_data.clone();
+        App::new().configure(move |c| {
+            file_service::handlers::configure_routes(c, pool.clone(), rbac.clone())
+        })
     })
     .bind(&bind_addr)?
     .run()

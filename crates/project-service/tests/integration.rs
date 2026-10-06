@@ -62,22 +62,11 @@ fn make_app(
     // main.rs 也注册了它。测试漏注册时 actix 的 extractor 取不到，
     // 表现为 500 "Requested application data is not configured correctly"，
     // 而非业务断言失败——会让人误以为是认证/RBAC 逻辑坏了。
+    // 2026-10-07: pool 与 rbac 一起收进生产的 `handlers::configure_routes`
+    // （原来这里逐条抄了 6 条路由，6 = 6 完全一致；per BACKEND_STATUS §4.1t）
     let rbac_data = web::Data::new(std::sync::Arc::new(cats_rbac::RbacChecker::new()));
     App::new()
-        .app_data(pool_data)
-        .app_data(rbac_data)
-        .route("/healthz", web::get().to(handlers::healthz))
-        .route("/v1/projects", web::post().to(handlers::create_project))
-        .route("/v1/projects", web::get().to(handlers::list_projects))
-        .route("/v1/projects/{id}", web::get().to(handlers::get_project))
-        .route(
-            "/v1/projects/{id}",
-            web::patch().to(handlers::patch_project),
-        )
-        .route(
-            "/v1/projects/{id}",
-            web::delete().to(handlers::delete_project),
-        )
+        .configure(move |c| handlers::configure_routes(c, pool_data.clone(), rbac_data.clone()))
 }
 
 // =====================================================================

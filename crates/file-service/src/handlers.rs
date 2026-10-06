@@ -374,3 +374,33 @@ pub async fn list_files(
         offset,
     })
 }
+
+// =====================================================================
+// **唯一路由表** —— `main.rs` 与集成测试都从这里接进来
+// =====================================================================
+//
+// 2026-10-07。这 6 条原本内联在 `main.rs`，而 `tests/integration.rs` 的
+// `make_app` 逐条抄了一份（6 = 6，逐条核对完全一致，所以改之前不是假绿）。
+// 与 auth / task / user / project 一样收敛到单一事实来源。
+//
+// 测试漏注册 RBAC 那个 app_data 时，actix extractor 取不到，表现为
+// 500 "Requested application data is not configured correctly"，而 `/healthz`
+// 不吃这个 extractor —— 于是表现成"healthz 过、其余全挂"，极易误判成
+// RBAC 逻辑坏了。收进本函数后这类"忘了注册"只剩一种写法。
+//
+// `main.rs` 的 HttpServer 闭包是 `Fn`（每个 worker 线程各调一次），
+// 要**先 clone 再 move**（`web::Data` 内封 Arc，clone 廉价）。
+pub fn configure_routes(
+    cfg: &mut web::ServiceConfig,
+    pool: web::Data<PgPool>,
+    rbac: web::Data<Arc<RbacChecker>>,
+) {
+    cfg.app_data(pool)
+        .app_data(rbac)
+        .route("/healthz", web::get().to(healthz))
+        .route("/v1/files", web::post().to(upload_file))
+        .route("/v1/files", web::get().to(list_files))
+        .route("/v1/files/{id}", web::get().to(download_file))
+        .route("/v1/files/{id}", web::delete().to(delete_file))
+        .route("/v1/files/{id}/metadata", web::get().to(get_file_metadata));
+}

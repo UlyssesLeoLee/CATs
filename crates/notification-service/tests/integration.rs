@@ -74,30 +74,17 @@ fn make_app(
     // configured correctly"，而 /healthz 不吃这个 extractor，于是表现成
     // "healthz 过、其余全挂"，极易误判成 RBAC 逻辑坏了。
     let rbac_data = web::Data::new(std::sync::Arc::new(cats_rbac::RbacChecker::new()));
-    App::new()
-        .app_data(pool_data)
-        .app_data(bus_data)
-        .app_data(rbac_data)
-        .route(
-            "/healthz",
-            web::get().to(notification_service::handlers::healthz),
+    // 2026-10-07: 三个 app_data 与 5 条路由一起收进生产的
+    // `handlers::configure_routes`（原来 5 = 5 完全一致；per §4.1t）
+    // 用全限定名，与本文件其余地方的写法一致（这里没有 import `handlers`）
+    App::new().configure(move |c| {
+        notification_service::handlers::configure_routes(
+            c,
+            pool_data.clone(),
+            bus_data.clone(),
+            rbac_data.clone(),
         )
-        .route(
-            "/v1/notifications",
-            web::get().to(notification_service::handlers::list_notifications),
-        )
-        .route(
-            "/v1/notifications",
-            web::post().to(notification_service::handlers::create_notification),
-        )
-        .route(
-            "/v1/notifications/{id}/read",
-            web::patch().to(notification_service::handlers::mark_notification_read),
-        )
-        .route(
-            "/v1/notifications/ws",
-            web::get().to(notification_service::handlers::notification_stream),
-        )
+    })
 }
 
 // =====================================================================

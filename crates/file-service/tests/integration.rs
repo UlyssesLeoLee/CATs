@@ -79,18 +79,10 @@ fn make_app(
     // 而 `/healthz` 不吃这个 extractor —— 于是表现成"healthz 过、其余全挂"，
     // 极易误判成 RBAC 逻辑坏了。
     let rbac_data = web::Data::new(std::sync::Arc::new(cats_rbac::RbacChecker::new()));
+    // 2026-10-07: pool 与 rbac 一起收进生产的 `handlers::configure_routes`
+    // （原来这里逐条抄了 6 条路由，6 = 6 完全一致；per BACKEND_STATUS §4.1t）
     App::new()
-        .app_data(pool_data)
-        .app_data(rbac_data)
-        .route("/healthz", web::get().to(handlers::healthz))
-        .route("/v1/files", web::post().to(handlers::upload_file))
-        .route("/v1/files", web::get().to(handlers::list_files))
-        .route("/v1/files/{id}", web::get().to(handlers::download_file))
-        .route("/v1/files/{id}", web::delete().to(handlers::delete_file))
-        .route(
-            "/v1/files/{id}/metadata",
-            web::get().to(handlers::get_file_metadata),
-        )
+        .configure(move |c| handlers::configure_routes(c, pool_data.clone(), rbac_data.clone()))
 }
 
 /// 测试用下载响应视图 (与 handlers::DownloadResponse 字段对齐)

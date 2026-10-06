@@ -69,12 +69,9 @@ fn make_app(
     >,
 > {
     let pool_data = web::Data::new(pool);
-    App::new()
-        .app_data(pool_data)
-        .route("/healthz", web::get().to(handlers::healthz))
-        .route("/v1/users", web::post().to(handlers::create_user))
-        .route("/v1/users/{id}", web::get().to(handlers::get_user))
-        .route("/v1/users/{id}", web::put().to(handlers::update_user))
+    // 2026-10-07: 挂生产的 `handlers::configure_routes`，不再自己抄一份路由
+    // （原来 4 = 4 完全一致，所以改之前不是假绿；per BACKEND_STATUS §4.1t）
+    App::new().configure(move |c| handlers::configure_routes(c, pool_data.clone()))
 }
 
 // =====================================================================

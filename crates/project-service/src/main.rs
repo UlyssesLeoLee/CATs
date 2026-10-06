@@ -40,38 +40,14 @@ async fn main() -> std::io::Result<()> {
     let pool_data = web::Data::new(pool);
     let rbac_data = web::Data::new(rbac_checker);
     HttpServer::new(move || {
-        App::new()
-            .app_data(pool_data.clone())
-            .app_data(rbac_data.clone())
-            .route(
-                "/healthz",
-                web::get().to(project_service::handlers::healthz),
-            )
-            // POST   /v1/projects                  — 创建 (RBAC: Project Create)
-            .route(
-                "/v1/projects",
-                web::post().to(project_service::handlers::create_project),
-            )
-            // GET    /v1/projects                  — 列表 (RBAC: Project Read)
-            .route(
-                "/v1/projects",
-                web::get().to(project_service::handlers::list_projects),
-            )
-            // GET    /v1/projects/{id}             — 详情 (RBAC: Project Read)
-            .route(
-                "/v1/projects/{id}",
-                web::get().to(project_service::handlers::get_project),
-            )
-            // PATCH  /v1/projects/{id}             — 部分更新 (RBAC: Project Update)
-            .route(
-                "/v1/projects/{id}",
-                web::patch().to(project_service::handlers::patch_project),
-            )
-            // DELETE /v1/projects/{id}             — 软删除 (RBAC: Project Delete)
-            .route(
-                "/v1/projects/{id}",
-                web::delete().to(project_service::handlers::delete_project),
-            )
+        // 路由表只有这一份 —— main.rs 与集成测试共用
+        // `handlers::configure_routes`（per BACKEND_STATUS §4.1t）。
+        // 先 clone 再 move：这个闭包是 `Fn`，不能把捕获值直接 move 进去。
+        let pool = pool_data.clone();
+        let rbac = rbac_data.clone();
+        App::new().configure(move |c| {
+            project_service::handlers::configure_routes(c, pool.clone(), rbac.clone())
+        })
     })
     .bind(&bind_addr)?
     .run()
