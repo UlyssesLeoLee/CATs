@@ -46,6 +46,36 @@ pub fn healthz_response() -> HttpResponse {
     })
 }
 
+/// **唯一的路由表** —— `main.rs` 与集成测试共用。
+///
+/// 2026-10-07 抽出。此前 4 条路由直接内联在 `main.rs` 的 `HttpServer::new`
+/// 里，而 `tests/` 下只有 `smoke.rs`，于是"服务对外暴露什么"这件事**没有任何
+/// 测试在验证**。共用这一个函数之后，集成测试挂的就是生产实际提供的路由。
+///
+/// `app_data` 也在这里注册（而不是留在调用方），否则"注册哪些共享状态"
+/// 同样会变成调用方与测试各写一份。
+///
+/// 调用方注意：`HttpServer::new` 的闭包是 `Fn`，每个 worker 线程都会再调一次，
+/// 闭包里要把两个 `web::Data` **先 clone 出来再 move 进去**。
+pub fn configure_routes(
+    cfg: &mut web::ServiceConfig,
+    pool: web::Data<PgPool>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
+) {
+    cfg.app_data(pool)
+        .app_data(rbac_checker)
+        .route("/healthz", web::get().to(healthz))
+        // GET /v1/reports/usage — 用量统计（RBAC: Report Read）
+        .route("/v1/reports/usage", web::get().to(usage_report))
+        // GET /v1/reports/translation-volume — 翻译量（RBAC: Report Read）
+        .route(
+            "/v1/reports/translation-volume",
+            web::get().to(translation_volume),
+        )
+        // GET /v1/reports/audit-summary — 审计摘要（RBAC: Report Read）
+        .route("/v1/reports/audit-summary", web::get().to(audit_summary));
+}
+
 // =====================================================================
 // 1. /v1/reports/usage
 // =====================================================================

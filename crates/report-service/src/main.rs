@@ -61,22 +61,14 @@ async fn main() -> std::io::Result<()> {
     let rbac_data = web::Data::new(std::sync::Arc::new(cats_rbac::RbacChecker::new()));
     let bind_addr = cfg.bind_addr.clone();
     HttpServer::new(move || {
-        App::new()
-            .app_data(pool_data.clone())
-            .app_data(rbac_data.clone())
-            .route("/healthz", web::get().to(report_service::handlers::healthz))
-            .route(
-                "/v1/reports/usage",
-                web::get().to(report_service::handlers::usage_report),
-            )
-            .route(
-                "/v1/reports/translation-volume",
-                web::get().to(report_service::handlers::translation_volume),
-            )
-            .route(
-                "/v1/reports/audit-summary",
-                web::get().to(report_service::handlers::audit_summary),
-            )
+        // 路由表 + app_data 都在 handlers::configure_routes 里，与集成测试共用一份。
+        // `HttpServer::new` 的闭包是 `Fn`，每个 worker 线程都会再调一次，
+        // 所以先把两个 `web::Data` clone 出来再 move 进 configure 的闭包里。
+        let pool_data = pool_data.clone();
+        let rbac_data = rbac_data.clone();
+        App::new().configure(move |c| {
+            report_service::handlers::configure_routes(c, pool_data.clone(), rbac_data.clone())
+        })
     })
     .bind(&bind_addr)?
     .run()

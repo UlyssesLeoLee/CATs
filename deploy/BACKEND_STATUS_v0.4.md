@@ -2179,3 +2179,51 @@ worker-service 与 audit-service 的 `readyz` 是逐字相同的两份实现，D
 2. 用 `io.open(p,'w').write(io.open(p).read())` 刷新时间戳时，**`open(p,'w')` 先求值
    并把文件截断**，随后才读 —— 两个 crate 下 16 个 `.rs` 全被清成 0 字节。刷新
    时间戳要用 `os.utime`，或先读进变量再写。
+### §4.1w report-service 的 4 条路由补请求级覆盖，并发现**两套并存的网关契约**（2026-10-07）
+
+#### 补覆盖
+
+`report-service` 此前 4 条路由内联在 `main.rs` 的 `HttpServer::new` 里，
+`tests/` 下只有 `smoke.rs`，`handlers.rs` 里 4 个单元测试全是纯字段级
+（Query DTO 构造 / ErrorBody 序列化）—— **没有任何一个请求真的打过这些 handler**。
+
+抽出 `handlers::configure_routes`（路由 + app_data 都在里面），`main.rs` 与测试共用。
+新增 `tests/report_routes.rs` **9 个用例，且不需要真实 PostgreSQL** ——
+因为三个报表端点的执行顺序是 `RBAC 鉴权 → from < to 校验 → 才查库`，
+前两级都能在死库下区分开：
+
+| 观察到的状态码 | 说明哪一级拦下的 |
+|---|---|
+| 401 `missing_authorization` | 鉴权（凭据缺失或 `Authorization` 不可解析）|
+| 403 `operation_not_permitted` | 鉴权（User 无 `Report:Read`）|
+| 400 `invalid_request` | 鉴权放行后被区间校验拦下（**没碰 DB**）|
+| 500 `server_error` | 两级都过了，卡在 DB |
+
+#### 顺带查出一件事：**全仓有两套并存的网关凭据契约**
+
+| 服务 | 凭据来源 |
+|---|---|
+| file / project / task / notification / cats-bff / audit | `X-Cats-User-Id` + `X-Cats-Roles` |
+| **report-service** | `Authorization: Bearer cats-role:<roles>` |
+
+report-service 的 `rbac::extract_user_roles` 完全不读 `X-Cats-*`，只认
+`Authorization: Bearer cats-role:` 前缀 + 逗号分隔的角色名。
+
+**这不是 bug（两条路径都各自正确鉴权），但它是个尚未收敛的架构事实**：
+网关到底应该注入哪一套？两份契约并存意味着网关配置改一套，另一套服务
+会静默变成"全部 401"。已记入 §4.1u 待拍板。
+
+另外发现 `extract_user_roles` 里解析 `user_id` 的那段是**死代码**：
+`body` 是剥掉 `cats-role:` 前缀**之后**的字符串，再对它 `split(':').next()`
+必然拿不到 user_id（恒为 `None`）。当前三个 handler 都只取 `if let Err(...)`
+把 `Ok(AuthContext)` 丢掉，所以暂时无害；一旦有人开始用 `auth.user_id`，
+它会恒为 `None`。
+
+#### 变异验证 8/8
+
+| 变异 | 期望 | 实得 |
+|---|---|---|
+| 删掉 `usage_report` 的 `rbac::enforce` | 403 用例 FAILED、401 用例 FAILED | PASS |
+| 同上 | 400 用例**仍 ok**（它测参数校验，Sponsor 本就被放行）| PASS |
+| 区间校验 `from >= to` 放宽成 `from > to` | 400 用例 FAILED（`from==to` 漏过校验撞库）| PASS |
+| 同上 | 403 用例仍 ok（它测鉴权，不受区间影响）| PASS |
