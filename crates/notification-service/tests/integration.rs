@@ -118,7 +118,8 @@ async fn e2e_create_notification_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone(), EventBus::new())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
-        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "SRELead"))
         .set_json(CreateNotificationRequest {
             user_id,
             notif_type: "task_completed".to_string(),
@@ -154,7 +155,8 @@ async fn e2e_list_notifications_returns_200() {
     for i in 0..2 {
         let req = actix_test::TestRequest::post()
             .uri("/v1/notifications")
-            .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+            .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+            .insert_header(("X-Cats-Roles", "SRELead"))
             .set_json(CreateNotificationRequest {
                 user_id,
                 notif_type: "test".to_string(),
@@ -170,7 +172,8 @@ async fn e2e_list_notifications_returns_200() {
     // list
     let list_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/notifications?user_id={user_id}&limit=10"))
-        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let list_resp = actix_test::call_service(&app, list_req).await;
     assert_eq!(list_resp.status().as_u16(), 200);
@@ -196,7 +199,8 @@ async fn e2e_mark_read_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
-        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "SRELead"))
         .set_json(CreateNotificationRequest {
             user_id,
             notif_type: "task_completed".to_string(),
@@ -212,7 +216,8 @@ async fn e2e_mark_read_returns_200() {
     // mark read
     let read_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/notifications/{id}/read?user_id={user_id}"))
-        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let read_resp = actix_test::call_service(&app, read_req).await;
     assert_eq!(read_resp.status().as_u16(), 200);
@@ -223,7 +228,8 @@ async fn e2e_mark_read_returns_200() {
     // 二次 mark read → 404
     let read2_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/notifications/{id}/read?user_id={user_id}"))
-        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let read2_resp = actix_test::call_service(&app, read2_req).await;
     assert_eq!(read2_resp.status().as_u16(), 404);
@@ -247,7 +253,8 @@ async fn e2e_notification_stream_returns_sse() {
 
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/notifications/ws?user_id={user_id}"))
-        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 200);
@@ -274,7 +281,8 @@ async fn e2e_create_empty_title_returns_400() {
     let app = actix_test::init_service(make_app(pool, EventBus::new())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
-        .insert_header(("Authorization", "Bearer cats-role:SRELead"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "SRELead"))
         .set_json(CreateNotificationRequest {
             user_id: Uuid::new_v4(),
             notif_type: "test".to_string(),

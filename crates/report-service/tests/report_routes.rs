@@ -87,13 +87,20 @@ macro_rules! call {
     }};
 }
 
-/// RBAC 头。**注意 report-service 用的不是 `X-Cats-*`**，而是
-/// `Authorization: Bearer cats-role:<roles>`（per `src/rbac.rs::extract_user_roles`，
-/// 多角色用逗号分隔）。这与其余 6 个服务的 `X-Cats-User-Id` / `X-Cats-Roles`
-/// 是**两套不同的网关契约**。
+/// RBAC 头：`X-Cats-User-Id` + `X-Cats-Roles`（多角色逗号分隔）。
+///
+/// 2026-10-07 契约统一。本文件初稿用的是 `Authorization: Bearer cats-role:<roles>`，
+/// 那是本 crate 与另外 4 个服务（file / notification / project / task）各自的旧契约；
+/// 现在七个服务一律走 `X-Cats-*`，由边缘 envoy 在验签 JWT 后注入。
 macro_rules! as_role {
     ($r:expr) => {
-        vec![("Authorization", format!("Bearer cats-role:{}", $r))]
+        vec![
+            (
+                "X-Cats-User-Id",
+                "00000000-0000-0000-0000-000000000001".to_string(),
+            ),
+            ("X-Cats-Roles", $r.to_string()),
+        ]
     };
 }
 
@@ -144,18 +151,30 @@ async fn report_endpoints_reject_missing_credentials_with_401() {
     }
 }
 
-/// 带了 `Authorization` 但既不是 `Bearer` 也不是 `cats-role:` 前缀 → 仍是匿名 → 401。
+/// **回归用例**：旧契约 `Authorization: Bearer cats-role:*` 必须彻底失效。
+///
+/// 2026-10-07 之前本 crate 认的就是这个格式，但它**没有任何一方在生产** ——
+/// `deploy/envoy-mvp.yaml` 里既没有 `jwt_authn` 也没有 `request_headers_to_add`。
+/// 结果是：正常流量（真 JWT）全部 401，而调用方自填
+/// `Authorization: Bearer cats-role:Sponsor` 反而能冒充 Sponsor。
+///
+/// 现在契约统一到 `X-Cats-*`（边缘验签后注入），所以只带 `Authorization`
+/// 的请求一律匿名 —— 包括旧格式里那个字面量 `cats-role:Sponsor`。
 #[actix_web::test]
-async fn report_endpoints_reject_unparseable_authorization_with_401() {
+async fn legacy_cats_role_authorization_is_no_longer_accepted() {
     let app = actix_test::init_service(make_app(dead_pool())).await;
     for bad in [
+        "Bearer cats-role:Sponsor",
         "Bearer some-jwt-looking-token",
-        "cats-role:Sponsor",
         "Basic abc",
+        "cats-role:Sponsor",
     ] {
         let headers = vec![("Authorization", bad.to_string())];
         let (status, body) = call!(app, &path("usage"), headers);
-        assert_eq!(status, 401, "{bad:?} 不该被当作凭据，实得 {status} {body}");
+        assert_eq!(
+            status, 401,
+            "{bad:?} 不该再被当作凭据（它会让人冒充 Sponsor），实得 {status} {body}"
+        );
         assert_eq!(body["error"], "missing_authorization", "{bad:?}");
     }
 }
@@ -215,7 +234,8 @@ async fn report_endpoints_reject_missing_query_param_with_400() {
         &app,
         actix_test::TestRequest::get()
             .uri(&uri)
-            .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+            .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+            .insert_header(("X-Cats-Roles", "Sponsor"))
             .to_request(),
     )
     .await;

@@ -123,7 +123,8 @@ async fn e2e_create_project_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "ULYS-150 Test Project".to_string(),
@@ -164,7 +165,8 @@ async fn e2e_get_project_by_id_returns_200() {
     // 先 create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Get Test".to_string(),
@@ -181,7 +183,8 @@ async fn e2e_get_project_by_id_returns_200() {
     // 再 get by id
     let get_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/projects/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let get_resp = actix_test::call_service(&app, get_req).await;
     assert_eq!(get_resp.status().as_u16(), 200);
@@ -213,7 +216,8 @@ async fn e2e_get_project_not_found_returns_404() {
     let non_existing = Uuid::new_v4();
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/projects/{non_existing}"))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 404);
@@ -240,7 +244,8 @@ async fn e2e_list_projects_with_workspace_filter() {
     for i in 0..2 {
         let req = actix_test::TestRequest::post()
             .uri("/v1/projects")
-            .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+            .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+            .insert_header(("X-Cats-Roles", "Sponsor"))
             .set_json(CreateProjectRequest {
                 workspace_id,
                 name: format!("B-1 List Test {i}"),
@@ -260,7 +265,8 @@ async fn e2e_list_projects_with_workspace_filter() {
         .uri(&format!(
             "/v1/projects?workspace_id={workspace_id}&page=1&page_size=10"
         ))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let list_resp = actix_test::call_service(&app, list_req).await;
     assert_eq!(list_resp.status().as_u16(), 200);
@@ -310,7 +316,8 @@ async fn e2e_patch_project_partial_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Patch Original".to_string(),
@@ -326,7 +333,8 @@ async fn e2e_patch_project_partial_returns_200() {
     // patch 部分字段 (name + target_lang)
     let patch_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/projects/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(UpdateProjectRequest {
             name: Some("B-1 Patch Updated".to_string()),
             source_lang: None,
@@ -366,7 +374,8 @@ async fn e2e_delete_project_soft_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/projects")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(CreateProjectRequest {
             workspace_id,
             name: "B-1 Delete Test".to_string(),
@@ -382,7 +391,8 @@ async fn e2e_delete_project_soft_returns_200() {
     // delete (软删除 → status='archived')
     let del_req = actix_test::TestRequest::delete()
         .uri(&format!("/v1/projects/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .to_request();
     let del_resp = actix_test::call_service(&app, del_req).await;
     assert_eq!(del_resp.status().as_u16(), 200);

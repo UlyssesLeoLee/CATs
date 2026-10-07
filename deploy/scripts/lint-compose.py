@@ -1645,6 +1645,81 @@ else:
          "（已排除 %s：helper 自身的单元测试用字面量模拟调用者角色是合法用法）"
          % (_rbac_files, _rbac_any_calls, "/".join(_RBAC_SKIP_CRATES)))
 
+# ---------------------------------------------------------------------
+# 规则 16: 边缘代理必须剥离客户端自带的身份头
+#
+# 2026-10-07 的架构级缺口（per BACKEND_STATUS §4.1x）。七个服务认的身份头是
+# `X-Cats-User-Id` / `X-Cats-Roles`。如果边缘**不剥离**来路不明的同名头，
+# 任何能连到 8080 的调用方只要带上一对这样的头就会被当成 Sponsor。
+# 这条规则守的就是"下游看到的身份值，只能来自 envoy 验签之后写进去的那一份"。
+#
+# 它刻意**不**只检查 jwt_authn 是否存在：jwt_authn 新版的 filter-wide sanitize
+# 只清理它自己 claim_to_headers 里声明过的头，且由 runtime feature 控制，
+# 旧版本没有这个行为。所以同时要求每条路由显式写 request_headers_to_remove。
+#
+# 另外要求 JWT 密钥仍是占位符 —— 把 base64url 密钥直接写进版本库是不可逆的
+# 泄露，一次提交就进历史了。
+
+_IDENTITY_HEADERS = ("x-cats-user-id", "x-cats-roles")
+_JWT_KEY_PLACEHOLDER = "__CATS_JWT_KEY_B64URL__"
+_PROTO_ROUTES_MIN = 8
+
+_envoy_doc = None
+if os.path.isfile(ENVOY):
+    with io.open(ENVOY, encoding="utf-8", errors="replace") as _f:
+        _envoy_doc = yaml.safe_load(_f)
+
+if _envoy_doc is None:
+    err("规则 16 失效：读不到 %s —— 边缘配置缺失，身份头将无人剥离" % ENVOY)
+else:
+    _sr = _envoy_doc.get("static_resources") or {}
+    _listeners = _sr.get("listeners") or []
+    _http_filters = []
+    _routes = []
+    for _l in _listeners:
+        for _fc in (_l.get("filter_chains") or []):
+            for _f in (_fc.get("filters") or []):
+                # 网络层 filter（如 http_connection_manager）在 filters 列表里；
+                # 它的 **HTTP** filter（jwt_authn / router）在 typed_config.http_filters 里。
+                # 两层都要看，只扫一层就会得出"没有 jwt_authn"的错误结论。
+                _tc = _f.get("typed_config") or {}
+                _http_filters.extend(
+                    (h.get("name") or "") for h in (_tc.get("http_filters") or []))
+                _rc = _tc.get("route_config") or {}
+                for _vh in (_rc.get("virtual_hosts") or []):
+                    _routes.extend(_vh.get("routes") or [])
+
+    if not any("jwt_authn" in n for n in _http_filters):
+        err("规则 16：envoy 没有 `jwt_authn` 过滤器 —— 它不验签 JWT，也就不会注入 "
+            "`X-Cats-*`，于是 ① 七个服务的受保护端点经网关会全部 401；"
+            "② 那个角色头变成客户端可自填的字段。per BACKEND_STATUS §4.1x")
+
+    if len(_routes) < _PROTO_ROUTES_MIN:
+        err("规则 16 失效：只读到 %d 条 envoy 路由（阈值 %d）—— "
+            "扫描路径大概率写错了。**空结果不等于没有问题**"
+            % (len(_routes), _PROTO_ROUTES_MIN))
+    else:
+        for _r in _routes:
+            _m = _r.get("match") or {}
+            _prefix = _m.get("prefix") or _m.get("path") or "?"
+            _rm = [_h.lower() for _h in (_r.get("request_headers_to_remove") or [])]
+            _missing = [h for h in _IDENTITY_HEADERS if h not in _rm]
+            if _missing:
+                err("规则 16：路由 `%s` 没有剥离客户端自带的头 %s —— "
+                    "调用方自填 `X-Cats-Roles: Sponsor` 就能冒充 Sponsor。"
+                    "在该路由上加 `request_headers_to_remove: [\"x-cats-user-id\", "
+                    "\"x-cats-roles\"]`" % (_prefix, ", ".join(_missing)))
+
+    with io.open(ENVOY, encoding="utf-8", errors="replace") as _f:
+        _envoy_raw = _f.read()
+    if "k:" in _envoy_raw and _JWT_KEY_PLACEHOLDER not in _envoy_raw:
+        err("规则 16：envoy 的 inline_jwks 里出现了具体密钥值且不是占位符 %s —— "
+            "JWT 共享密钥不得进版本库（提交一次就永远留在 git 历史里）。"
+            "改回占位符，由 compose 启动时注入" % _JWT_KEY_PLACEHOLDER)
+    else:
+        note("规则 16 检查了 %d 条 envoy 路由的身份头剥离 + jwt_authn 存在性 + "
+             "JWT 密钥仍是占位符" % len(_routes))
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -1686,6 +1761,7 @@ print("  OK    规则 13 %d 条 k8s/helm 探针的路径都在对应服务的源
 print("  OK    规则 14 doc/ 下 %d 个 .md 里没有统一前的 /healthz 形状" % _doc_files)
 print("  OK    规则 15 全仓 %d 处 `require_roles` 里没有把角色字面量当调用者角色传"
       % _rbac_any_calls)
+print("  OK    规则 16 边缘剥离客户端身份头 + jwt_authn 在位 + JWT 密钥仍是占位符")
 print("")
 for n in notes:
     print("  提醒  " + n)

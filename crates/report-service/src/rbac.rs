@@ -7,7 +7,7 @@
 //! 设计选择 (per 缺标比错标安全):
 //! - inline 在每个 handler 入口调 `enforce()` (per cats-rbac §7)
 //! - 用户角色从 `Authorization: Bearer *** 解码 (per auth-service Claims 格式)
-//!   → M1 阶段: 接受 `Bearer cats-role:<role>` 简化格式
+//!   → 2026-10-07 起统一为 `X-Cats-User-Id` + `X-Cats-Roles`（边缘注入）
 //! - RBAC 错误统一映射到 ErrorBody (per 错误码表 v1.0 §3.3/§3.7)
 //!
 //! 路由 → 资源映射 (per cats-rbac::Resource):
@@ -16,7 +16,6 @@
 //! - GET /v1/reports/audit-summary?workspace_id=...    → Resource::Report, Action::Read
 
 use crate::models::ErrorBody;
-use actix_web::http::header;
 use actix_web::HttpRequest;
 use cats_rbac::{Action, RbacChecker, Resource, Role};
 use std::sync::Arc;
@@ -32,65 +31,32 @@ impl AuthContext {
         !self.roles.is_empty() && !self.roles.contains(&Role::Guest)
     }
 
-    // 2026-10-05 删除 `principal_id()`: 全仓 0 调用方。本 crate 的 `user_id`
-    // 仅在未文档化的可选形式 `cats-role:<uuid>:<roles>` 下才非 None (文档形式
-    // `cats-role:User` 恒为 None), 且没有任何消费方读取主体 id; 真实主体由
-    // cats-bff 的验签 Principal (JWT sub) 提供。
+    // 2026-10-07: `user_id` 现在由 `X-Cats-User-Id` 真实填充（旧实现解析的是
+    // 剥掉 `cats-role:` 前缀之后的字符串，所以恒为 None）。
 }
 
+/// 从请求头提取用户角色（**全仓唯一凭据契约**）
+///
+/// 2026-10-07 契约统一：凭据一律来自 `X-Cats-User-Id` + `X-Cats-Roles`，
+/// 由边缘代理（envoy `jwt_authn`）在**验签 JWT 之后**注入。
+///
+/// 原来这里认的是 `Authorization: Bearer cats-role:<roles>`。那个格式
+/// **没有任何一方在生产**（`deploy/envoy-mvp.yaml` 里既没有 `jwt_authn`
+/// 也没有 `request_headers_to_add`），所以它要么恒不命中、要么被调用方
+/// 自填成 Sponsor —— 与 audit / worker 走的也是两条不同的路径。
+///
+/// 现在直接复用 `cats_rbac::service_helpers::extract_user_id_and_roles`，
+/// 七个服务走同一套解析，不再各写一份角色名映射。
+///
+/// 失败: 返回空 roles (未认证)
 pub fn extract_user_roles(req: &HttpRequest) -> AuthContext {
-    let header_val = match req.headers().get(header::AUTHORIZATION) {
-        Some(h) => h,
-        None => return AuthContext::default(),
-    };
-    let s = match header_val.to_str() {
-        Ok(s) => s,
-        Err(_) => return AuthContext::default(),
-    };
-    let token = match s
-        .strip_prefix("Bearer ")
-        .or_else(|| s.strip_prefix("bearer "))
-    {
-        Some(t) => t.trim(),
-        None => return AuthContext::default(),
-    };
-    let body = match token.strip_prefix("cats-role:") {
-        Some(b) => b,
-        None => return AuthContext::default(),
-    };
-
-    let mut roles = Vec::new();
-    for part in body.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some(role) = parse_role(part) {
-            roles.push(role);
-        }
+    match cats_rbac::service_helpers::extract_user_id_and_roles(req) {
+        Ok((user_id, roles)) => AuthContext {
+            user_id: Some(user_id),
+            roles,
+        },
+        Err(_) => AuthContext::default(),
     }
-
-    let user_id = body
-        .split(':')
-        .next()
-        .and_then(|s| uuid::Uuid::parse_str(s.trim()).ok());
-
-    AuthContext { user_id, roles }
-}
-
-fn parse_role(s: &str) -> Option<Role> {
-    Some(match s {
-        "Sponsor" => Role::Sponsor,
-        "ArchitectLead" => Role::ArchitectLead,
-        "RustLead" => Role::RustLead,
-        "DatabaseLead" => Role::DatabaseLead,
-        "QualityLead" => Role::QualityLead,
-        "ProjectLead" => Role::ProjectLead,
-        "SRELead" => Role::SRELead,
-        "User" => Role::User,
-        "Guest" => Role::Guest,
-        _ => return None,
-    })
 }
 
 pub fn route_to_resource_action(path: &str, method: &str) -> Option<(Resource, Action)> {
@@ -117,7 +83,9 @@ pub async fn enforce(
             actix_web::http::StatusCode::UNAUTHORIZED,
             ErrorBody {
                 error: "missing_authorization".to_string(),
-                message: "Authorization header with Bearer cats-role:<roles> required".to_string(),
+                // 该 message 里的两个头是由边缘代理（envoy jwt_authn）在**验签 JWT 之后**注入的；
+                // 客户端自带的同名头会被 route 上的 request_headers_to_remove 剥离。
+                message: "X-Cats-User-Id and X-Cats-Roles headers required".to_string(),
                 detail: None,
             },
         ));
@@ -162,7 +130,8 @@ mod tests {
     #[test]
     fn extract_user_role_single() {
         let req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
+            .insert_header(("X-Cats-User-Id", uuid::Uuid::new_v4().to_string()))
+            .insert_header(("X-Cats-Roles", "User"))
             .to_http_request();
         let auth = extract_user_roles(&req);
         assert_eq!(auth.roles, vec![Role::User]);
@@ -221,7 +190,8 @@ mod tests {
         let checker = Arc::new(RbacChecker::new());
 
         let user_req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
+            .insert_header(("X-Cats-User-Id", uuid::Uuid::new_v4().to_string()))
+            .insert_header(("X-Cats-Roles", "User"))
             .to_http_request();
         let (status, body) = enforce(&checker, &user_req, "/v1/reports/usage", "GET")
             .await
@@ -231,7 +201,8 @@ mod tests {
 
         // 对照：确实持有 Report/Read 的角色应放行
         let dba_req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Bearer cats-role:DatabaseLead"))
+            .insert_header(("X-Cats-User-Id", uuid::Uuid::new_v4().to_string()))
+            .insert_header(("X-Cats-Roles", "DatabaseLead"))
             .to_http_request();
         assert!(
             enforce(&checker, &dba_req, "/v1/reports/usage", "GET")

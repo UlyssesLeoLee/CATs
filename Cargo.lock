@@ -3918,6 +3918,7 @@ dependencies = [
  "anyhow",
  "cats-common",
  "cats-mock",
+ "cats-rbac",
  "chrono",
  "serde",
  "serde_json",

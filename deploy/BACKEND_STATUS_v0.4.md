@@ -2199,19 +2199,12 @@ worker-service 与 audit-service 的 `readyz` 是逐字相同的两份实现，D
 | 400 `invalid_request` | 鉴权放行后被区间校验拦下（**没碰 DB**）|
 | 500 `server_error` | 两级都过了，卡在 DB |
 
-#### 顺带查出一件事：**全仓有两套并存的网关凭据契约**
+#### 顺带查出一件事：全仓有**两套并存的网关凭据契约**（`Authorization: Bearer cats-role:` vs `X-Cats-*`）
 
-| 服务 | 凭据来源 |
-|---|---|
-| file / project / task / notification / cats-bff / audit | `X-Cats-User-Id` + `X-Cats-Roles` |
-| **report-service** | `Authorization: Bearer cats-role:<roles>` |
-
-report-service 的 `rbac::extract_user_roles` 完全不读 `X-Cats-*`，只认
-`Authorization: Bearer cats-role:` 前缀 + 逗号分隔的角色名。
-
-**这不是 bug（两条路径都各自正确鉴权），但它是个尚未收敛的架构事实**：
-网关到底应该注入哪一套？两份契约并存意味着网关配置改一套，另一套服务
-会静默变成"全部 401"。已记入 §4.1u 待拍板。
+> 2026-10-07 更正：本节初稿写的是「report-service 是唯一用 `cats-role:` 的」，
+> **那是错的**。逐 crate 扫描 `crates/*/src` 后的真实分布是 5 : 2
+> —— 见下面 §4.1x 的完整表。结论方向不变（两套契约并存），
+> 但"谁是异类"的判断反了，异类是 `X-Cats-*` 那一侧的 audit / worker。
 
 另外发现 `extract_user_roles` 里解析 `user_id` 的那段是**死代码**：
 `body` 是剥掉 `cats-role:` 前缀**之后**的字符串，再对它 `split(':').next()`
@@ -2227,3 +2220,159 @@ report-service 的 `rbac::extract_user_roles` 完全不读 `X-Cats-*`，只认
 | 同上 | 400 用例**仍 ok**（它测参数校验，Sponsor 本就被放行）| PASS |
 | 区间校验 `from >= to` 放宽成 `from > to` | 400 用例 FAILED（`from==to` 漏过校验撞库）| PASS |
 | 同上 | 403 用例仍 ok（它测鉴权，不受区间影响）| PASS |
+### §4.1x 鉴权全景：24 个 crate 里只有 7 个有 RBAC，而**没有任何一方在生产这些凭据头**（2026-10-07）
+
+这一节是 §4.1w 那句"两套契约并存"往下挖的结果。它比 worker-service 的那个
+单点绕过严重得多，**属于架构级缺口，不是代码 bug**。
+
+#### ① 全仓只有 7/24 个 crate 有鉴权
+
+| crate | 有鉴权？ | 凭据契约 | 调用点 |
+|---|---|---|---|
+| file-service | 是 | `Authorization: Bearer cats-role:` | `rbac::enforce` |
+| notification-service | 是 | 同上 | `rbac::enforce` |
+| project-service | 是 | 同上 | `rbac::enforce` |
+| report-service | 是 | 同上 | `rbac::enforce` |
+| task-service | 是 | 同上 | `rbac::enforce` |
+| audit-service | 是 | **`X-Cats-User-Id` + `X-Cats-Roles`** | `require_roles` |
+| worker-service | 是 | **`X-Cats-*`** | `require_roles` |
+| **user-service** | **否** | — | — |
+| auth-service | 否 | — | — |
+| asr / ocr / ingestion / subtitle / office-converter / render-writer | 否 | — | — |
+| cats-bff / cats-ai-gateway / translation-core / cats-mock / common / proto / m1-s0-smoke | 否 | — | — |
+
+**`user-service` 完全没有鉴权**：4 条路由（`POST /v1/users`、
+`GET /v1/users/{id}`、`PUT /v1/users/{id}`、`GET /v1/users`）谁都能调，
+即任何人可以创建、读取、修改用户档案。这不是"缺一个 `@`"，是整层缺失。
+
+#### ② 没有任何一方在生产这些头 —— 这是最要紧的一条
+
+全仓搜 `X-Cats-Roles` / `X-Cats-User-Id` / `cats-role`：
+
+- **命中全部在测试与注释里**。没有任何一个**非测试**文件构造过这两个头。
+- `deploy/envoy-mvp.yaml` 是**纯 L7 路由**：无 `jwt_authn`、无 `ext_authz`、
+  无 `request_headers_to_add`、无 `request_headers_to_remove`。
+- `cats-bff` 的生产代码**只转发 `Authorization: Bearer <JWT>`**
+  （其测试 `bff_upstream_passthrough.rs:447-471` 专门把"不发 X-Cats-*"钉成断言）。
+
+也就是说，`cats_rbac::service_helpers` 的文档注释里写的
+"Envoy Gateway 鉴权后注入这些 header" —— **envoy 里没有这段实现**。
+
+#### ③ 由此推出的两条结论
+
+**结论 1：经网关的正常流量，7 个受保护端点会全部 401。**
+真实 JWT（`Bearer <JWT>`）既不匹配 `cats-role:` 前缀，也不会变成 `X-Cats-*`，
+于是 `extract_*` 判定为匿名。报表/文件/项目/任务/通知/审计六类业务接口在
+当前部署下**没有一个能通过鉴权**。
+
+**结论 2（更严重）：那个头是客户端可自填的。**
+envoy 既不校验 JWT、也不剥离来路不明的 `X-Cats-*` / `cats-role`，
+于是任何能连到 8080 的调用方，只要自己带上
+
+```
+X-Cats-User-Id: <任意合法 UUID>
+X-Cats-Roles: Sponsor
+```
+
+就会被 audit / worker 当作 **Sponsor**；带上
+`Authorization: Bearer cats-role:Sponsor` 则会被另外 5 个服务当作 Sponsor。
+
+**结论 1 让系统不可用，结论 2 让系统不安全** —— 而后者一旦有任意一条
+受保护路由对外暴露（加个 envoy 路由、或把 compose 的 `127.0.0.1` 绑定去掉）
+就直接可利用。§4.1v 那个 worker-service 的绕过与它相比，是局部实现问题。
+
+#### 为什么本轮不擅自修
+
+补边缘鉴权需要同时确定三件事，都不是"具体改法"而是**方向选择**：
+
+1. 凭据契约统一到哪一套（`X-Cats-*` 还是 `cats-role:`）——影响 7 个 crate；
+2. JWT 校验放在哪（envoy `jwt_authn` + claim→role 映射，还是 ext_authz 回调，
+   还是让 `cats-bff` 校验后再注入）；
+3. 17 个无鉴权 crate 里的哪些**必须**补（`user-service` 大概率必须，
+   6 个媒体服务要看是否对外暴露）。
+
+已记入 §4.1u 待拍板，**不在本轮自行决定**。
+
+#### 但有一件事本轮就做了：把事实钉住
+
+`report_routes.rs` 的 9 个用例里，有 3 个直接以"401/403"为期望值 ——
+它们在架构缺口修好之前是**如实反映现状**的，而不是在掩盖它。
+等边缘鉴权落地，这几条会继续绿（变成"无凭据仍应 401"），
+新增"带 Sponsor 头仍应 401"时才需要跟着改。
+### §4.1y 鉴权落地：契约统一 + 边缘验签 + user-service 补鉴权（2026-10-07）
+
+§4.1x 记的是缺口，这一节记的是修法。**拍板：统一契约 + envoy 边缘鉴权 + 补 user-service**
+（2026-10-07 10:04 JST 以超时自动选中推荐项，非显式确认）。
+
+#### ① 契约统一到 `X-Cats-*`（5 个服务 + user-service）
+
+file / notification / project / report / task 原先各自解析
+`Authorization: Bearer cats-role:<roles>`，现在一律复用
+`cats_rbac::service_helpers::extract_user_id_and_roles`（读 `X-Cats-User-Id` +
+`X-Cats-Roles`），与 audit / worker 同一条路径。各自那份 `parse_role` 随之删除
+（统一后即为死代码，`-D warnings` 会红）。
+
+**只改代码不改文案是不够的**：401 的 message 原文写着
+`Authorization header with Bearer cats-role:<roles> required` —— 契约改了之后
+这条错误信息会把排障的人引到已经不存在的头上，一并改掉。
+
+顺带修好一个既有的解析错误：`cats-role:<uuid>:<roles>` 里的 user_id 其实
+**永远解析不出来**（`body` 是剥掉前缀**之后**的字符串，再 `split(':')` 必然拿不到），
+`AuthContext.user_id` 恒为 `None`。改用 `X-Cats-User-Id` 后它被真实填充。
+
+#### ② JWT 多签一个 `roles_csv` 字符串 claim
+
+envoy `jwt_authn` 的 `claim_to_headers`：**string / int / double / bool 原样拷贝，
+array / object 序列化成 JSON 再 Base64 编码**。而 `Claims.roles` 是数组 ——
+直接映射过去会变成 `WyJVc2VyIiwiU3BvbnNvciJd`，下游按逗号切分解析不出任何角色，
+**全员 401**。
+
+所以同一个语义在 JWT 里存两份：`roles`（数组，给 Rust 侧，如 cats-bff 的
+`principal.roles`）与 `roles_csv`（字符串，给边缘注入），由 `issue_jwt` 从同一份
+入参 `join(",")` 派生，不存在两份真相。`issued_token_carries_roles_and_matching_roles_csv`
+把这条钉住。
+
+#### ③ envoy：验签 + 注入 + 剥离
+
+- `jwt_authn`，HS256 inline_jwks，`claim_to_headers` 映射 `sub → x-cats-user-id`、
+  `roles_csv → x-cats-roles`；
+- **刻意不配 `issuer` / `audiences`** —— 我们的 Claims 里既没有 `iss` 也没有 `aud`，
+  配上会让每个请求都因 issuer/audience 不匹配被拒；
+- 每条路由显式 `request_headers_to_remove: [x-cats-user-id, x-cats-roles]`。
+  这一条**刻意不只依赖 jwt_authn 自带的清理**：新版 Envoy 的 filter-wide sanitize
+  只清它自己 `claim_to_headers` 里声明过的头，且受 runtime feature 控制，旧版本没有。
+
+#### ④ 门禁：lint 规则 16
+
+检查 envoy 配置三件事：jwt_authn 在位、**每条**路由都剥离身份头、JWT 密钥仍是
+占位符（防止具体密钥值被提交进 git 历史）。路由数低于阈值时报错
+（「空结果不等于没有问题」）。
+
+写这条规则时我犯过一个错值得记：jwt_authn 在 `typed_config.http_filters` 里，
+不在 `filters` 列表里；第一版只扫了后者，于是对着**已经加了 jwt_authn 的配置**
+报"没有 jwt_authn"。规则自己写错位置，和扫描器致盲是同一类错误。
+
+#### ⑤ user-service 补鉴权（此前**完全裸奔**）
+
+新增 `src/rbac.rs` + `cats-rbac` 依赖，三条业务路由在**最前面**过 RBAC：
+
+| 路由 | 资源 × 操作 |
+|---|---|
+| `POST /v1/users` | User × Create |
+| `GET /v1/users/{id}` | User × Read |
+| `PUT /v1/users/{id}` | User × Update |
+
+10 个单元测试，含一条反向用例：只带 `Authorization: Bearer cats-role:Sponsor`
+必须仍是匿名 —— 旧契约一旦重新生效，就等于允许客户端自填 Sponsor。
+
+**已知且未修：行级归属。** 权限矩阵里 `Role::User` 对 `Resource::User × Read`
+是有权限的，所以任何一个已登录用户都能读任意用户的档案。行级归属是设计决策，
+本轮不自行发明，记入 §4.1u。测试 `plain_user_can_read_user_resource` 把当前行为
+钉住，并注明它"不是认为它对，只是如实记录"。
+
+#### ⚠️ 未验证的部分
+
+**envoy 这套配置的运行时行为没有被验证过** —— Docker Desktop 未启动，无法起容器。
+本轮做到的只有：Rust 侧全部有测试、YAML 能解析、lint 规则 16 静态守住三条不变量。
+真正的验收（拿真 JWT 经 8080 打通、再自填 `X-Cats-Roles: Sponsor` 验证被拒）
+必须等 Docker 可用后补，**在补上之前不得宣称边缘鉴权已生效**。

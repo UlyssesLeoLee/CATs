@@ -74,6 +74,8 @@ pub fn issue_jwt(
         _ => jwt_expiry_secs(),
     };
     let exp = now + expiry_secs;
+    // 边缘注入用的逗号串与数组同源 —— 不允许调用方分别传两份（见 models.rs 说明）
+    let roles_csv = roles.join(",");
     let claims = Claims {
         sub: user_id.to_string(),
         username: username.to_string(),
@@ -82,6 +84,7 @@ pub fn issue_jwt(
         jti: uuid::Uuid::new_v4().to_string(),
         token_type: token_type.to_string(),
         roles,
+        roles_csv,
     };
     let token = encode(
         &Header::default(),
@@ -156,6 +159,7 @@ mod tests {
             jti: uuid::Uuid::new_v4().to_string(),
             token_type: "access".to_string(),
             roles: vec!["User".to_string()],
+            roles_csv: "User".to_string(),
         };
         let tampered_token = encode(
             &Header::default(),
@@ -185,6 +189,7 @@ mod tests {
             jti: "11111111-2222-3333-4444-555555555555".to_string(),
             token_type: "refresh".to_string(),
             roles: vec!["User".to_string()],
+            roles_csv: "User".to_string(),
         };
         let jti = uuid::Uuid::parse_str(&claims.jti).expect("jti valid uuid");
         assert_eq!(jti.to_string(), "11111111-2222-3333-4444-555555555555");
@@ -202,11 +207,19 @@ mod tests {
             jti: "11111111-2222-3333-4444-555555555555".to_string(),
             token_type: "access".to_string(),
             roles: roles.clone(),
+            roles_csv: "User,QualityLead".to_string(),
         };
         let json = serde_json::to_string(&claims).expect("serialize");
         assert!(json.contains("\"roles\":[\"User\",\"QualityLead\"]"));
+        // 边缘注入用的逗号串必须是**字符串** —— envoy 的 claim_to_headers 对
+        // array 会 Base64 编码、对 string 才原样拷贝（见 models.rs 说明）
+        assert!(
+            json.contains("\"roles_csv\":\"User,QualityLead\""),
+            "roles_csv 必须是逗号分隔的字符串，不是数组：{json}"
+        );
         let parsed: Claims = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed.roles, roles);
+        assert_eq!(parsed.roles_csv, "User,QualityLead");
     }
 
     /// 缺 roles 字段的旧 token 仍能反序列化 (向后兼容)

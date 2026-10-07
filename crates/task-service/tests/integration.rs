@@ -429,7 +429,8 @@ async fn e2e_user_can_subscribe_and_receive_heartbeat() {
     let report_req = actix_test::TestRequest::post()
         .uri(&format!("/internal/v1/tasks/{task_id}/stage-progress"))
         // Sponsor 是 cats-rbac 默认权限矩阵中拥有全权的角色 (per §4 5 域 Lead 各管各资源)
-        .insert_header((header::AUTHORIZATION, "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(serde_json::json!({
             "event_id": "evt_test",
             "stage": "asr",
@@ -447,7 +448,8 @@ async fn e2e_user_can_subscribe_and_receive_heartbeat() {
     // 2) User 角色发起订阅 — 不读 last_state 帧 (per design: 初始化 Pending 时不发)
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/tasks/{task_id}/events"))
-        .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 200);
