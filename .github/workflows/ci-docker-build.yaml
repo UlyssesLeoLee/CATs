@@ -23,6 +23,23 @@ concurrency:
 env:
   REGISTRY: harbor.cats.internal
   IMAGE_PREFIX: cats
+  # 2026-10-07 新增。Harbor 凭据**当前并不存在**（`GET /actions/secrets`
+  # 返回 total_count=0），而下面 Login 步骤在 push 事件时会去登 Harbor，
+  # 于是每个 push 的 docker build 都在 setup 阶段 17 秒内失败：
+  #     ##[error]Username and password required
+  # 它只因"每次 push 都会取消上一次 push 的 docker build"而一直没被发现 ——
+  # 被取消的作业不产生失败记录，红的都是取消前抢到 runner 的那批。
+  #
+  # 修法：把"要不要发布"的条件从"事件类型"改成"事件类型 **且** 凭据存在"。
+  # 凭据一旦配好，push 事件会自动恢复登录并推送，行为不变；
+  # 在此之前 push 事件只构建不推送 —— CI 该验证的是"镜像能不能构建出来"，
+  # 发布到 registry 是另一件事，不该让它把整条流水线永久拉红。
+  #
+  # 关键点：**`secrets` 上下文在 step 级 `if` 里不可用**，只能借 `env` 中转。
+  #（GitHub 文档：`secrets` 可用于 `with` / `env` / `jobs.*.steps.*`，但 `if`
+  #  可用的上下文里没有 `secrets`。）
+  HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+  HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
 
 jobs:
   build:
@@ -99,12 +116,16 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Harbor
-        if: github.event_name != 'pull_request'
+        # 非 PR 事件、且凭据确实存在时才登录。
+        # 少了 `&& env.HARBOR_USERNAME != ''` 这一段，push 事件会拿着空凭据去登录
+        # 并以 `Username and password required` 失败 —— 那不是构建问题，
+        # 但会让每个 push 的这条 workflow 恒红。
+        if: github.event_name != 'pull_request' && env.HARBOR_USERNAME != '' && env.HARBOR_PASSWORD != ''
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.HARBOR_USERNAME }}
-          password: ${{ secrets.HARBOR_PASSWORD }}
+          username: ${{ env.HARBOR_USERNAME }}
+          password: ${{ env.HARBOR_PASSWORD }}
 
       - name: Extract metadata
         id: meta
@@ -124,7 +145,9 @@ jobs:
         with:
           context: .
           file: deploy/docker/Dockerfile.rust
-          push: ${{ github.event_name != 'pull_request' }}
+          # 与 Login 步骤同一套条件：**要么登录并推送，要么只构建**。
+          # 两边条件必须一致 —— 只改一边会出现"推送了但没登录"或反之。
+          push: ${{ github.event_name != 'pull_request' && env.HARBOR_USERNAME != '' && env.HARBOR_PASSWORD != '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |

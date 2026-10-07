@@ -2597,3 +2597,85 @@ engine linux/wsl failed to start: bootstrapping main distribution
   gRPC 就绪机制。
 - **运行时验收仍受阻**（per §4.1z 的嵌套虚拟化问题）。本轮全部结论来自
   静态检查与本地单元测试；"DB 真的挂掉时 Pod 真的会被摘流量"没有实证。
+
+### §4.1ab 每次 push 的 docker build 都恒红，而红的原因不在构建（2026-10-07）
+
+推 `feat/edge-authz-and-readiness` 开 PR #24 时，`statusCheckRollup` 里有 14 条
+`docker build (...)` 失败。乍看像是新改动把镜像构建搞坏了。**不是。**
+
+#### 定位过程（每一步的"证据"都来自直接查询，不是推测）
+
+1. `gh pr view 24` 的 rollup 里 14 条 FAILURE，但每条检查名**出现两次**
+   （一次 COMPLETED FAILURE、一次 QUEUED）。重名是关键线索：说明存在**两套**
+   workflow —— push 事件与 pull_request 事件各触发了一次。
+2. `gh run list --branch <branch>` 列出 14 个 run，`total` 里**没有一个 failed**，
+   全是 queued / in_progress / success。与 rollup 矛盾 ⇒ rollup 混入了别的来源。
+3. `gh api repos/.../commits/<sha>/check-runs` 才拿到真正的 14 条失败，
+   `details_url` 指向 run `37619893549` —— **push 事件**那次。
+4. 作业日志共 407 行、只跑了 **17 秒**、失败时没有任何构建输出：
+
+```
+2026-10-07T12:17:22.2771298Z ##[error]Username and password required
+```
+
+17 秒 = 死在 setup 阶段，根本没进到编译。
+
+#### 真因
+
+`ci-docker-build.yaml` 的 Login 步骤带 `if: github.event_name != 'pull_request'`，
+用的是 `secrets.HARBOR_USERNAME` / `secrets.HARBOR_PASSWORD`。而本仓库：
+
+```
+GET /repos/UlyssesLeoLee/CATs/actions/secrets
+{"total_count":0,"secrets":[]}
+```
+
+**一个 Actions secret 都没有。** 于是 push 事件拿着空凭据去登录 Harbor，
+每个作业都在同一行失败。
+
+#### 为什么一直没被发现
+
+因为 `concurrency: cancel-in-progress: true` —— **每次 push 都会取消上一次 push
+的 docker build**。被取消的作业不产生失败记录，于是：
+
+- 快速连续 push 时，看到的是"上一次被取消"，红不起来
+- 偶尔抢到 runner 跑满 17 秒的那几个，才是红的
+
+而**真正把关的从来是 PR 事件的 workflow**（它 `push: false`、跳过登录，所以一直
+是绿的）。也就是说：一条恒红的工作流藏在一条一直绿的后面，靠"被取消"掩盖了半年。
+
+#### 修法
+
+把"要不要发布"的条件从**事件类型**改成**事件类型 且 凭据存在**：
+
+```yaml
+env:
+  HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+  HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+...
+- name: Login to Harbor
+  if: github.event_name != 'pull_request' && env.HARBOR_USERNAME != '' && env.HARBOR_PASSWORD != ''
+...
+- name: Build and push
+  with:
+    push: ${{ github.event_name != 'pull_request' && env.HARBOR_USERNAME != '' && env.HARBOR_PASSWORD != '' }}
+```
+
+凭据配好之后 push 事件自动恢复登录并推送，行为不变；在此之前 push 事件只构建
+不推送 —— **CI 该验证的是"镜像能不能构建出来"，发布到 registry 是另一件事。**
+
+Login 与 push 两步的条件必须一致：只改一边会出现"推送了但没登录"或反之。
+
+**踩坑**：`secrets` 上下文在 step 级 `if` 里**不可用**（GitHub 文档里 `if`
+可用的上下文不含 `secrets`），只能借 `env` 中转。直接写
+`if: secrets.HARBOR_USERNAME != ''` 会被静默当成空字符串，条件恒假 ——
+又是一个"看起来在工作、其实没有"。
+
+#### 同类顺带排查
+
+`secrets.CODECOV_TOKEN`（`ci-rust-test.yaml`）同样不存在，但那个步骤带
+`fail_ci_if_error: False`，所以**不会**让流水线红。后果是覆盖率实际上没有上传
+（不是 CI 问题，是覆盖率数据缺失）。`secrets.GITHUB_TOKEN` 是内置的，不受影响。
+
+**通用判据：给仓库补的第一个 Actions secret 之前，先确认工作流里引用它的每个
+`if` 是不是真的可满足；不可满足的条件不会报错，只会恒假。**
