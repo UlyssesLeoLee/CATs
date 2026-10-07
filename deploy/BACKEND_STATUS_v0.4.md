@@ -2085,6 +2085,25 @@ openapi 的 `servers[0].url` 是 `https://api.cats.internal/v1`，而 `/healthz`
 根本不代理。`/auth/login` 因为代码里确实是 `/v1/auth/login` 所以对得上，
 `/healthz` 对不上。缺一份"envoy 是否重写前缀"的权威说明，故只记录不判定。
 
+#### 追加待拍板（2026-10-07，由 §4.1ad 挖出）
+
+**4-bis. user-service 的行级归属：任何已登录用户都能读任意用户档案。**
+§4.1y 写了"记入 §4.1u"，但本节原先并没有对应条目，这里补上以免悬空引用。
+权限矩阵里 `Role::User` 对 `Resource::User × Read` 是有权限的，而
+`user-service/src/rbac.rs` **只做资源 × 操作级鉴权，没有行级判断**。
+当前行为由 `plain_user_can_read_user_resource` 钉住，并注明
+"这是如实记录，不是认为它对"。
+
+**5. `User × Create` / `User × Update` 在权限矩阵里只有 Sponsor 持有** ——
+普通用户无法自助注册、也无法修改自己的档案。详见 §4.1ad 的逐角色对拍表。
+这不是本轮引入的（`plain_user_cannot_create_users` 早就钉住了），
+但直到修 e2e 时去查矩阵才被摆上台面。
+
+4-bis 与 5 是同一族问题，方向相反：4-bis 是**读得太宽**（能读任意行），
+5 是**写完全没有入口**（除 Sponsor 外无人能写）。两条都指向同一个根因 ——
+`Resource::User` 的权限矩阵是照"管理用户档案"设计的，没有考虑
+"用户管理自己的档案"这条自助路径。两条应一并拍板。
+
 ### §4.1v RBAC 的「第二参数」语义被误读，导致 `worker/tick` 的鉴权从未生效（2026-10-07）
 
 #### 缺陷：`require_roles` 的第二个参数是**调用者角色**，不是「允许的角色」
@@ -2762,3 +2781,73 @@ k8s 的 `readinessProbe` 是 **kubelet 在容器外**发起的 HTTP 请求，**�
 在 `Dockerfile.runtime` 里装一个 HTTP 客户端（或做一个静态探针二进制），
 然后按真实路径配 healthcheck。在此之前 §4.1u 那条待办**保持未做** ——
 宁可不做，也不要加一堆会让整套 compose 永远起不来的假 healthcheck。
+
+### §4.1ad §4.1y 的鉴权改造自己炸了 e2e：7 个用例红，且暴露"只有 Sponsor 能建用户"（2026-10-07）
+
+PR #24 head `27542f7` 上 `e2e (real PostgreSQL)` **失败**（check-run `112794634614`）。
+这是本轮改造引入的**真实回归**，不是历史遗留。
+
+| crate | 失败用例 | 实测症状 |
+|---|---|---|
+| user-service `e2e_t02` | 4 / 5 | `left: 401`（create / get_by_id / get_not_found / update_partial） |
+| notification-service `integration` | 3 / 6 | `left: "00000000-...-0001"` vs `right: "7a003618-..."` |
+
+#### 两个根因不同，但都不是代码错了
+
+**user-service 是 401 —— 测试没带身份头。**
+§4.1y 之前这三条路由**完全没有鉴权**（`user-service/src/rbac.rs` 顶部有说明），
+所以不带任何头也能过。§4.1y 上了闸门，测试就撞上了。
+
+生产链路里请求**必然**经过 envoy：`jwt_authn` 验签后按 `claim_to_headers` 注入
+`sub → X-Cats-User-Id`、`roles_csv → X-Cats-Roles`，而 route 上的
+`request_headers_to_remove` 会先剥掉客户端自带的同名头。所以"不带身份头"在生产中
+不可能发生 —— 发生 401 正是期望行为。**是测试错了，不是代码错了。**
+
+**notification-service 是身份不匹配 —— 而且是安全修复在正常工作。**
+handler 里那行
+`let user_id = auth.user_id.unwrap_or(req_body.user_id);`
+此前永远走**兜底分支**，因为老的 `cats-role:` 契约压根解析不出 `user_id`。
+§4.1y 之后 `auth.user_id` **真的能解析出来**了，于是身份头开始**覆盖** body ——
+而测试发的是写死的常量 `0000...0001`，却期望 body 里的随机 UUID 生效。
+这说明 `unwrap_or` 这条兜底路径以前是**从未被真正执行过的死逻辑**，
+一接上真实凭据就暴露了。修法：头里的身份改成 `user_id.to_string()`，与 body 一致。
+
+#### 修法：改测试，不改生产代码，也不给测试开后门
+
+- 没有加 `#[cfg(test)]` 跳过鉴权的分支。那会让**真正缺鉴权的回归测试不出来**，
+  那才是更贵的错误。
+- 顺带给 `e2e_update_user_partial_returns_200` 的 create 步骤补了显式
+  `assert_eq!(status, 201)`：原先 create 失败时是崩在
+  `test_utils.rs:261` 的反序列化里，报错信息完全指不到真正原因。
+
+#### 顺手挖出来的设计问题（新增待拍板，见 §4.1u）
+
+`route_to_resource_action` 把三条路由映射成 `(User, Create)` / `(User, Read)` /
+`(User, Update)`。逐个角色核过 `cats_rbac::default_permissions()` 之后：
+
+| 角色 | `User × Create` | `User × Read` | `User × Update` |
+|---|---|---|---|
+| Sponsor | ✅ | ✅ | ✅ |
+| User | ❌ | ✅ | ❌ |
+| ArchitectLead / QualityLead / DatabaseLead | ❌ | ✅ | ❌ |
+| RustLead / ProjectLead / SRELead | ❌ | ❌ | ❌ |
+
+**⇒ 普通用户既不能自助注册、也不能改自己的档案。**
+crate 内已有单测 `plain_user_cannot_create_users` 把这条钉住了，所以它不是
+刚引入的，但直到这次为了修 e2e 而去查矩阵才被摆到台面上。
+
+对"达到商业产品标准"这个目标来说，这大概率不是本意（自助注册和改自己的
+资料是常规需求）。但**改权限矩阵是设计决策，不在修 CI 的范围内**，
+所以 e2e 里用的是 Sponsor，并把这段原因原样写在
+`crates/user-service/tests/e2e_t02.rs` 的文件头注释里 ——
+免得下一个读的人以为 Sponsor 是随手选的。
+
+#### 一条容易踩的坑
+
+修这个的时候先试了提取一个 `as_caller()` 辅助函数返回
+`ServiceRequest`。**actix-web 4.15 的 `TestRequest::to_request()` 返回的是
+`actix_http::Request`，不是 `ServiceRequest`**（`E0308`）。
+而 `actix_web::dev` 只 re-export 了
+`{Extensions, Payload, RequestHead, Response, ResponseHead}`，**不含 `Request`** ——
+要命名这个返回类型就得给 user-service 加一条 `actix-http` dev-dependency。
+为省 6 行重复代码而加依赖不值得，最后直接内联。

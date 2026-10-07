@@ -118,7 +118,7 @@ async fn e2e_create_notification_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone(), EventBus::new())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
-        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
         .insert_header(("X-Cats-Roles", "SRELead"))
         .set_json(CreateNotificationRequest {
             user_id,
@@ -155,7 +155,7 @@ async fn e2e_list_notifications_returns_200() {
     for i in 0..2 {
         let req = actix_test::TestRequest::post()
             .uri("/v1/notifications")
-            .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+            .insert_header(("X-Cats-User-Id", user_id.to_string()))
             .insert_header(("X-Cats-Roles", "SRELead"))
             .set_json(CreateNotificationRequest {
                 user_id,
@@ -172,7 +172,7 @@ async fn e2e_list_notifications_returns_200() {
     // list
     let list_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/notifications?user_id={user_id}&limit=10"))
-        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
         .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let list_resp = actix_test::call_service(&app, list_req).await;
@@ -199,7 +199,7 @@ async fn e2e_mark_read_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
-        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
         .insert_header(("X-Cats-Roles", "SRELead"))
         .set_json(CreateNotificationRequest {
             user_id,
@@ -216,7 +216,7 @@ async fn e2e_mark_read_returns_200() {
     // mark read
     let read_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/notifications/{id}/read?user_id={user_id}"))
-        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
         .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let read_resp = actix_test::call_service(&app, read_req).await;
@@ -228,7 +228,7 @@ async fn e2e_mark_read_returns_200() {
     // 二次 mark read → 404
     let read2_req = actix_test::TestRequest::patch()
         .uri(&format!("/v1/notifications/{id}/read?user_id={user_id}"))
-        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
         .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let read2_resp = actix_test::call_service(&app, read2_req).await;
@@ -253,7 +253,7 @@ async fn e2e_notification_stream_returns_sse() {
 
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/notifications/ws?user_id={user_id}"))
-        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
         .insert_header(("X-Cats-Roles", "SRELead"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
@@ -278,13 +278,19 @@ async fn e2e_notification_stream_returns_sse() {
 async fn e2e_create_empty_title_returns_400() {
     setup_env();
     let pool = make_pool().await;
+    // 2026-10-07：头里的身份与 body 里的身份必须一致。
+    // handler 的 `let user_id = auth.user_id.unwrap_or(req_body.user_id);`
+    // 自 §4.1y 起 `auth.user_id` **真的能解析出来**了（此前 `cats-role:` 那套
+    // 永远解析不出 user_id，于是永远走 body 的兜底分支）。所以把
+    // `X-Cats-User-Id` 写成写死的常量、等 body 的 user_id 生效，是**旧行为**。
+    let user_id = Uuid::new_v4();
     let app = actix_test::init_service(make_app(pool, EventBus::new())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/notifications")
-        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
         .insert_header(("X-Cats-Roles", "SRELead"))
         .set_json(CreateNotificationRequest {
-            user_id: Uuid::new_v4(),
+            user_id,
             notif_type: "test".to_string(),
             title: "".to_string(),
             body: "body".to_string(),
