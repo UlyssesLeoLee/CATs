@@ -1564,6 +1564,87 @@ if _doc_files < _DOC_MIN_FILES:
 else:
     note("规则 14 扫了 doc/ 下 %d 个 .md（已剥 HTML 注释）" % _doc_files)
 
+# ---------------------------------------------------------------------
+# 规则 15: `require_roles` 的第二个参数不得是角色字面量数组
+#
+# 2026-10-07 实证的授权绕过。`cats_rbac::service_helpers::require_roles` 的签名是
+#     require_roles(checker, roles, resource, action)
+# 第二个参数的语义是「**调用者**的角色」，而它的循环写的是
+#     for role in allowed_roles { checker.check_roles(&[*role], resource, action) }
+# 也就是在问「**这个角色**有没有权限」，而不是「调用者是不是这个角色」。
+#
+# worker-service 的 `POST /v1/worker/tick` 传的是
+#     &[Role::Sponsor, Role::RustLead, Role::SRELead]   // 我想"允许的角色"
+# 于是第一个迭代就查「Sponsor 有没有 Task:Update」——有（Sponsor 全权）——
+# 直接 Ok。调用者是谁**完全不影响结果**。实测：`X-Cats-Roles: User` 与 `Guest`
+# 都能穿过鉴权进入 `tick()`（返回 500，即"库连不上"而不是 403）。
+#
+# 其余 6 个服务（file/project/report/task/notification/cats-bff）传的都是
+# `check_roles(&auth.roles, ...)`，audit-service 传的是 `require_roles(&state.checker,
+# &roles, ...)` —— 都是**从请求头解出来的调用者角色**，用法正确。全仓只有这一处错。
+#
+# 【必须写在这里的坑】**排除 cats-rbac 自己**。该 crate 的单元测试大量用字面量
+# 传「调用者角色」（`require_roles(&checker, &[Role::User], ...)`）—— 那是合法的，
+# 因为字面量确实就是被模拟的调用者。按"字面量即违规"一刀切，会把这些正确的测试
+# 全判成违规。判据是"字面量出现在 helper 自身之外"，不是"字面量本身有问题"。
+
+# 只匹配真正的函数调用：`require_roles(`。`require_roles_user_allowed_for_project_read`
+# 这类用例名后面跟的是 `_` 而不是 `(`，不会命中。
+_REQUIRE_ROLES_LITERAL_RE = re.compile(
+    r"\brequire_roles\(\s*[^,()]+\s*,\s*&\[\s*(?:cats_rbac\s*::\s*)?Role\s*::",
+    re.S)
+_REQUIRE_ROLES_ANY_RE = re.compile(r"\brequire_roles\b")
+_RBAC_SKIP_CRATES = ("cats-rbac",)      # helper 自身：单元测试里的字面量是合法用法
+_RBAC_MIN_FILES = 10                    # crates/*/src 实测数十个；防扫描路径写错
+_RBAC_MIN_CALLS = 5                     # 定义 + 文档示例 + 5 个自测用例
+
+_rbac_files = 0
+_rbac_violations = 0
+_rbac_any_calls = 0
+_CRATES = os.path.join(ROOT, "crates")
+for _crate in sorted(os.listdir(_CRATES)):
+    _cdir = os.path.join(_CRATES, _crate)
+    _sdir = os.path.join(_cdir, "src")
+    if not os.path.isdir(_sdir):
+        continue
+    for _dp, _dn, _fns in os.walk(_sdir):
+        for _fn in sorted(_fns):
+            if not _fn.endswith(".rs"):
+                continue
+            _p = os.path.join(_dp, _fn)
+            with io.open(_p, encoding="utf-8", errors="replace") as _f:
+                _text = _f.read()
+            _rbac_files += 1
+            _rbac_any_calls += len(_REQUIRE_ROLES_ANY_RE.findall(_text))
+            if _crate in _RBAC_SKIP_CRATES:
+                continue
+            for _m in _REQUIRE_ROLES_LITERAL_RE.finditer(_text):
+                _line = _text.count("\n", 0, _m.start()) + 1
+                _rbac_violations += 1
+                err("规则 15：%s:%d 传给 `require_roles` 的第二个参数是角色**字面量数组** "
+                    "—— 该参数的语义是「调用者的角色」，不是「允许的角色」。"
+                    "传字面量等于在问「这个角色有没有权限」而不是「调用者是不是这个角色」，"
+                    "于是任何非空 `X-Cats-Roles` 都能通过鉴权（2026-10-07 在 "
+                    "worker-service 实测：User / Guest 均能进入 `tick()`）。"
+                    "正确写法：从请求头解出角色并传变量，如 "
+                    "`require_roles(&state.checker, &roles, Resource::X, Action::Y)`；"
+                    "若确实要一份「允许的角色」白名单，请单独比对变量，不要传给本函数。"
+                    % (os.path.relpath(_p, ROOT).replace("\\", "/"), _line))
+
+if _rbac_files < _RBAC_MIN_FILES:
+    err("规则 15 失效：crates/*/src 下只读到 %d 个 .rs（阈值 %d）—— "
+        "扫描路径大概率写错了。**空结果不等于没有问题**"
+        % (_rbac_files, _RBAC_MIN_FILES))
+elif _rbac_any_calls < _RBAC_MIN_CALLS:
+    err("规则 15 失效：全仓只找到 %d 处 `require_roles`（阈值 %d）—— "
+        "helper 很可能被改名或删除，门禁已经失去锚点。"
+        "**空结果不等于没有问题**"
+        % (_rbac_any_calls, _RBAC_MIN_CALLS))
+else:
+    note("规则 15 扫了 crates/*/src 下 %d 个 .rs，见 %d 处 `require_roles`"
+         "（已排除 %s：helper 自身的单元测试用字面量模拟调用者角色是合法用法）"
+         % (_rbac_files, _rbac_any_calls, "/".join(_RBAC_SKIP_CRATES)))
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -1603,6 +1684,8 @@ print("  OK    规则 12 %d 处 /healthz 的实测顶层形状与 openapi Health
 print("  OK    规则 13 %d 条 k8s/helm 探针的路径都在对应服务的源码里注册过"
       % len(_probe_sites))
 print("  OK    规则 14 doc/ 下 %d 个 .md 里没有统一前的 /healthz 形状" % _doc_files)
+print("  OK    规则 15 全仓 %d 处 `require_roles` 里没有把角色字面量当调用者角色传"
+      % _rbac_any_calls)
 print("")
 for n in notes:
     print("  提醒  " + n)
