@@ -122,6 +122,31 @@ pub async fn healthz() -> impl Responder {
 }
 
 // =====================================================================
+// 1b. readyz
+// =====================================================================
+
+/// `GET /readyz` — 就绪探针，**必须**在 DB 不可用时返回 503
+///
+/// 2026-10-07 新增。此前 k3s 的 readinessProbe 指向 `/healthz`，而
+/// `/healthz` 恒返 200 且不查任何依赖 —— DB 挂了 Pod 照样 Ready，
+/// 流量继续被派发进来，每个请求都 500。k8s 的 readinessProbe **只看状态码，
+/// 不看 body**，所以状态码必须真的跟着 DB 走。
+///
+/// 签名取 `web::Data<AppState>` 而不是 `web::Data<PgPool>`：本 crate 的连接池
+/// 由 `AppState` 持有（`AppState::new(pool)`），`configure_app` 也只注册了
+/// `web::Data<AppState>` 一个 app_data；单开一个 `web::Data<PgPool>` 注入等于
+/// 引入第二条与生产不一致的装配路径。
+pub async fn readyz(state: web::Data<AppState>) -> impl Responder {
+    let db_ok = sqlx::query("SELECT 1").execute(&state.pool).await.is_ok();
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
+}
+
+// =====================================================================
 // 2. POST /v1/tasks — 创建翻译任务
 // =====================================================================
 
@@ -619,6 +644,7 @@ pub async fn stage_progress(
 pub fn configure_app(cfg: &mut web::ServiceConfig, state: web::Data<AppState>) {
     cfg.app_data(state)
         .route("/healthz", web::get().to(healthz))
+        .route("/readyz", web::get().to(readyz))
         .route("/v1/tasks", web::post().to(create_task))
         .route("/v1/tasks", web::get().to(list_tasks))
         .route("/v1/tasks/{id}", web::get().to(get_task))

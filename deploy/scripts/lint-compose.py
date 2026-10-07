@@ -1914,6 +1914,87 @@ else:
     note("规则 17 对拍了 %d 条 envoy 路由的 cluster 落点与 crates/ 的路由归属"
          % _17_total)
 
+# 规则 18: readinessProbe 不许指向不查依赖的 `/healthz`
+#
+# 2026-10-07 查实（per BACKEND_STATUS §4.1aa）：k3s 的 12 个 Deployment 里，
+# **8 个**的 readinessProbe 指向 `/healthz`。而 `/healthz` 恒返 200、不碰任何
+# 依赖 —— 于是**数据库挂了 Pod 依然被判 Ready，流量继续被派发进来**，每个
+# 请求 500。源码侧 17 个服务里 15 个压根没有 `/readyz`。
+#
+# 这不是"少个端点"，是就绪语义整个失效：Pod 在故障期间不会摘流量。
+#
+# 代价不对称，所以必须钉死：
+# - readiness 查依赖、失败返 503  →  DB 故障时摘流量（正确）
+# - liveness 不查依赖          →  DB 故障**不该**重启进程，重启解决不了 DB，
+#                                 只会把一次降级放大成 CrashLoop
+# 所以 liveness 留在 /healthz 是**对的**，这条规则只管 readiness。
+#
+# 用 YAML 解析器读结构，不用正则抠块 —— 正则切块在缩进宽度不同的文件上会
+# 漏掉整个 Deployment，而漏掉的那些会被当成"没问题"。
+
+
+def _k3s_deployments():
+    """(Deployment 名, readiness 探针描述) 列表。"""
+    out = []
+    for dirpath, _d, files in os.walk(os.path.join(ROOT, "deploy", "k3s")):
+        for fn in sorted(files):
+            if not (fn.endswith(".yaml") or fn.endswith(".yml")):
+                continue
+            fp = os.path.join(dirpath, fn)
+            docs = _load_yaml_safe(fp)
+            if not docs:
+                continue
+            for d in docs:
+                if not isinstance(d, dict) or d.get("kind") != "Deployment":
+                    continue
+                name = (d.get("metadata") or {}).get("name")
+                for c in (((d.get("spec") or {}).get("template") or {}).get("spec")
+                          or {}).get("containers") or []:
+                    out.append((name, c.get("readinessProbe"), fn))
+    return out
+
+
+def _probe_desc(p):
+    if not isinstance(p, dict):
+        return "（无 readinessProbe）"
+    if "httpGet" in p:
+        return "httpGet " + str((p["httpGet"] or {}).get("path"))
+    if "tcpSocket" in p:
+        return "tcpSocket " + str((p["tcpSocket"] or {}).get("port"))
+    for k in ("exec", "grpc"):
+        if k in p:
+            return k
+    return "?"
+
+
+_deploys = _k3s_deployments()
+_18_checked = 0
+if len(_deploys) < 8:
+    err("规则 18 失效：只读到 %d 个 k8s Deployment（阈值 8）—— "
+        "扫描路径写错了。**扫不到不等于没有问题**" % len(_deploys))
+for _dname, _probe, _dfile in _deploys:
+    _path = None
+    if isinstance(_probe, dict) and "httpGet" in _probe:
+        _path = (_probe.get("httpGet") or {}).get("path")
+    if _path == "/healthz":
+        err("规则 18：Deployment `%s`（%s）的 readinessProbe 指向 `/healthz` —— "
+            "那个端点恒返 200 且不查任何依赖，**数据库挂了 Pod 依然 Ready**，"
+            "流量继续被派发进来然后每个请求 500。就绪探针必须查依赖且失败返 503。"
+            % (_dname, _dfile))
+        continue
+    if _path is None:
+        continue  # tcpSocket / exec：不归这条规则管
+    _18_checked += 1
+    if _path == "/readyz" and _dname in _owners:
+        if "/readyz" not in _owners[_dname]:
+            err("规则 18：Deployment `%s` 的 readinessProbe 指向 `/readyz`，"
+                "但 crate `crates/%s` 里没有注册这个路由 —— 探针会永远 404，"
+                "Pod 永远进不了 Endpoints" % (_dname, _dname))
+
+if _18_checked:
+    note("规则 18 检查了 %d 个 Deployment 的 readinessProbe 指向（共读到 %d 个 "
+         "Deployment）" % (_18_checked, len(_deploys)))
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -1959,6 +2040,8 @@ print("  OK    规则 16 %d 份边缘配置：剥离客户端身份头 + jwt_aut
       % _envoy_checked)
 print("  OK    规则 17 %d 条 envoy 路由的 cluster 落点与 crates/ 的路由归属一致"
       % _17_total)
+print("  OK    规则 18 %d 个 Deployment 的 readinessProbe 不指向不查依赖的 /healthz"
+      % _18_checked)
 print("")
 for n in notes:
     print("  提醒  " + n)

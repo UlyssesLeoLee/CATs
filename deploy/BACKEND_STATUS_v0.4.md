@@ -2509,3 +2509,91 @@ engine linux/wsl failed to start: bootstrapping main distribution
    一致且能反解回原密钥；**未**在真 envoy 里跑过）
 
 新增的 k3s initContainer 同样**未经运行时验证**。
+
+### §4.1aa 就绪语义整个失效：8 个服务的 readinessProbe 指向不查依赖的端点（2026-10-07）
+
+#### 缺口
+
+用 **YAML 解析器**（不是正则）盘点 k3s 的 12 个 Deployment：
+
+| readinessProbe | 数量 | 意味着 |
+|---|---|---|
+| `/readyz` | 2（audit、worker） | 真的查依赖 |
+| `/healthz` | **8** | **恒返 200、不碰任何依赖** |
+| tcpSocket | 2（envoy-edge、translation-core） | 只测端口通 |
+
+源码侧：17 个服务里 **15 个根本没有 `/readyz`**。
+
+后果不是"少个端点"，而是**就绪语义整个失效**：数据库挂了，那 8 个服务的 Pod
+依然被判 Ready，流量继续被派发进来，然后每个请求 500。
+
+同类缺陷在 audit / worker 上真实发生过 —— 它们的 `/readyz` 一度把
+`db: "fail"` 写进 body 却仍返回 **200**。k8s 的 readinessProbe **只看状态码、
+不看 body**，那等于骗调度器。
+
+#### 一个方法论教训：盘点用的正则错了两轮
+
+第一版盘点脚本用正则抠 YAML 块（`readinessProbe:\s*
+(?:\s{10,}.*
+)+`），
+得出"只有 5 个 Deployment 有探针"。直接 `Select-String` 数
+`readinessProbe` 出现次数才发现：**12 个 Deployment 全都有**。差异全在缩进宽度上。
+
+**扫出"意外少的数字"时，先怀疑扫描器。** 从 YAML 抠结构要用解析器，
+`yaml.safe_load_all` 是免费的，正则要跟缩进宽度搏斗。
+
+同一轮在 envoy 扫描器上还踩了三次形状错误（cluster 正则缩进 2 vs 4、
+`\s*` 贪婪吃掉换行、多文档 YAML 用 `safe_load` 抛错），每次都表现为
+"扫出 0 条"这种**看起来像事实的数字**。共同药方是**自失效阈值**：
+扫不到就 FAIL，并写明"扫描路径大概率写错了。**空结果不等于没有问题**"。
+
+#### 改法
+
+1. `cats-common` 新增 `ReadyResponse` + `status_code()`，形状与判定收在一处。
+   各服务自己写一遍必然漂移（字段、状态词、状态码各不相同），漂移之后
+   "就绪探针"就退化成"每个服务各写各的、其中几个在说谎"。
+   契约：`db=="ok"` → 200；`db=="fail"` → **503**。
+2. **7 个服务补 `/readyz`**（auth、project、task、file、notification、report、
+   user、cats-ai-gateway），k3s 的 readinessProbe 逐个从 `/healthz` 改指 `/readyz`。
+   每个服务配一个 `tests/readyz.rs`，4 个用例（跨两个独立子代理产出，
+   用例名与断言完全同构，说明范式写得够死）：
+   - 依赖不可达 → **503**（`connect_lazy` 指向 `127.0.0.1:1`，不需要真 PG）
+   - 顶层键固定为 `[db, service, status]`，`service` 等于 crate 名
+   - **反向**：`/healthz` 在同样条件下**仍必须 200**
+   - 依赖可达 → 200，标 `#[ignore]`，由 CI 的 `e2e (real PostgreSQL)` job 执行
+3. `cats-ai-gateway` 刻意**不探上游 LLM**：判据是 `Router::is_routable()`
+   （至少注册了一个 provider）。对 OpenAI / Anthropic / DeepSeek 发网络请求来做
+   就绪判定，意味着上游一限流就把整个网关摘出轮转，把**局部上游故障放大成
+   全站故障** —— 严格比现状更差。它的 4 个用例也全部不需要 PG 或网络。
+
+#### 代价不对称，所以 liveness 刻意不动
+
+- readiness 查依赖、失败返 503 → DB 故障时摘流量（正确）
+- liveness 不查依赖 → DB 故障**不该**重启进程：重启解决不了 DB，
+  只会把一次降级放大成 CrashLoop
+
+所以 `livenessProbe` 全部保留在 `/healthz`，规则 18 也只管 readiness。
+这条**反向约束**（"liveness 不许改成 /readyz"）写进了变异验证，
+因为"所有探针都必须 /readyz"的规则会把 liveness 一起改掉。
+
+#### 新增 lint 规则 18
+
+`readinessProbe` 不许指向 `/healthz`；且若指向 `/readyz`，对应 crate 必须真的
+注册了该路由（否则探针永远 404，Pod 永远进不了 Endpoints）。
+自失效阈值：读到 < 8 个 Deployment 即 FAIL。
+
+**验收证据是它在真实工作树上的首跑**：落地那一刻工作树正好有 7 处违规，
+它一次抓出 7 条、每条精确到 Deployment 名。这比任何人工构造的变异都更有说服力
+—— 如果门禁落地时工作树恰好干净，那它才是可疑的。
+
+#### 仍未覆盖（诚实记账）
+
+- **compose 侧 0 个应用服务有 `healthcheck`**（只有 postgres 与 kafka 有）。
+  所以 `depends_on: service_healthy` 目前只能用于 db-init / kafka-init，
+  服务之间无法按健康度排序启动。这需要真 Docker 才能验收。
+- **6 个媒体服务 + cats-bff + translation-core 没有 `/readyz`**：它们要么
+  没有 k3s Deployment（媒体服务、cats-bff），要么 readiness 是 tcpSocket
+  （translation-core 的 gRPC 50051）。前者在规则 18 范围外，后者需要另一套
+  gRPC 就绪机制。
+- **运行时验收仍受阻**（per §4.1z 的嵌套虚拟化问题）。本轮全部结论来自
+  静态检查与本地单元测试；"DB 真的挂掉时 Pod 真的会被摘流量"没有实证。

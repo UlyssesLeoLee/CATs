@@ -46,6 +46,27 @@ pub fn healthz_response() -> HttpResponse {
     })
 }
 
+/// `GET /readyz` — 就绪探针，**必须**在 DB 不可用时返回 503
+///
+/// 2026-10-07 新增。此前 k3s 的 `deploy/k3s/cats-core/report-service.yaml` 把
+/// readinessProbe 指向了 `/healthz`，而 `/healthz` 恒返 200 且不查任何依赖 ——
+/// 数据库挂了 Pod 照样 Ready，流量继续被派发进来，而每个请求都 500。
+///
+/// 三个报表 endpoint 全部走 report_db 聚合查询，DB 不可用时一个都跑不了，
+/// 所以就绪只看数据库这一项。
+pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
+    let db_ok = sqlx::query("SELECT 1")
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
+}
+
 /// **唯一的路由表** —— `main.rs` 与集成测试共用。
 ///
 /// 2026-10-07 抽出。此前 4 条路由直接内联在 `main.rs` 的 `HttpServer::new`
@@ -65,6 +86,7 @@ pub fn configure_routes(
     cfg.app_data(pool)
         .app_data(rbac_checker)
         .route("/healthz", web::get().to(healthz))
+        .route("/readyz", web::get().to(readyz))
         // GET /v1/reports/usage — 用量统计（RBAC: Report Read）
         .route("/v1/reports/usage", web::get().to(usage_report))
         // GET /v1/reports/translation-volume — 翻译量（RBAC: Report Read）
