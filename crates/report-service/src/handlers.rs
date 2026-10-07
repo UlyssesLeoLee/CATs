@@ -46,6 +46,58 @@ pub fn healthz_response() -> HttpResponse {
     })
 }
 
+/// `GET /readyz` — 就绪探针，**必须**在 DB 不可用时返回 503
+///
+/// 2026-10-07 新增。此前 k3s 的 `deploy/k3s/cats-core/report-service.yaml` 把
+/// readinessProbe 指向了 `/healthz`，而 `/healthz` 恒返 200 且不查任何依赖 ——
+/// 数据库挂了 Pod 照样 Ready，流量继续被派发进来，而每个请求都 500。
+///
+/// 三个报表 endpoint 全部走 report_db 聚合查询，DB 不可用时一个都跑不了，
+/// 所以就绪只看数据库这一项。
+pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
+    let db_ok = sqlx::query("SELECT 1")
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
+}
+
+/// **唯一的路由表** —— `main.rs` 与集成测试共用。
+///
+/// 2026-10-07 抽出。此前 4 条路由直接内联在 `main.rs` 的 `HttpServer::new`
+/// 里，而 `tests/` 下只有 `smoke.rs`，于是"服务对外暴露什么"这件事**没有任何
+/// 测试在验证**。共用这一个函数之后，集成测试挂的就是生产实际提供的路由。
+///
+/// `app_data` 也在这里注册（而不是留在调用方），否则"注册哪些共享状态"
+/// 同样会变成调用方与测试各写一份。
+///
+/// 调用方注意：`HttpServer::new` 的闭包是 `Fn`，每个 worker 线程都会再调一次，
+/// 闭包里要把两个 `web::Data` **先 clone 出来再 move 进去**。
+pub fn configure_routes(
+    cfg: &mut web::ServiceConfig,
+    pool: web::Data<PgPool>,
+    rbac_checker: web::Data<Arc<RbacChecker>>,
+) {
+    cfg.app_data(pool)
+        .app_data(rbac_checker)
+        .route("/healthz", web::get().to(healthz))
+        .route("/readyz", web::get().to(readyz))
+        // GET /v1/reports/usage — 用量统计（RBAC: Report Read）
+        .route("/v1/reports/usage", web::get().to(usage_report))
+        // GET /v1/reports/translation-volume — 翻译量（RBAC: Report Read）
+        .route(
+            "/v1/reports/translation-volume",
+            web::get().to(translation_volume),
+        )
+        // GET /v1/reports/audit-summary — 审计摘要（RBAC: Report Read）
+        .route("/v1/reports/audit-summary", web::get().to(audit_summary));
+}
+
 // =====================================================================
 // 1. /v1/reports/usage
 // =====================================================================

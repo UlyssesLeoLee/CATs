@@ -8,7 +8,7 @@
 //! - 本切片不实施完整 actix-web `Transform` middleware (per cats-rbac §7 留 5 域 Lead 真人到位)
 //! - 改为 inline 在每个 handler 入口调 `enforce()` → 简洁, 0 隐式行为
 //! - 用户角色从 `Authorization: Bearer <jwt>` 解码 (per auth-service Claims 格式)
-//!   → M1 阶段: 接受 `Bearer cats-role:<role>` 简化格式 (per ULYS-45 阶段二)
+//!   → 2026-10-07 起统一为 `X-Cats-User-Id` + `X-Cats-Roles`（边缘注入） (per ULYS-45 阶段二)
 //!   → 生产路径 JWT 校验留 Sprint 2 接 auth-service JWKS 时落地
 //! - RBAC 错误统一映射到 ErrorBody (per 错误码表 v1.0 §3.3/§3.7)
 //!
@@ -19,7 +19,6 @@
 //!   (per 内部路由约定, 鉴权由 mTLS / 服务账号保证; 切片 B-2 仅做 role 检查兜底)
 
 use crate::models::ErrorBody;
-use actix_web::http::header;
 use actix_web::HttpRequest;
 use cats_rbac::{Action, RbacChecker, RbacError, Resource, Role};
 use std::sync::Arc;
@@ -41,62 +40,27 @@ impl AuthContext {
     // JWT 解码留 Sprint 2), 该函数唯一可能的返回值就是常量 "anonymous"。
 }
 
-/// 从请求头提取用户角色 (M1 简化模式)
-/// `Authorization: Bearer cats-role:User` → roles = [Role::User]
-/// `Authorization: Bearer cats-role:User,QualityLead` → roles = [User, QualityLead]
+/// 从请求头提取用户角色（**全仓唯一凭据契约**）
+///
+/// 2026-10-07 契约统一：凭据一律来自 `X-Cats-User-Id` + `X-Cats-Roles`，
+/// 由边缘代理（envoy `jwt_authn`）在**验签 JWT 之后**注入。
+///
+/// 原来这里认的是 `Authorization: Bearer cats-role:<roles>`。那个格式
+/// **没有任何一方在生产**（`deploy/envoy-mvp.yaml` 里既没有 `jwt_authn`
+/// 也没有 `request_headers_to_add`），所以它要么恒不命中、要么被调用方
+/// 自填成 Sponsor —— 与 audit / worker 走的也是两条不同的路径。
+///
+/// 现在直接复用 `cats_rbac::service_helpers::extract_user_id_and_roles`，
+/// 七个服务走同一套解析，不再各写一份角色名映射。
 ///
 /// 失败: 返回空 roles (未认证)
 pub fn extract_user_roles(req: &HttpRequest) -> AuthContext {
-    let header_val = match req.headers().get(header::AUTHORIZATION) {
-        Some(h) => h,
-        None => return AuthContext::default(),
-    };
-    let s = match header_val.to_str() {
-        Ok(s) => s,
-        Err(_) => return AuthContext::default(),
-    };
-    // 仅接受 Bearer scheme
-    let token = match s
-        .strip_prefix("Bearer ")
-        .or_else(|| s.strip_prefix("bearer "))
-    {
-        Some(t) => t.trim(),
-        None => return AuthContext::default(),
-    };
-    // M1 简化模式: cats-role:<comma-list>
-    let body = match token.strip_prefix("cats-role:") {
-        Some(b) => b,
-        None => return AuthContext::default(),
-    };
-
-    let mut roles = Vec::new();
-    for part in body.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some(role) = parse_role(part) {
-            roles.push(role);
-        }
-    }
-    AuthContext {
-        user_id: None, // M1 简化: 不解 user_id
-        roles,
-    }
-}
-
-fn parse_role(s: &str) -> Option<Role> {
-    match s {
-        "Sponsor" => Some(Role::Sponsor),
-        "ArchitectLead" => Some(Role::ArchitectLead),
-        "RustLead" => Some(Role::RustLead),
-        "DatabaseLead" => Some(Role::DatabaseLead),
-        "QualityLead" => Some(Role::QualityLead),
-        "ProjectLead" => Some(Role::ProjectLead),
-        "SRELead" => Some(Role::SRELead),
-        "User" => Some(Role::User),
-        "Guest" => Some(Role::Guest),
-        _ => None,
+    match cats_rbac::service_helpers::extract_user_id_and_roles(req) {
+        Ok((user_id, roles)) => AuthContext {
+            user_id: Some(user_id),
+            roles,
+        },
+        Err(_) => AuthContext::default(),
     }
 }
 
@@ -177,7 +141,8 @@ mod tests {
     #[test]
     fn extract_single_role() {
         let req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
+            .insert_header(("X-Cats-User-Id", uuid::Uuid::new_v4().to_string()))
+            .insert_header(("X-Cats-Roles", "User"))
             .to_http_request();
         let auth = extract_user_roles(&req);
         assert_eq!(auth.roles, vec![Role::User]);
@@ -187,7 +152,8 @@ mod tests {
     #[test]
     fn extract_multiple_roles() {
         let req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User,QualityLead"))
+            .insert_header(("X-Cats-User-Id", uuid::Uuid::new_v4().to_string()))
+            .insert_header(("X-Cats-Roles", "User,QualityLead"))
             .to_http_request();
         let auth = extract_user_roles(&req);
         assert_eq!(auth.roles, vec![Role::User, Role::QualityLead]);
@@ -204,7 +170,7 @@ mod tests {
     #[test]
     fn extract_non_bearer_scheme_is_anonymous() {
         let req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Basic abc"))
+            .insert_header(("Authorization", "Basic abc"))
             .to_http_request();
         let auth = extract_user_roles(&req);
         assert!(auth.roles.is_empty());
@@ -252,7 +218,8 @@ mod tests {
     async fn enforce_user_can_read_tasks() {
         let checker = Arc::new(RbacChecker::new());
         let req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
+            .insert_header(("X-Cats-User-Id", uuid::Uuid::new_v4().to_string()))
+            .insert_header(("X-Cats-Roles", "User"))
             .to_http_request();
         let result = enforce(&checker, &req, "/v1/tasks", "GET").await;
         assert!(result.is_ok(), "User should be able to read tasks");
@@ -262,7 +229,8 @@ mod tests {
     async fn enforce_user_cannot_delete_tasks() {
         let checker = Arc::new(RbacChecker::new());
         let req = TestRequest::default()
-            .insert_header((header::AUTHORIZATION, "Bearer cats-role:User"))
+            .insert_header(("X-Cats-User-Id", uuid::Uuid::new_v4().to_string()))
+            .insert_header(("X-Cats-Roles", "User"))
             .to_http_request();
         let result = enforce(&checker, &req, "/v1/tasks/abc", "DELETE").await;
         let (status, body) = result.expect_err("User cannot delete tasks");

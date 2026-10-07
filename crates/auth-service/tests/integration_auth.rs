@@ -132,6 +132,7 @@ fn claims_serialize_deserialize_roundtrip() {
         jti: Uuid::new_v4().to_string(),
         token_type: "access".to_string(),
         roles: vec!["user".to_string()],
+        roles_csv: "user".to_string(),
     };
     let json = serde_json::to_string(&claims).expect("serialize");
     let back: Claims = serde_json::from_str(&json).expect("deserialize");
@@ -140,6 +141,33 @@ fn claims_serialize_deserialize_roundtrip() {
     assert_eq!(back.exp, claims.exp);
     assert_eq!(back.token_type, claims.token_type);
     assert_eq!(back.roles, claims.roles);
+}
+
+/// `roles` 数组与 `roles_csv` 逗号串必须同源派生。
+///
+/// 2026-10-07 新增。边缘（envoy `jwt_authn`）注入 `X-Cats-Roles` 用的是
+/// `roles_csv` —— 因为 `claim_to_headers` 对 array 会 Base64 编码、对 string
+/// 才原样拷贝。这条用例把"两份表示必须一致"钉住，防止将来只改其中一处。
+#[test]
+fn issued_token_carries_roles_and_matching_roles_csv() {
+    setup_jwt_secret();
+    let roles = vec!["User".to_string(), "QualityLead".to_string()];
+    let (token, _) =
+        issue_jwt(Uuid::new_v4(), "someone", "access", roles.clone()).expect("issue_jwt");
+
+    let claims = verify_jwt(&token).expect("verify_jwt");
+    assert_eq!(claims.roles, roles, "数组表示应原样保留");
+    assert_eq!(
+        claims.roles_csv, "User,QualityLead",
+        "逗号串必须是同一份 roles 的 join(',')，顺序不得变"
+    );
+
+    // 反向：数组每一项都必须能在逗号串里按序找到（防止任何一边被悄悄裁剪）
+    let parts: Vec<&str> = claims.roles_csv.split(',').collect();
+    assert_eq!(
+        parts,
+        claims.roles.iter().map(|s| s.as_str()).collect::<Vec<_>>()
+    );
 }
 
 /// 旧 token（JSON 里没有 roles 字段）必须仍能解析，靠 Claims.roles 的 serde(default)

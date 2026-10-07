@@ -19,9 +19,11 @@
 
 use crate::db;
 use crate::models::{CreateUserRequest, ErrorBody, GetUserResponse, UpdateUserRequest};
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use cats_rbac::RbacChecker;
 use serde::Serialize;
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// 健康检查响应
@@ -51,9 +53,16 @@ pub async fn healthz() -> impl Responder {
 
 /// `POST /v1/users` — 创建 UserProfile
 pub async fn create_user(
+    req_http: HttpRequest,
     pool: web::Data<PgPool>,
+    checker: web::Data<Arc<RbacChecker>>,
     body: web::Json<CreateUserRequest>,
 ) -> impl Responder {
+    if let Err((st, eb)) =
+        crate::rbac::enforce(checker.get_ref(), &req_http, "/v1/users", "POST").await
+    {
+        return HttpResponse::build(st).json(eb);
+    }
     let req = body.into_inner();
     if req.display_name.is_empty() {
         return HttpResponse::BadRequest().json(ErrorBody {
@@ -104,7 +113,17 @@ pub async fn create_user(
 }
 
 /// `GET /v1/users/{id}` — 查询 UserProfile (按主键 id)
-pub async fn get_user(pool: web::Data<PgPool>, path: web::Path<String>) -> impl Responder {
+pub async fn get_user(
+    req_http: HttpRequest,
+    pool: web::Data<PgPool>,
+    checker: web::Data<Arc<RbacChecker>>,
+    path: web::Path<String>,
+) -> impl Responder {
+    if let Err((st, eb)) =
+        crate::rbac::enforce(checker.get_ref(), &req_http, "/v1/users/{id}", "GET").await
+    {
+        return HttpResponse::build(st).json(eb);
+    }
     let id_str = path.into_inner();
     let id = match Uuid::parse_str(&id_str) {
         Ok(u) => u,
@@ -133,10 +152,17 @@ pub async fn get_user(pool: web::Data<PgPool>, path: web::Path<String>) -> impl 
 
 /// `PUT /v1/users/{id}` — 更新 UserProfile
 pub async fn update_user(
+    req_http: HttpRequest,
     pool: web::Data<PgPool>,
+    checker: web::Data<Arc<RbacChecker>>,
     path: web::Path<String>,
     body: web::Json<UpdateUserRequest>,
 ) -> impl Responder {
+    if let Err((st, eb)) =
+        crate::rbac::enforce(checker.get_ref(), &req_http, "/v1/users/{id}", "PUT").await
+    {
+        return HttpResponse::build(st).json(eb);
+    }
     let id_str = path.into_inner();
     let id = match Uuid::parse_str(&id_str) {
         Ok(u) => u,
@@ -205,9 +231,35 @@ pub async fn update_user(
 // 这里的 app_data 是 `web::Data<PgPool>`（不是自定义 AppState）：三个 handler
 // 直接取连接池。`main.rs` 的 HttpServer 闭包是 `Fn`，每个 worker 线程各调一次，
 // 所以要**先 clone 再 move**（`web::Data` 内封 Arc，clone 廉价）。
+/// `GET /readyz` — 就绪探针，**必须**在 DB 不可用时返回 503
+///
+/// 2026-10-07 新增。此前本服务只有 `/healthz`，而 k3s 的
+/// `deploy/k3s/cats-core/user-service.yaml` 把 readinessProbe 指向了
+/// `/healthz` —— 那个端点恒返 200、不查任何依赖，于是**数据库挂了 Pod 照样
+/// Ready**，流量继续被派发进来。
+///
+/// 形状与状态码判定都收在 `cats_common::ReadyResponse`，各服务只负责真的探一下。
+pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
+    let db_ok = sqlx::query("SELECT 1")
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
+}
+
 pub fn configure_routes(cfg: &mut web::ServiceConfig, pool: web::Data<PgPool>) {
+    // RBAC 检查器放在 app_data 里，与 pool 一起注册 —— 测试与生产共用同一装配。
+    // 2026-10-07 新增：本服务此前三条业务路由**完全没有鉴权**（per §4.1x）。
+    let checker = web::Data::new(Arc::new(RbacChecker::new()));
     cfg.app_data(pool)
+        .app_data(checker)
         .route("/healthz", web::get().to(healthz))
+        .route("/readyz", web::get().to(readyz))
         .route("/v1/users", web::post().to(create_user))
         .route("/v1/users/{id}", web::get().to(get_user))
         .route("/v1/users/{id}", web::put().to(update_user));

@@ -390,6 +390,29 @@ pub async fn list_files(
 //
 // `main.rs` 的 HttpServer 闭包是 `Fn`（每个 worker 线程各调一次），
 // 要**先 clone 再 move**（`web::Data` 内封 Arc，clone 廉价）。
+
+/// `GET /readyz` — 就绪探针，**必须**在 DB 不可用时返回 503
+///
+/// 2026-10-07 新增。此前 k3s 的 `deploy/k3s/cats-core/file-service.yaml` 把
+/// readinessProbe 指向了 `/healthz`，而 `/healthz` 恒返 200 且不查任何依赖 ——
+/// 数据库挂了 Pod 照样 Ready，流量继续被派发进来，而每个请求都 500。
+///
+/// 形状与状态码判定都收在 `cats_common::ReadyResponse`，本服务只负责真的探一下。
+/// 注意这里探的是**数据库**而不是磁盘/PVC：文件元数据存在 DB 里，DB 不可用时
+/// 本服务一个 HTTP 请求都处理不了。
+pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
+    let db_ok = sqlx::query("SELECT 1")
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
+}
+
 pub fn configure_routes(
     cfg: &mut web::ServiceConfig,
     pool: web::Data<PgPool>,
@@ -398,6 +421,7 @@ pub fn configure_routes(
     cfg.app_data(pool)
         .app_data(rbac)
         .route("/healthz", web::get().to(healthz))
+        .route("/readyz", web::get().to(readyz))
         .route("/v1/files", web::post().to(upload_file))
         .route("/v1/files", web::get().to(list_files))
         .route("/v1/files/{id}", web::get().to(download_file))

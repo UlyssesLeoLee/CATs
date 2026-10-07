@@ -49,30 +49,22 @@ pub async fn healthz() -> impl Responder {
 }
 
 pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
-    #[derive(Serialize)]
-    struct ReadyResponse {
-        status: &'static str,
-        service: &'static str,
-        db: &'static str,
-    }
     let db_ok = sqlx::query(r#"SELECT 1"#)
         .execute(pool.get_ref())
         .await
         .is_ok();
-    let body = ReadyResponse {
-        status: if db_ok { "ready" } else { "not_ready" },
-        service: "audit-service",
-        db: if db_ok { "ok" } else { "fail" },
-    };
     // 2026-10-07 行为变更：DB 连不上时原来仍返回 **200**，只在 body 里写 `db:"fail"`。
     // k8s readinessProbe 只看状态码，于是库挂掉的 Pod 会被判 Ready 继续接流量。
-    // 与 worker-service 同步改（两者原本是逐字相同的两份实现）。
-    // 响应体保持不变，便于监控同时看状态码和 body。
-    if db_ok {
-        HttpResponse::Ok().json(body)
-    } else {
-        HttpResponse::ServiceUnavailable().json(body)
-    }
+    //
+    // 形状与状态码判定已收敛到 `cats_common::ReadyResponse`：此前本文件与
+    // worker-service 各有一份**逐字相同**的本地结构体，两份副本各自漂移过一次
+    // （worker 那份的 status 词与这里不同），而没有任何检查能发现。
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
 }
 
 #[derive(Deserialize)]

@@ -74,6 +74,57 @@ impl AppMeta {
     }
 }
 
+/// `/readyz` 的统一响应体（2026-10-07 新增）
+///
+/// # 为什么要放在共享 crate 里
+///
+/// 就绪探针的含义只有一个：**依赖不可用时必须返回非 200**。k8s 的
+/// `readinessProbe` 只看状态码、不看 body，所以"body 里写着 `db: "fail"`
+/// 但状态码仍是 200"等于骗调度器 —— Pod 会继续被派发流量，而它根本处理不了。
+///
+/// 各服务自己写一遍这个结构体会立刻漂移（字段、状态词、状态码各不相同），
+/// 于是"就绪探针"退化成"每个服务各写各的、其中几个在说谎"。所以形状收在这里、
+/// 判定收在 [`ReadyResponse::status_code`]，各服务只负责真的去探一下自己的依赖。
+///
+/// # 契约
+///
+/// - `db == "ok"` → `status: "ready"` → **200**
+/// - `db == "fail"` → `status: "not_ready"` → **503**
+///
+/// 503 是硬要求。任何把它改回 200 的改动，都会让该服务的 Pod 在数据库
+/// 故障期间继续接流量。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReadyResponse {
+    /// `ready` 或 `not_ready`
+    pub status: &'static str,
+    /// 服务名（crate 名）
+    pub service: &'static str,
+    /// 依赖探测结果：`ok` 或 `fail`
+    pub db: &'static str,
+}
+
+impl ReadyResponse {
+    /// 按探测结果构造。`service` 传 `env!("CARGO_PKG_NAME")`。
+    pub fn new(service: &'static str, dep_ok: bool) -> Self {
+        Self {
+            status: if dep_ok { "ready" } else { "not_ready" },
+            service,
+            db: if dep_ok { "ok" } else { "fail" },
+        }
+    }
+
+    /// 就绪判定：依赖不可用时返回 **503**，而不是 200。
+    ///
+    /// 这是本类型存在的唯一理由。
+    pub fn status_code(&self) -> u16 {
+        if self.db == "ok" {
+            200
+        } else {
+            503
+        }
+    }
+}
+
 /// 初始化 tracing subscriber（占位实现，M1 阶段替换为完整初始化器）
 ///
 /// M0 阶段：仅设置默认 subscriber，环境变量 `RUST_LOG` 控制级别。
@@ -112,5 +163,52 @@ mod tests {
         let json = serde_json::to_string(&meta).unwrap();
         assert!(json.contains("cats-common"));
         assert!(json.contains("0.1."));
+    }
+
+    // ---- ReadyResponse（/readyz 统一形状）----
+    //
+    // 这几条是"就绪探针不说谎"的最小保证。第一版实现把 `db: "fail"`
+    // 写在 body 里却仍返回 200，k8s 只看状态码，于是 Pod 继续接流量。
+
+    #[test]
+    fn ready_response_ok_yields_200() {
+        let r = ReadyResponse::new("audit-service", true);
+        assert_eq!(r.status, "ready");
+        assert_eq!(r.db, "ok");
+        assert_eq!(
+            r.status_code(),
+            200,
+            "依赖可用时必须 200，否则 Pod 永远进不了 Endpoints"
+        );
+    }
+
+    #[test]
+    fn ready_response_fail_yields_503_not_200() {
+        let r = ReadyResponse::new("audit-service", false);
+        assert_eq!(r.status, "not_ready");
+        assert_eq!(r.db, "fail");
+        assert_eq!(
+            r.status_code(),
+            503,
+            "依赖不可用时必须 503。返回 200 会让 k8s 继续往这个 Pod 派流量，\
+             而它连 DB 都连不上 —— 这正是 2026-10-07 修掉的那个缺陷"
+        );
+    }
+
+    #[test]
+    fn ready_response_serializes_with_stable_keys() {
+        let r = ReadyResponse::new("worker-service", true);
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&r).expect("serialize"))
+                .expect("valid json");
+        let mut keys: Vec<&str> = v
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["db", "service", "status"], "顶层键必须固定");
+        assert_eq!(v["service"], "worker-service");
     }
 }

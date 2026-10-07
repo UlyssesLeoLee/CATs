@@ -126,7 +126,8 @@ async fn e2e_upload_file_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/files")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(UploadFileRequest {
             workspace_id,
             filename: "test-e2e.txt".to_string(),
@@ -167,7 +168,8 @@ async fn e2e_get_file_metadata_returns_200() {
     // 先 upload
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/files")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(UploadFileRequest {
             workspace_id,
             filename: "meta.txt".to_string(),
@@ -182,7 +184,8 @@ async fn e2e_get_file_metadata_returns_200() {
     // 再 get metadata
     let get_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/files/{id}/metadata"))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let get_resp = actix_test::call_service(&app, get_req).await;
     assert_eq!(get_resp.status().as_u16(), 200);
@@ -207,7 +210,8 @@ async fn e2e_get_file_metadata_not_found_returns_404() {
     let non_existing = Uuid::new_v4();
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/files/{non_existing}/metadata"))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 404);
@@ -232,7 +236,8 @@ async fn e2e_download_file_returns_200() {
     // upload
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/files")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(UploadFileRequest {
             workspace_id,
             filename: "download.txt".to_string(),
@@ -247,7 +252,8 @@ async fn e2e_download_file_returns_200() {
     // download
     let dl_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/files/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let dl_resp = actix_test::call_service(&app, dl_req).await;
     assert_eq!(dl_resp.status().as_u16(), 200);
@@ -278,7 +284,8 @@ async fn e2e_list_files_returns_200() {
     for i in 0..2 {
         let req = actix_test::TestRequest::post()
             .uri("/v1/files")
-            .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+            .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+            .insert_header(("X-Cats-Roles", "Sponsor"))
             .set_json(UploadFileRequest {
                 workspace_id,
                 filename: format!("list-{i}.txt"),
@@ -293,7 +300,8 @@ async fn e2e_list_files_returns_200() {
     // list
     let list_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/files?workspace_id={workspace_id}&limit=10"))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let list_resp = actix_test::call_service(&app, list_req).await;
     assert_eq!(list_resp.status().as_u16(), 200);
@@ -321,7 +329,8 @@ async fn e2e_delete_file_returns_204() {
     // upload
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/files")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(UploadFileRequest {
             workspace_id,
             filename: "to-delete.txt".to_string(),
@@ -336,7 +345,8 @@ async fn e2e_delete_file_returns_204() {
     // delete
     let del_req = actix_test::TestRequest::delete()
         .uri(&format!("/v1/files/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .to_request();
     let del_resp = actix_test::call_service(&app, del_req).await;
     assert_eq!(del_resp.status().as_u16(), 204);
@@ -344,7 +354,8 @@ async fn e2e_delete_file_returns_204() {
     // 二次 delete → 404
     let del2_req = actix_test::TestRequest::delete()
         .uri(&format!("/v1/files/{id}"))
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .to_request();
     let del2_resp = actix_test::call_service(&app, del2_req).await;
     assert_eq!(del2_resp.status().as_u16(), 404);
@@ -352,7 +363,8 @@ async fn e2e_delete_file_returns_204() {
     // get metadata → 404
     let get_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/files/{id}/metadata"))
-        .insert_header(("Authorization", "Bearer cats-role:User"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "User"))
         .to_request();
     let get_resp = actix_test::call_service(&app, get_req).await;
     assert_eq!(get_resp.status().as_u16(), 404);
@@ -371,7 +383,8 @@ async fn e2e_upload_empty_filename_returns_400() {
     let app = actix_test::init_service(make_app(pool)).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/files")
-        .insert_header(("Authorization", "Bearer cats-role:Sponsor"))
+        .insert_header(("X-Cats-User-Id", "00000000-0000-0000-0000-000000000001"))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(UploadFileRequest {
             workspace_id: Uuid::new_v4(),
             filename: "".to_string(),

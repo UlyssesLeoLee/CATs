@@ -16,6 +16,7 @@ lint-compose.py — docker-compose-mvp.yml 的静态不变量检查
 
 import io
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -1645,6 +1646,469 @@ else:
          "（已排除 %s：helper 自身的单元测试用字面量模拟调用者角色是合法用法）"
          % (_rbac_files, _rbac_any_calls, "/".join(_RBAC_SKIP_CRATES)))
 
+# ---------------------------------------------------------------------
+# 规则 16: 边缘代理必须剥离客户端自带的身份头
+#
+# 2026-10-07 的架构级缺口（per BACKEND_STATUS §4.1x）。七个服务认的身份头是
+# `X-Cats-User-Id` / `X-Cats-Roles`。如果边缘**不剥离**来路不明的同名头，
+# 任何能连到 8080 的调用方只要带上一对这样的头就会被当成 Sponsor。
+# 这条规则守的就是"下游看到的身份值，只能来自 envoy 验签之后写进去的那一份"。
+#
+# 它刻意**不**只检查 jwt_authn 是否存在：jwt_authn 新版的 filter-wide sanitize
+# 只清理它自己 claim_to_headers 里声明过的头，且由 runtime feature 控制，
+# 旧版本没有这个行为。所以同时要求每条路由显式写 request_headers_to_remove。
+#
+# 另外要求 JWT 密钥仍是占位符 —— 把 base64url 密钥直接写进版本库是不可逆的
+# 泄露，一次提交就进历史了。
+
+_IDENTITY_HEADERS = ("x-cats-user-id", "x-cats-roles")
+_JWT_KEY_PLACEHOLDER = "__CATS_JWT_KEY_B64URL__"
+_PROTO_ROUTES_MIN = 8
+
+# 2026-10-07 修正：规则 16 原来只扫 `deploy/envoy-mvp.yaml` 这**一个**硬编码路径。
+# 后果很直接：k3s 生产配置（deploy/k3s/cats-edge/envoy-deployment.yaml）里
+# 当时一个 http_filter 都没有 —— 生产边缘完全不做认证、也不剥离身份头 ——
+# 而门禁一路绿灯。**一个只看一个文件的检查，证明不了"边缘是安全的"**，
+# 只能证明那一个文件是安全的。现在改成全仓发现：扫不到预期数量就 FAIL。
+#
+# 两类形态都要认：
+#   1) 独立的 envoy bootstrap（deploy/envoy-mvp.yaml）
+#   2) 嵌在 k8s ConfigMap 字符串里的（k3s cats-edge）
+# 只认第 1 种就等于看不见生产。
+_ENVOY_CONFIGS_MIN = 2
+
+
+def _load_yaml_safe(path):
+    """k8s 的 YAML 是多文档（--- 分隔），必须用 safe_load_all。
+
+    用 safe_load 会在第一个 `---` 处抛 "expected a single document"，
+    于是**整个文件被判为读不到** —— 而"读不到"会被当成"没有问题"，
+    正是这份门禁当初放过生产配置的原因之一。
+    """
+    try:
+        with io.open(path, encoding="utf-8", errors="replace") as fh:
+            return [d for d in yaml.safe_load_all(fh.read()) if d is not None]
+    except Exception as exc:  # noqa: BLE001
+        err("规则 16 失效：%s 解析失败（%s）" % (path, exc))
+        return None
+
+
+def _discover_envoy_configs():
+    """返回 [(显示名, envoy 文档或 None, 原始文本)]，覆盖仓库里**所有**边缘配置。"""
+    out = []
+    # 1) 独立 bootstrap（单文档）
+    p = os.path.join(ROOT, "deploy", "envoy-mvp.yaml")
+    if os.path.isfile(p):
+        docs = _load_yaml_safe(p)
+        with io.open(p, encoding="utf-8", errors="replace") as fh:
+            raw = fh.read()
+        out.append(("deploy/envoy-mvp.yaml", (docs or [None])[0], raw))
+    # 2) ConfigMap 内嵌
+    k3s = os.path.join(ROOT, "deploy", "k3s")
+    for dirpath, _dirs, files in os.walk(k3s):
+        for fn in sorted(files):
+            if not (fn.endswith(".yaml") or fn.endswith(".yml")):
+                continue
+            fp = os.path.join(dirpath, fn)
+            docs = _load_yaml_safe(fp)
+            if not docs:
+                continue
+            for item in docs:
+                if not isinstance(item, dict) or item.get("kind") != "ConfigMap":
+                    continue
+                data = item.get("data") or {}
+                if "envoy.yaml" not in data:
+                    continue
+                rel = os.path.relpath(fp, ROOT).replace("\\", "/")
+                try:
+                    inner = yaml.safe_load(data["envoy.yaml"])
+                except Exception as exc:  # noqa: BLE001
+                    err("规则 16 失效：%s 里 ConfigMap 的 envoy.yaml 解析失败（%s）"
+                        % (rel, exc))
+                    inner = None
+                out.append(("%s (ConfigMap/envoy.yaml)" % rel, inner, data["envoy.yaml"]))
+    return out
+
+
+def _envoy_routes_and_http_filters(doc):
+    """从 envoy bootstrap 里取 (http_filter 名列表, 路由列表)。
+
+    两层都要看：网络层 filter（http_connection_manager）在 filters 列表里，
+    它的 **HTTP** filter（jwt_authn / router）在 typed_config.http_filters 里。
+    只扫一层就会得出「没有 jwt_authn」的错误结论。
+    """
+    http_filters, routes = [], []
+    sr = doc.get("static_resources") or {}
+    for lst in sr.get("listeners") or []:
+        for fc in (lst.get("filter_chains") or []):
+            for f in (fc.get("filters") or []):
+                tc = f.get("typed_config") or {}
+                http_filters.extend(
+                    (h.get("name") or "") for h in (tc.get("http_filters") or []))
+                rc = tc.get("route_config") or {}
+                for vh in (rc.get("virtual_hosts") or []):
+                    routes.extend(vh.get("routes") or [])
+    return http_filters, routes
+
+
+if sys.argv[2:]:  # 保留位置参数：变异验证需要单独喂一份配置进来
+    _argv_docs = _load_yaml_safe(sys.argv[2])
+    if os.path.isfile(sys.argv[2]):
+        with io.open(sys.argv[2], encoding="utf-8", errors="replace") as fh:
+            _envoy_targets = [("<argv[2]>", (_argv_docs or [None])[0], fh.read())]
+    else:
+        _envoy_targets = [("<argv[2]>", None, "")]
+else:
+    _envoy_targets = _discover_envoy_configs()
+
+if len(_envoy_targets) < _ENVOY_CONFIGS_MIN:
+    err("规则 16 失效：全仓只发现 %d 份边缘配置（阈值 %d）—— "
+        "扫描路径写错了。**扫不到不等于没有问题**："
+        "生产配置多半就在没被认出来的那份里。"
+        % (len(_envoy_targets), _ENVOY_CONFIGS_MIN))
+
+_envoy_checked = 0
+for _name, _doc, _raw in _envoy_targets:
+    if _doc is None:
+        err("规则 16：%s 读不到 envoy bootstrap —— 该边缘的身份头将无人剥离" % _name)
+        continue
+    _http_filters, _routes = _envoy_routes_and_http_filters(_doc)
+    _envoy_checked += 1
+
+    if not any("jwt_authn" in n for n in _http_filters):
+        err("规则 16：%s 没有 `jwt_authn` 过滤器 —— 它不验签 JWT，也就不会注入 "
+            "`X-Cats-*`，于是 ① 七个服务的受保护端点经网关会全部 401；"
+            "② 那个角色头变成客户端可自填的字段。per BACKEND_STATUS §4.1x" % _name)
+
+    if len(_routes) < _PROTO_ROUTES_MIN:
+        err("规则 16 失效：%s 只读到 %d 条 envoy 路由（阈值 %d）—— "
+            "扫描路径大概率写错了。**空结果不等于没有问题**"
+            % (_name, len(_routes), _PROTO_ROUTES_MIN))
+    else:
+        for _r in _routes:
+            _m = _r.get("match") or {}
+            _prefix = _m.get("prefix") or _m.get("path") or "?"
+            _rm = [_h.lower() for _h in (_r.get("request_headers_to_remove") or [])]
+            _missing = [h for h in _IDENTITY_HEADERS if h not in _rm]
+            if _missing:
+                err("规则 16：%s 的路由 `%s` 没有剥离客户端自带的头 %s —— "
+                    "调用方自填 `X-Cats-Roles: Sponsor` 就能冒充 Sponsor。"
+                    "在该路由上加 `request_headers_to_remove: [\"x-cats-user-id\", "
+                    "\"x-cats-roles\"]`" % (_name, _prefix, ", ".join(_missing)))
+
+    if "k:" in _raw and _JWT_KEY_PLACEHOLDER not in _raw:
+        err("规则 16：%s 的 inline_jwks 里出现了具体密钥值且不是占位符 %s —— "
+            "JWT 共享密钥不得进版本库（提交一次就永远留在 git 历史里）。"
+            "改回占位符，由部署时注入" % (_name, _JWT_KEY_PLACEHOLDER))
+
+if _envoy_checked:
+    note("规则 16 检查了 %d 份边缘配置（共发现 %d 份）的身份头剥离 + jwt_authn "
+         "存在性 + JWT 密钥仍是占位符"
+         % (_envoy_checked, len(_envoy_targets)))
+
+# 规则 17: 边缘路由的后端落点必须与真正拥有该路径的 crate 一致
+#
+# 2026-10-07 查实的实缺陷（per BACKEND_STATUS §4.1z）：envoy 里
+# `- match: { prefix: "/v1/users" }` 指向 `auth_service`，k3s 那份还带着
+# 注释 `# user nested in auth`。**该注释是假的** —— user-service 是
+# cats-core / compose 里独立的 Deployment，只注册 /healthz 与 /v1/users*，
+# 而 auth-service 只注册 /healthz 与 /v1/auth/*，根本不认识 /v1/users。
+# 于是所有 /v1/users 流量打到 auth-service 后 404，user-service 从来没被
+# 边缘真正路由到过（从 c699b73 引入边缘配置起就一直是这样）。
+#
+# 也就是说：user-service 里那套 RBAC 在 MVP 部署下**根本执行不到** ——
+# 补丁是对的，但流量到不了。同理，任何"某服务有鉴权"的说法，
+# 都要先确认边缘真能路由到它，否则等于没做。
+#
+# 这条规则把「前缀归谁」和「cluster 指向谁」摆在一起对拍，不一致就报。
+# 它不需要业务语义，只看两件事：
+#   1. 路由引用的 cluster 必须存在
+#   2. 该前缀在 crates/ 里注册路由的 crate，必须与 cluster 的后端主机同名
+
+# 刻意不暴露到公网边缘的内部端点。列在这里是因为"没有路由"是设计决定，
+# 不该和"路由指错"混在一起报错 —— 混在一起会逼人把告警静音。
+_INTENTIONAL_INTERNAL_ONLY = ("/v1/worker/tick", "/internal/")
+
+
+def _crate_route_owners():
+    """crate 名 → 它注册的路由字面量集合。"""
+    owners = {}
+    crates_dir = os.path.join(ROOT, "crates")
+    for crate in sorted(os.listdir(crates_dir)):
+        cdir = os.path.join(crates_dir, crate)
+        if not os.path.isdir(cdir):
+            continue
+        rs = set()
+        for fn in ("src/handlers.rs", "src/main.rs", "src/lib.rs", "src/app.rs"):
+            fp = os.path.join(cdir, fn)
+            if not os.path.isfile(fp):
+                continue
+            with io.open(fp, encoding="utf-8", errors="replace") as fh:
+                rs.update(re.findall(r'\.route\(\s*"([^"]+)"', fh.read()))
+            if rs:
+                break
+        if rs:
+            owners[crate] = rs
+    return owners
+
+
+def _cluster_backends(doc):
+    """cluster 名 → 后端主机名（去掉 k8s 的 .svc.cluster.local 后缀与端口）。"""
+    out = {}
+    for c in (doc.get("static_resources") or {}).get("clusters") or []:
+        name = c.get("name")
+        if not name:
+            continue
+        try:
+            ep = (c["load_assignment"]["endpoints"][0]["lb_endpoints"][0]
+                  ["endpoint"]["address"]["socket_address"])
+            out[name] = ep["address"]
+        except (KeyError, IndexError, TypeError):
+            out[name] = None  # 存在但解不出后端，交给下面报错
+    return out
+
+
+_owners = _crate_route_owners()
+if len(_owners) < 10:
+    err("规则 17 失效：只从 crates/ 读到 %d 个有路由的 crate（阈值 10）—— "
+        "扫描路径写错了。**空结果不等于没有问题**" % len(_owners))
+
+_17_total = 0
+for _name, _doc, _raw in _envoy_targets:
+    if _doc is None:
+        continue
+    _http_filters, _routes = _envoy_routes_and_http_filters(_doc)
+    _backends = _cluster_backends(_doc)
+    for _r in _routes:
+        _m = _r.get("match") or {}
+        _prefix = _m.get("prefix") or _m.get("path")
+        _cl = ((_r.get("route") or {}).get("cluster"))
+        if not _prefix or not _cl:
+            continue  # direct_response（如 /healthz），没有后端可对拍
+        _17_total += 1
+        if _cl not in _backends:
+            err("规则 17：%s 的路由 `%s` 指向 cluster `%s`，但配置里没有这个 "
+                "cluster —— envoy 启动即失败" % (_name, _prefix, _cl))
+            continue
+        _host = _backends[_cl] or ""
+        _short = _host.split(".")[0]
+        _cands = sorted(
+            c for c, rs in _owners.items()
+            if any(r.startswith(_prefix) for r in rs)
+        )
+        if not _cands:
+            if not any(_prefix.startswith(p) for p in _INTENTIONAL_INTERNAL_ONLY):
+                note("规则 17：%s 的路由 `%s` 指向 %s，但 crates/ 里没有任何 crate "
+                     "注册了匹配该前缀的路由" % (_name, _prefix, _cl))
+            continue
+        if _short not in _cands:
+            err("规则 17：%s 的路由 `%s` 指向 cluster `%s`（后端 %s），"
+                "但该前缀是由 %s 注册的 —— 流量会送到不认识这个路径的容器上，"
+                "结果是 404，而且 %s 上的鉴权永远不会被执行到"
+                % (_name, _prefix, _cl, _short, "/".join(_cands), "/".join(_cands)))
+
+if _17_total < 8:
+    err("规则 17 失效：只对拍了 %d 条 envoy 路由（阈值 8）—— "
+        "扫描路径写错了。**空结果不等于没有问题**" % _17_total)
+else:
+    note("规则 17 对拍了 %d 条 envoy 路由的 cluster 落点与 crates/ 的路由归属"
+         % _17_total)
+
+# 规则 18: readinessProbe 不许指向不查依赖的 `/healthz`
+#
+# 2026-10-07 查实（per BACKEND_STATUS §4.1aa）：k3s 的 12 个 Deployment 里，
+# **8 个**的 readinessProbe 指向 `/healthz`。而 `/healthz` 恒返 200、不碰任何
+# 依赖 —— 于是**数据库挂了 Pod 依然被判 Ready，流量继续被派发进来**，每个
+# 请求 500。源码侧 17 个服务里 15 个压根没有 `/readyz`。
+#
+# 这不是"少个端点"，是就绪语义整个失效：Pod 在故障期间不会摘流量。
+#
+# 代价不对称，所以必须钉死：
+# - readiness 查依赖、失败返 503  →  DB 故障时摘流量（正确）
+# - liveness 不查依赖          →  DB 故障**不该**重启进程，重启解决不了 DB，
+#                                 只会把一次降级放大成 CrashLoop
+# 所以 liveness 留在 /healthz 是**对的**，这条规则只管 readiness。
+#
+# 用 YAML 解析器读结构，不用正则抠块 —— 正则切块在缩进宽度不同的文件上会
+# 漏掉整个 Deployment，而漏掉的那些会被当成"没问题"。
+
+
+def _k3s_deployments():
+    """(Deployment 名, readiness 探针描述) 列表。"""
+    out = []
+    for dirpath, _d, files in os.walk(os.path.join(ROOT, "deploy", "k3s")):
+        for fn in sorted(files):
+            if not (fn.endswith(".yaml") or fn.endswith(".yml")):
+                continue
+            fp = os.path.join(dirpath, fn)
+            docs = _load_yaml_safe(fp)
+            if not docs:
+                continue
+            for d in docs:
+                if not isinstance(d, dict) or d.get("kind") != "Deployment":
+                    continue
+                name = (d.get("metadata") or {}).get("name")
+                for c in (((d.get("spec") or {}).get("template") or {}).get("spec")
+                          or {}).get("containers") or []:
+                    out.append((name, c.get("readinessProbe"), fn))
+    return out
+
+
+def _probe_desc(p):
+    if not isinstance(p, dict):
+        return "（无 readinessProbe）"
+    if "httpGet" in p:
+        return "httpGet " + str((p["httpGet"] or {}).get("path"))
+    if "tcpSocket" in p:
+        return "tcpSocket " + str((p["tcpSocket"] or {}).get("port"))
+    for k in ("exec", "grpc"):
+        if k in p:
+            return k
+    return "?"
+
+
+_deploys = _k3s_deployments()
+_18_checked = 0
+if len(_deploys) < 8:
+    err("规则 18 失效：只读到 %d 个 k8s Deployment（阈值 8）—— "
+        "扫描路径写错了。**扫不到不等于没有问题**" % len(_deploys))
+for _dname, _probe, _dfile in _deploys:
+    _path = None
+    if isinstance(_probe, dict) and "httpGet" in _probe:
+        _path = (_probe.get("httpGet") or {}).get("path")
+    if _path == "/healthz":
+        err("规则 18：Deployment `%s`（%s）的 readinessProbe 指向 `/healthz` —— "
+            "那个端点恒返 200 且不查任何依赖，**数据库挂了 Pod 依然 Ready**，"
+            "流量继续被派发进来然后每个请求 500。就绪探针必须查依赖且失败返 503。"
+            % (_dname, _dfile))
+        continue
+    if _path is None:
+        continue  # tcpSocket / exec：不归这条规则管
+    _18_checked += 1
+    if _path == "/readyz" and _dname in _owners:
+        if "/readyz" not in _owners[_dname]:
+            err("规则 18：Deployment `%s` 的 readinessProbe 指向 `/readyz`，"
+                "但 crate `crates/%s` 里没有注册这个路由 —— 探针会永远 404，"
+                "Pod 永远进不了 Endpoints" % (_dname, _dname))
+
+if _18_checked:
+    note("规则 18 检查了 %d 个 Deployment 的 readinessProbe 指向（共读到 %d 个 "
+         "Deployment）" % (_18_checked, len(_deploys)))
+
+# 规则 19: compose 的 healthcheck 不得依赖运行时镜像里没有的程序
+#
+# 这条守的是一个**还没发生、但一发生就会全盘变红**的坑。
+#
+# 仓库里有**两套**运行时镜像，别混（per BACKEND_STATUS §4.1ac）：
+#   deploy/Dockerfile.runtime  → compose 用，基础镜像 debian:bookworm-slim
+#                                 装了 ca-certificates / libssl3 / libpq5，
+#                                 **有 /bin/sh，但没有 curl / wget**
+#   deploy/docker/Dockerfile.rust → ci-docker-build 用，distroless/cc-debian12
+#                                 **连 shell 都没有**
+#
+# 所以照着网上最常见的写法给这些服务加 healthcheck：
+#     test: ["CMD", "curl", "-f", "http://localhost:8080/readyz"]
+#     test: ["CMD-SHELL", "wget -qO- ..."]
+# 会让容器**永远 unhealthy** —— 不是"探针偶尔失败"，是二进制不存在，
+# 于是 `depends_on: condition: service_healthy` 永远不满足、整套 compose 起不来。
+# 而这类失败在 YAML 上完全合法，`docker compose config` 也不会拦。
+#
+# 顺带说明为什么 k8s 没这个问题：readinessProbe 是 **kubelet 在容器外**发起的
+# HTTP 请求，不需要容器里装任何东西。所以 k8s 探针与 compose healthcheck
+# 的可行性完全是两回事。
+
+with io.open(COMPOSE, encoding="utf-8", errors="replace") as _f:
+    _compose_raw = _f.read()
+
+
+def _cargo_base_services(raw):
+    """找出在 raw 里写了 `<<: *cargo-base` 的 service 名。
+
+    逐行扫描，**不用正则跨行匹配**。第一版写成
+        ^  (name):\\s*\\n(?:^[ \\t]+.*\\n)*?^[ \\t]+<<:\\s*\\*cargo-base\\s*$
+    —— 外层 `(?:...)*?` 套着 `.*\\n`，作用在 40KB 的文件上会**灾难性回溯**：
+    lint 直接卡死（我实测挂到 1370 秒 CPU 才被杀掉，输出文件 0 字节）。
+    这和本文件里其他几次扫描器事故是同一个形状：**别用正则去扫结构**。
+    """
+    found, cur = set(), None
+    for line in raw.splitlines():
+        m = re.match(r"^  ([A-Za-z][\w.-]*):\s*$", line)
+        if m:
+            cur = m.group(1)
+            continue
+        if re.match(r"^[ \t]+<<:\s*\*cargo-base\s*$", line) and cur:
+            found.add(cur)
+    return found
+
+
+# 只管**我们自己用 Dockerfile.runtime 构建**的那批镜像。
+# postgres / kafka 用的是官方镜像，它们镜像里有什么工具不由本仓库决定 ——
+# 对它们套用"运行时镜像里没有 curl"是误报。
+_our_images = _cargo_base_services(_compose_raw)
+if len(_our_images) < 10:
+    err("规则 19 失效：只认出 %d 个使用 `<<: *cargo-base` 的 service（阈值 10）—— "
+        "扫描路径写错了。**扫不到不等于没有问题**" % len(_our_images))
+
+_http_clients = ("curl", "wget")
+_runtime_dockerfile = os.path.join(ROOT, "deploy", "Dockerfile.runtime")
+_runtime_src = ""
+if os.path.isfile(_runtime_dockerfile):
+    with io.open(_runtime_dockerfile, encoding="utf-8", errors="replace") as _f:
+        _runtime_src = _f.read()
+# apt-get 的包列表常写在反斜杠续行里：
+#     RUN apt-get update && apt-get install -y --no-install-recommends \
+#             ca-certificates libssl3 libpq5 && rm -rf ...
+# `install` 与包名**不在同一行**，所以 `[^\n]*` 一律匹配不上，
+# 第一版因此把"镜像里明明装了 curl"也判成没装（变异 M4 抓出来的）。
+# 先把续行接成一行再搜。
+_runtime_joined = re.sub(r"\\\s*\n\s*", " ", _runtime_src)
+_installed_clients = [
+    c for c in _http_clients
+    if re.search(r"apt-get\b.*?\binstall\b.*?(?<![\w-])%s(?![\w-])" % c, _runtime_joined)
+]
+
+_checked_hc = []
+for _sname in sorted(_our_images):
+    _svc = (services or {}).get(_sname) or {}
+    _hc = _svc.get("healthcheck")
+    if not _hc:
+        continue
+    _test = _hc.get("test")
+    if not _test:
+        continue
+    _joined = " ".join(_test) if isinstance(_test, list) else str(_test)
+    _checked_hc.append(_sname)
+    for _c in _http_clients:
+        # 只在真正把该程序当作可执行文件时才报（避免误伤 URL 里的字符）
+        if not re.search(r"(^|[\s\"'])%s([\s\"']|$)" % _c, _joined):
+            continue
+        # 镜像里**确实装了**它就别报 —— 否则这条规则会变成"不许用 curl"，
+        # 而正确做法恰恰可以是"在 Dockerfile.runtime 里装 curl"。
+        # 第一版算出了 `_installed_clients` 却在判断里没用它，
+        # 是变异验证 M4（装了 curl 仍被拦）抓出来的。
+        if _c in _installed_clients:
+            continue
+        err("规则 19：compose service `%s` 的 healthcheck 调用了 `%s`，"
+            "但 deploy/Dockerfile.runtime 的运行时镜像只装了 "
+            "ca-certificates / libssl3 / libpq5 —— **镜像里没有 %s**。"
+            "该 healthcheck 会让容器永远 unhealthy，"
+            "`depends_on: service_healthy` 随之永不满足。"
+            "要么在 Dockerfile.runtime 里装它，要么改用镜像里已有的程序，"
+            "要么改用 k8s 探针（kubelet 在容器外发起，不需要容器内有客户端）"
+            % (_sname, _c, _c))
+
+if not _runtime_src:
+    err("规则 19 失效：读不到 deploy/Dockerfile.runtime —— "
+        "无法判断运行时镜像里有哪些程序，**扫描不到不等于没有问题**")
+else:
+    # 刻意报告**扫了几个**而不是"有几个带 healthcheck"。
+    # 今天后者是 0（自建镜像的服务一个 healthcheck 都没有），而
+    # "扫了 0 个所以没问题"和"扫了 12 个、其中 0 个有问题"输出完全一样 ——
+    # 这是本文件里反复出现的那个形状：空结果看起来像结论。
+    note("规则 19 扫了 %d 个自建镜像 service（用 `<<: *cargo-base`），"
+         "其中 %d 个带 healthcheck；Dockerfile.runtime 里可用的 HTTP 客户端: %s"
+         % (len(_our_images), len(_checked_hc), _installed_clients or "无"))
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -1686,6 +2150,14 @@ print("  OK    规则 13 %d 条 k8s/helm 探针的路径都在对应服务的源
 print("  OK    规则 14 doc/ 下 %d 个 .md 里没有统一前的 /healthz 形状" % _doc_files)
 print("  OK    规则 15 全仓 %d 处 `require_roles` 里没有把角色字面量当调用者角色传"
       % _rbac_any_calls)
+print("  OK    规则 16 %d 份边缘配置：剥离客户端身份头 + jwt_authn 在位 + JWT 密钥仍是占位符"
+      % _envoy_checked)
+print("  OK    规则 17 %d 条 envoy 路由的 cluster 落点与 crates/ 的路由归属一致"
+      % _17_total)
+print("  OK    规则 18 %d 个 Deployment 的 readinessProbe 不指向不查依赖的 /healthz"
+      % _18_checked)
+print("  OK    规则 19 %d 个自建镜像 service 的 healthcheck 不依赖运行时镜像里没有的程序"
+      % len(_our_images))
 print("")
 for n in notes:
     print("  提醒  " + n)

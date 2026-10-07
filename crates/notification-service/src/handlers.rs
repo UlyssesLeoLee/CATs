@@ -320,6 +320,30 @@ pub struct StreamQuery {
 // "healthz 过、其余全挂"，极易误判成 RBAC 或事件总线坏了。
 //
 // `main.rs` 的 HttpServer 闭包是 `Fn`，要**先 clone 再 move**。
+
+/// `GET /readyz` — 就绪探针，**必须**在 DB 不可用时返回 503
+///
+/// 2026-10-07 新增。此前 k3s 的
+/// `deploy/k3s/cats-core/notification-service.yaml` 把 readinessProbe 指向了
+/// `/healthz`，而 `/healthz` 恒返 200 且不查任何依赖 —— 数据库挂了 Pod 照样
+/// Ready，流量继续被派发进来，而每个请求都 500。
+///
+/// 本服务另有两个 app_data（事件总线、RBAC checker），但**就绪只看数据库**：
+/// 通知的增删改查全部落 notification_db，DB 不可用时一个 HTTP 请求都处理不了。
+/// 事件总线是纯内存 broadcast channel，它"不可用"不会让 HTTP 请求失败。
+pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
+    let db_ok = sqlx::query("SELECT 1")
+        .execute(pool.get_ref())
+        .await
+        .is_ok();
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
+}
+
 pub fn configure_routes(
     cfg: &mut web::ServiceConfig,
     pool: web::Data<PgPool>,
@@ -330,6 +354,7 @@ pub fn configure_routes(
         .app_data(bus)
         .app_data(rbac)
         .route("/healthz", web::get().to(healthz))
+        .route("/readyz", web::get().to(readyz))
         .route("/v1/notifications", web::get().to(list_notifications))
         .route("/v1/notifications", web::post().to(create_notification))
         .route(

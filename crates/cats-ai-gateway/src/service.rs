@@ -60,6 +60,24 @@ impl AiGatewayService {
         &self.compliance
     }
 
+    /// 本服务当前能否服务（`/readyz` 的判定源，2026-10-07 新增）
+    ///
+    /// # 为什么不探上游 LLM
+    ///
+    /// 本 crate 是外部 LLM provider 的网关，`Cargo.toml` 里**没有** `sqlx`，
+    /// 也没有任何连接池：它不持有数据库。唯一的"依赖"是 provider 列表，而
+    /// 探它意味着对 OpenAI / Anthropic / DeepSeek 发网络请求 —— 第三方
+    /// 限流或抖动就会把整个网关摘出轮转，把局部上游故障放大成全站故障，
+    /// 严格比现状更差。所以这里只判定**自身启动状态**：router 里有没有
+    /// 可路由的 provider。空 router ⇒ 每个请求必然 `ProviderNotFound`。
+    ///
+    /// 相应地，`/readyz` body 里的 `db` 字段（`cats_common::ReadyResponse`
+    /// 的固定形状，本服务**没有** DB）承载的是上面这个启动态判定结果。
+    /// 见 `api::readyz` 的同款说明。
+    pub fn is_serving(&self) -> bool {
+        self.router.is_routable()
+    }
+
     /// 业务级 chat 调用:
     /// 1. 合规预检 (按 model 字段命中的 provider, 必须在合规模式内)
     /// 2. 配额预检 (estimated tokens = prompt_tokens 启发式估算)

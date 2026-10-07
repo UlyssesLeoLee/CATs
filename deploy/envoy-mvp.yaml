@@ -1,4 +1,16 @@
 # envoy-mvp.yaml - CATs MVP 边缘代理 (per 9/1 用户偏好 envoy 独立 deployment)
+#
+# 2026-10-07 加边缘鉴权。此前本文件是**纯 L7 路由**：没有 jwt_authn、没有
+# ext_authz、没有 request_headers_to_add、也没有 request_headers_to_remove。
+# 于是两个后果（per BACKEND_STATUS §4.1x）：
+#   ① 七个服务认的凭据头（X-Cats-*）根本没人注入 → 正常流量全部 401；
+#   ② 没人剥离来路不明的同名头 → 客户端自填 `X-Cats-Roles: Sponsor` 即被当作
+#      Sponsor。**这比任何单点代码缺陷都严重。**
+#
+# 现在：jwt_authn 验签 → 注入 X-Cats-*；每条路由再显式剥离客户端自带的同名头。
+# 两者都做是有意的冗余：jwt_authn 新版的 filter-wide sanitize 只清理它自己
+# claim_to_headers 里声明过的头，且受 runtime feature 控制；路由上的
+# request_headers_to_remove 不依赖任何版本行为。
 static_resources:
   listeners:
     - name: ingress_http
@@ -15,25 +27,75 @@ static_resources:
                     - name: cats_api
                       domains: ["*"]
                       routes:
+                        # 注意每条路由都带 request_headers_to_remove ——
+                        # 剥离客户端自带的身份头，让下游只能看到 envoy 注入的值。
                         - match: { prefix: "/v1/auth/" }
                           route: { cluster: auth_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
+                        # 2026-10-07 修正：原本指向 auth_service。user-service 在
+                        # compose 里是独立容器（内部监听 8080，主机 8082），
+                        # auth-service 根本没注册 /v1/users，所有流量到那儿必 404。
                         - match: { prefix: "/v1/users" }
-                          route: { cluster: auth_service }
+                          route: { cluster: user_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/v1/projects" }
                           route: { cluster: project_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/v1/tasks" }
                           route: { cluster: task_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/v1/files" }
                           route: { cluster: file_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/v1/notifications" }
                           route: { cluster: notification_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/v1/reports" }
                           route: { cluster: report_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/v1/audit-logs" }
                           route: { cluster: audit_service }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/healthz" }
                           direct_response: { status: 200, body: { inline_string: "ok" } }
+                          request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                 http_filters:
+                  # ---- 边缘鉴权（2026-10-07 新增）----
+                  - name: envoy.filters.http.jwt_authn
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                      providers:
+                        - name: cats_auth
+                          # **刻意不配 issuer / audiences**：
+                          # auth-service 签发的 Claims 里既没有 `iss` 也没有 `aud`
+                          # （只有 sub/username/exp/iat/jti/token_type/roles/roles_csv），
+                          # 配上去会让**每一个**请求都因 issuer/audience 不匹配被拒。
+                          # 这里靠 HS256 签名本身保证"只能是我们签的"。
+                          jwks:
+                            inline_jwks:
+                              keys:
+                                - kty: oct
+                                  kid: cats-hs256
+                                  # 占位符：由 compose 启动时用 JWT_SECRET 的 base64url 替换。
+                                  # 密钥**不进版本库**（per 仓库安全约束：凭据不硬编码）。
+                                  k: "__CATS_JWT_KEY_B64URL__"
+                          forward: true
+                          claim_to_headers:
+                            # sub 是字符串 → 原样拷贝。
+                            - header_name: x-cats-user-id
+                              claim_name: sub
+                            # roles_csv 是**字符串** → 原样拷贝。
+                            # 注意：不能直接映射 `roles`，因为它是数组，而 envoy 的
+                            # claim_to_headers 对 array/object 是「序列化成 JSON 再
+                            # Base64 编码」，下游按逗号切分必然解析不出角色 → 全员 401。
+                            # 这也是 auth-service 为什么要多签一个 roles_csv claim。
+                            - header_name: x-cats-roles
+                              claim_name: roles_csv
+                      rules:
+                        # 认证类端点自身不能要求 JWT，否则无法登录。
+                        - match: { prefix: "/v1/auth/" }
+                        - match: { prefix: "/v1/" }
+                          requires: any
                   # router filter 必须带 typed_config，否则 Envoy 启动即失败：
                   #   error initializing config '/etc/envoy/envoy.yaml':
                   #   Didn't find a registered implementation for
@@ -53,6 +115,15 @@ static_resources:
         endpoints:
           - lb_endpoints:
               - endpoint: { address: { socket_address: { address: auth-service, port_value: 8080 } } }
+    - name: user_service
+      connect_timeout: 1s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: user_service
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: user-service, port_value: 8080 } } }
     - name: project_service
       connect_timeout: 1s
       type: STRICT_DNS

@@ -425,6 +425,27 @@ services:
     image: envoyproxy/envoy:v1.31-latest
     container_name: cats-mvp-envoy
     restart: unless-stopped
+    # 2026-10-07：JWT 密钥不进版本库。envoy-mvp.yaml 里只有占位符
+    # `__CATS_JWT_KEY_B64URL__`，启动时用 JWT_SECRET 现算 base64url 替换。
+    # 之所以"现算"而不是让使用者再提供一份 base64 变体：auth-service 用的是
+    # 原始 JWT_SECRET，两边必须同源 —— 让操作者手工同步两份是迟早会不同步的。
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ -z "$${JWT_SECRET:-}" ]; then
+          echo "ERROR: JWT_SECRET must be set (same value auth-service uses)" >&2
+          exit 1
+        fi
+        # base64url = base64 后替换 +/ 为 -_ 并去掉 padding。
+        # envoy 的 inline_jwks 对 HS256 要求的就是这个编码。
+        CATS_JWT_KEY_B64URL=$$(printf '%s' "$$JWT_SECRET" | base64 -w0 | tr '+/' '-_' | tr -d '=')
+        sed "s|__CATS_JWT_KEY_B64URL__|$$CATS_JWT_KEY_B64URL|" \
+          /etc/envoy/envoy.yaml > /tmp/envoy.yaml
+        exec envoy -c /tmp/envoy.yaml
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set (same value auth-service uses)}
     volumes:
       - ./envoy-mvp.yaml:/etc/envoy/envoy.yaml:ro
     ports:

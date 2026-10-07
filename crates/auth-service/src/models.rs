@@ -65,6 +65,21 @@ pub struct Claims {
     pub token_type: String, // "access" or "refresh"
     #[serde(default)]
     pub roles: Vec<String>, // 用户角色列表 (per ULYS-149 第二层缺口: BFF principal.roles 依赖此字段)
+    /// 逗号分隔的角色串，供**边缘代理**（envoy `jwt_authn`）直接注入
+    /// `X-Cats-Roles` 用。
+    ///
+    /// 2026-10-07 新增。为什么不直接用 `roles`：`jwt_authn` 的 `claim_to_headers`
+    /// 对 **string / int / double / bool 是原样拷贝**，而对 **array / object 会
+    /// 序列化成 JSON 再 Base64 编码**（见 envoy config.proto 对 claim_to_headers
+    /// 的说明）。`roles` 是数组，直接映射过去会变成
+    /// `WyJVc2VyIiwiU3BvbnNvciJd`，下游按逗号切分必然解析不出任何角色 →
+    /// 全员 401。
+    ///
+    /// 所以同一个语义在这里存两份：`roles`（数组，给 Rust 侧消费，如 cats-bff 的
+    /// `principal.roles`）与 `roles_csv`（字符串，给边缘注入）。两者由
+    /// `issue_jwt` 从同一份入参派生，不存在两份真相。
+    #[serde(default)]
+    pub roles_csv: String,
 }
 
 /// DB 实体: auth_db.users_credential

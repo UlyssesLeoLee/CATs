@@ -48,31 +48,24 @@ pub async fn healthz() -> impl Responder {
 }
 
 pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
-    #[derive(Serialize)]
-    struct ReadyResponse {
-        status: &'static str,
-        service: &'static str,
-        db: &'static str,
-    }
     let db_ok = sqlx::query(r#"SELECT 1"#)
         .execute(pool.get_ref())
         .await
         .is_ok();
-    let body = ReadyResponse {
-        status: if db_ok { "ready" } else { "not_ready" },
-        service: "worker-service",
-        db: if db_ok { "ok" } else { "fail" },
-    };
     // 2026-10-07 行为变更：DB 连不上时原来仍返回 **200**，只在 body 里写 `db:"fail"`。
     // 而 k8s 的 readinessProbe 只看状态码 —— `deploy/k3s/cats-core/worker-service.yaml:33`
     // 正是拿 `/readyz` 当 readinessProbe，于是数据库挂掉的 Pod 照样被判 Ready
     // 继续接流量。就绪探针说谎等于故障静默放大，所以失败时必须给 503。
-    // 响应体保持不变，便于监控同时看状态码和 body。
-    if db_ok {
-        HttpResponse::Ok().json(body)
-    } else {
-        HttpResponse::ServiceUnavailable().json(body)
-    }
+    //
+    // 形状与状态码判定已收敛到 `cats_common::ReadyResponse`：此前本文件与
+    // audit-service 各有一份**逐字相同**的本地结构体，两份副本会各自漂移，
+    // 而没有任何检查能发现。
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), db_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
 }
 
 /// 允许手动触发 tick 的角色（显式白名单）。

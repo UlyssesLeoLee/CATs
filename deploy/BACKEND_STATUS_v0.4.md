@@ -2085,6 +2085,25 @@ openapi 的 `servers[0].url` 是 `https://api.cats.internal/v1`，而 `/healthz`
 根本不代理。`/auth/login` 因为代码里确实是 `/v1/auth/login` 所以对得上，
 `/healthz` 对不上。缺一份"envoy 是否重写前缀"的权威说明，故只记录不判定。
 
+#### 追加待拍板（2026-10-07，由 §4.1ad 挖出）
+
+**4-bis. user-service 的行级归属：任何已登录用户都能读任意用户档案。**
+§4.1y 写了"记入 §4.1u"，但本节原先并没有对应条目，这里补上以免悬空引用。
+权限矩阵里 `Role::User` 对 `Resource::User × Read` 是有权限的，而
+`user-service/src/rbac.rs` **只做资源 × 操作级鉴权，没有行级判断**。
+当前行为由 `plain_user_can_read_user_resource` 钉住，并注明
+"这是如实记录，不是认为它对"。
+
+**5. `User × Create` / `User × Update` 在权限矩阵里只有 Sponsor 持有** ——
+普通用户无法自助注册、也无法修改自己的档案。详见 §4.1ad 的逐角色对拍表。
+这不是本轮引入的（`plain_user_cannot_create_users` 早就钉住了），
+但直到修 e2e 时去查矩阵才被摆上台面。
+
+4-bis 与 5 是同一族问题，方向相反：4-bis 是**读得太宽**（能读任意行），
+5 是**写完全没有入口**（除 Sponsor 外无人能写）。两条都指向同一个根因 ——
+`Resource::User` 的权限矩阵是照"管理用户档案"设计的，没有考虑
+"用户管理自己的档案"这条自助路径。两条应一并拍板。
+
 ### §4.1v RBAC 的「第二参数」语义被误读，导致 `worker/tick` 的鉴权从未生效（2026-10-07）
 
 #### 缺陷：`require_roles` 的第二个参数是**调用者角色**，不是「允许的角色」
@@ -2179,3 +2198,656 @@ worker-service 与 audit-service 的 `readyz` 是逐字相同的两份实现，D
 2. 用 `io.open(p,'w').write(io.open(p).read())` 刷新时间戳时，**`open(p,'w')` 先求值
    并把文件截断**，随后才读 —— 两个 crate 下 16 个 `.rs` 全被清成 0 字节。刷新
    时间戳要用 `os.utime`，或先读进变量再写。
+### §4.1w report-service 的 4 条路由补请求级覆盖，并发现**两套并存的网关契约**（2026-10-07）
+
+#### 补覆盖
+
+`report-service` 此前 4 条路由内联在 `main.rs` 的 `HttpServer::new` 里，
+`tests/` 下只有 `smoke.rs`，`handlers.rs` 里 4 个单元测试全是纯字段级
+（Query DTO 构造 / ErrorBody 序列化）—— **没有任何一个请求真的打过这些 handler**。
+
+抽出 `handlers::configure_routes`（路由 + app_data 都在里面），`main.rs` 与测试共用。
+新增 `tests/report_routes.rs` **9 个用例，且不需要真实 PostgreSQL** ——
+因为三个报表端点的执行顺序是 `RBAC 鉴权 → from < to 校验 → 才查库`，
+前两级都能在死库下区分开：
+
+| 观察到的状态码 | 说明哪一级拦下的 |
+|---|---|
+| 401 `missing_authorization` | 鉴权（凭据缺失或 `Authorization` 不可解析）|
+| 403 `operation_not_permitted` | 鉴权（User 无 `Report:Read`）|
+| 400 `invalid_request` | 鉴权放行后被区间校验拦下（**没碰 DB**）|
+| 500 `server_error` | 两级都过了，卡在 DB |
+
+#### 顺带查出一件事：全仓有**两套并存的网关凭据契约**（`Authorization: Bearer cats-role:` vs `X-Cats-*`）
+
+> 2026-10-07 更正：本节初稿写的是「report-service 是唯一用 `cats-role:` 的」，
+> **那是错的**。逐 crate 扫描 `crates/*/src` 后的真实分布是 5 : 2
+> —— 见下面 §4.1x 的完整表。结论方向不变（两套契约并存），
+> 但"谁是异类"的判断反了，异类是 `X-Cats-*` 那一侧的 audit / worker。
+
+另外发现 `extract_user_roles` 里解析 `user_id` 的那段是**死代码**：
+`body` 是剥掉 `cats-role:` 前缀**之后**的字符串，再对它 `split(':').next()`
+必然拿不到 user_id（恒为 `None`）。当前三个 handler 都只取 `if let Err(...)`
+把 `Ok(AuthContext)` 丢掉，所以暂时无害；一旦有人开始用 `auth.user_id`，
+它会恒为 `None`。
+
+#### 变异验证 8/8
+
+| 变异 | 期望 | 实得 |
+|---|---|---|
+| 删掉 `usage_report` 的 `rbac::enforce` | 403 用例 FAILED、401 用例 FAILED | PASS |
+| 同上 | 400 用例**仍 ok**（它测参数校验，Sponsor 本就被放行）| PASS |
+| 区间校验 `from >= to` 放宽成 `from > to` | 400 用例 FAILED（`from==to` 漏过校验撞库）| PASS |
+| 同上 | 403 用例仍 ok（它测鉴权，不受区间影响）| PASS |
+### §4.1x 鉴权全景：24 个 crate 里只有 7 个有 RBAC，而**没有任何一方在生产这些凭据头**（2026-10-07）
+
+这一节是 §4.1w 那句"两套契约并存"往下挖的结果。它比 worker-service 的那个
+单点绕过严重得多，**属于架构级缺口，不是代码 bug**。
+
+#### ① 全仓只有 7/24 个 crate 有鉴权
+
+| crate | 有鉴权？ | 凭据契约 | 调用点 |
+|---|---|---|---|
+| file-service | 是 | `Authorization: Bearer cats-role:` | `rbac::enforce` |
+| notification-service | 是 | 同上 | `rbac::enforce` |
+| project-service | 是 | 同上 | `rbac::enforce` |
+| report-service | 是 | 同上 | `rbac::enforce` |
+| task-service | 是 | 同上 | `rbac::enforce` |
+| audit-service | 是 | **`X-Cats-User-Id` + `X-Cats-Roles`** | `require_roles` |
+| worker-service | 是 | **`X-Cats-*`** | `require_roles` |
+| **user-service** | **否** | — | — |
+| auth-service | 否 | — | — |
+| asr / ocr / ingestion / subtitle / office-converter / render-writer | 否 | — | — |
+| cats-bff / cats-ai-gateway / translation-core / cats-mock / common / proto / m1-s0-smoke | 否 | — | — |
+
+**`user-service` 完全没有鉴权**：4 条路由（`POST /v1/users`、
+`GET /v1/users/{id}`、`PUT /v1/users/{id}`、`GET /v1/users`）谁都能调，
+即任何人可以创建、读取、修改用户档案。这不是"缺一个 `@`"，是整层缺失。
+
+#### ② 没有任何一方在生产这些头 —— 这是最要紧的一条
+
+全仓搜 `X-Cats-Roles` / `X-Cats-User-Id` / `cats-role`：
+
+- **命中全部在测试与注释里**。没有任何一个**非测试**文件构造过这两个头。
+- `deploy/envoy-mvp.yaml` 是**纯 L7 路由**：无 `jwt_authn`、无 `ext_authz`、
+  无 `request_headers_to_add`、无 `request_headers_to_remove`。
+- `cats-bff` 的生产代码**只转发 `Authorization: Bearer <JWT>`**
+  （其测试 `bff_upstream_passthrough.rs:447-471` 专门把"不发 X-Cats-*"钉成断言）。
+
+也就是说，`cats_rbac::service_helpers` 的文档注释里写的
+"Envoy Gateway 鉴权后注入这些 header" —— **envoy 里没有这段实现**。
+
+#### ③ 由此推出的两条结论
+
+**结论 1：经网关的正常流量，7 个受保护端点会全部 401。**
+真实 JWT（`Bearer <JWT>`）既不匹配 `cats-role:` 前缀，也不会变成 `X-Cats-*`，
+于是 `extract_*` 判定为匿名。报表/文件/项目/任务/通知/审计六类业务接口在
+当前部署下**没有一个能通过鉴权**。
+
+**结论 2（更严重）：那个头是客户端可自填的。**
+envoy 既不校验 JWT、也不剥离来路不明的 `X-Cats-*` / `cats-role`，
+于是任何能连到 8080 的调用方，只要自己带上
+
+```
+X-Cats-User-Id: <任意合法 UUID>
+X-Cats-Roles: Sponsor
+```
+
+就会被 audit / worker 当作 **Sponsor**；带上
+`Authorization: Bearer cats-role:Sponsor` 则会被另外 5 个服务当作 Sponsor。
+
+**结论 1 让系统不可用，结论 2 让系统不安全** —— 而后者一旦有任意一条
+受保护路由对外暴露（加个 envoy 路由、或把 compose 的 `127.0.0.1` 绑定去掉）
+就直接可利用。§4.1v 那个 worker-service 的绕过与它相比，是局部实现问题。
+
+#### 为什么本轮不擅自修
+
+补边缘鉴权需要同时确定三件事，都不是"具体改法"而是**方向选择**：
+
+1. 凭据契约统一到哪一套（`X-Cats-*` 还是 `cats-role:`）——影响 7 个 crate；
+2. JWT 校验放在哪（envoy `jwt_authn` + claim→role 映射，还是 ext_authz 回调，
+   还是让 `cats-bff` 校验后再注入）；
+3. 17 个无鉴权 crate 里的哪些**必须**补（`user-service` 大概率必须，
+   6 个媒体服务要看是否对外暴露）。
+
+已记入 §4.1u 待拍板，**不在本轮自行决定**。
+
+#### 但有一件事本轮就做了：把事实钉住
+
+`report_routes.rs` 的 9 个用例里，有 3 个直接以"401/403"为期望值 ——
+它们在架构缺口修好之前是**如实反映现状**的，而不是在掩盖它。
+等边缘鉴权落地，这几条会继续绿（变成"无凭据仍应 401"），
+新增"带 Sponsor 头仍应 401"时才需要跟着改。
+### §4.1y 鉴权落地：契约统一 + 边缘验签 + user-service 补鉴权（2026-10-07）
+
+§4.1x 记的是缺口，这一节记的是修法。**拍板：统一契约 + envoy 边缘鉴权 + 补 user-service**
+（2026-10-07 10:04 JST 以超时自动选中推荐项，非显式确认）。
+
+#### ① 契约统一到 `X-Cats-*`（5 个服务 + user-service）
+
+file / notification / project / report / task 原先各自解析
+`Authorization: Bearer cats-role:<roles>`，现在一律复用
+`cats_rbac::service_helpers::extract_user_id_and_roles`（读 `X-Cats-User-Id` +
+`X-Cats-Roles`），与 audit / worker 同一条路径。各自那份 `parse_role` 随之删除
+（统一后即为死代码，`-D warnings` 会红）。
+
+**只改代码不改文案是不够的**：401 的 message 原文写着
+`Authorization header with Bearer cats-role:<roles> required` —— 契约改了之后
+这条错误信息会把排障的人引到已经不存在的头上，一并改掉。
+
+顺带修好一个既有的解析错误：`cats-role:<uuid>:<roles>` 里的 user_id 其实
+**永远解析不出来**（`body` 是剥掉前缀**之后**的字符串，再 `split(':')` 必然拿不到），
+`AuthContext.user_id` 恒为 `None`。改用 `X-Cats-User-Id` 后它被真实填充。
+
+#### ② JWT 多签一个 `roles_csv` 字符串 claim
+
+envoy `jwt_authn` 的 `claim_to_headers`：**string / int / double / bool 原样拷贝，
+array / object 序列化成 JSON 再 Base64 编码**。而 `Claims.roles` 是数组 ——
+直接映射过去会变成 `WyJVc2VyIiwiU3BvbnNvciJd`，下游按逗号切分解析不出任何角色，
+**全员 401**。
+
+所以同一个语义在 JWT 里存两份：`roles`（数组，给 Rust 侧，如 cats-bff 的
+`principal.roles`）与 `roles_csv`（字符串，给边缘注入），由 `issue_jwt` 从同一份
+入参 `join(",")` 派生，不存在两份真相。`issued_token_carries_roles_and_matching_roles_csv`
+把这条钉住。
+
+#### ③ envoy：验签 + 注入 + 剥离
+
+- `jwt_authn`，HS256 inline_jwks，`claim_to_headers` 映射 `sub → x-cats-user-id`、
+  `roles_csv → x-cats-roles`；
+- **刻意不配 `issuer` / `audiences`** —— 我们的 Claims 里既没有 `iss` 也没有 `aud`，
+  配上会让每个请求都因 issuer/audience 不匹配被拒；
+- 每条路由显式 `request_headers_to_remove: [x-cats-user-id, x-cats-roles]`。
+  这一条**刻意不只依赖 jwt_authn 自带的清理**：新版 Envoy 的 filter-wide sanitize
+  只清它自己 `claim_to_headers` 里声明过的头，且受 runtime feature 控制，旧版本没有。
+
+#### ④ 门禁：lint 规则 16
+
+检查 envoy 配置三件事：jwt_authn 在位、**每条**路由都剥离身份头、JWT 密钥仍是
+占位符（防止具体密钥值被提交进 git 历史）。路由数低于阈值时报错
+（「空结果不等于没有问题」）。
+
+写这条规则时我犯过一个错值得记：jwt_authn 在 `typed_config.http_filters` 里，
+不在 `filters` 列表里；第一版只扫了后者，于是对着**已经加了 jwt_authn 的配置**
+报"没有 jwt_authn"。规则自己写错位置，和扫描器致盲是同一类错误。
+
+#### ⑤ user-service 补鉴权（此前**完全裸奔**）
+
+新增 `src/rbac.rs` + `cats-rbac` 依赖，三条业务路由在**最前面**过 RBAC：
+
+| 路由 | 资源 × 操作 |
+|---|---|
+| `POST /v1/users` | User × Create |
+| `GET /v1/users/{id}` | User × Read |
+| `PUT /v1/users/{id}` | User × Update |
+
+10 个单元测试，含一条反向用例：只带 `Authorization: Bearer cats-role:Sponsor`
+必须仍是匿名 —— 旧契约一旦重新生效，就等于允许客户端自填 Sponsor。
+
+**已知且未修：行级归属。** 权限矩阵里 `Role::User` 对 `Resource::User × Read`
+是有权限的，所以任何一个已登录用户都能读任意用户的档案。行级归属是设计决策，
+本轮不自行发明，记入 §4.1u。测试 `plain_user_can_read_user_resource` 把当前行为
+钉住，并注明它"不是认为它对，只是如实记录"。
+
+#### ⚠️ 未验证的部分
+
+**envoy 这套配置的运行时行为没有被验证过** —— Docker Desktop 未启动，无法起容器。
+本轮做到的只有：Rust 侧全部有测试、YAML 能解析、lint 规则 16 静态守住三条不变量。
+真正的验收（拿真 JWT 经 8080 打通、再自填 `X-Cats-Roles: Sponsor` 验证被拒）
+必须等 Docker 可用后补，**在补上之前不得宣称边缘鉴权已生效**。
+
+### §4.1z 生产边缘此前完全无鉴权，且 `/v1/users` 从未被真正路由到（2026-10-07）
+
+#### ⚠️ 先更正 §4.1y 的一处过度声明
+
+§4.1y 写的是"envoy 加边缘验签"已落地，并在末尾注明运行时未验证。**但它漏了
+一件更要紧的事：它只改了 `deploy/envoy-mvp.yaml` 一份。**
+
+事实：`deploy/k3s/cats-edge/envoy-deployment.yaml`（**k3s 生产部署**）在当时
+的 `http_filters` 里**只有 router 一个**，实测计数：
+
+```
+jwt_authn                  = 0
+ext_authz                  = 0
+request_headers_to_remove  = 0
+request_headers_to_add     = 0
+roles_csv / claim_to_headers = 0
+```
+
+即：**生产边缘不做任何认证，也不剥离任何身份头。** 任何能连到 8080 的调用方
+可以直调 `/v1/*`，也可以自填 `X-Cats-Roles: Sponsor` 被下游当成 Sponsor。
+而 §4.1y 的运行时未验证声明是针对 compose 那份的，两份配置的差距当时没有被
+任何人（包括门禁）发现。
+
+**为什么没被发现**：规则 16 是我自己在 §4.1y 加的，它硬编码只扫
+`deploy/envoy-mvp.yaml` 这一个路径（L30-31）。**一个只看一个文件的检查，
+证明不了"边缘是安全的"，只证明那一个文件是安全的。**
+
+#### 实缺陷：`/v1/users` 指向了不提供该路由的容器
+
+```
+- match: { prefix: "/v1/users" }
+  route: { cluster: auth_service }   # k3s 那份还带注释 "# user nested in auth"
+```
+
+**那条注释是假的。** 实证：
+
+| 对象 | 注册的路由 |
+|---|---|
+| `auth-service` | `/healthz`, `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/me` |
+| `user-service`（独立 Deployment，`deploy/k3s/cats-core/user-service.yaml`） | `/healthz`, `/v1/users`, `/v1/users/{id}` |
+
+auth-service 根本不认识 `/v1/users`，所有流量到那儿必 404。envoy 里也
+**没有 `user_service` cluster**（7 个 cluster：auth / project / task / file /
+notification / report / audit）。
+
+`git log -S 'prefix: "/v1/users"' -- deploy/envoy-mvp.yaml` 只有一条命中：
+`c699b73`（引入边缘配置的那次提交）。而 user-service 自 `855fb59`
+（monorepo 脚手架）就存在。**也就是说这个错配从边缘配置诞生的第一天就在，
+从未被修过。**
+
+**后果**：§4.1y 给 user-service 补的那套 RBAC，在 MVP 与 k3s 两种部署下
+**都执行不到** —— 补丁本身是对的，但流量到不了。同理，"某服务有鉴权"这句话
+必须先确认边缘真能路由到它，否则等于没做。
+
+#### 修法
+
+1. **k3s 边缘补齐鉴权**（与 compose 那份对齐）：`jwt_authn`（HS256
+   inline_jwks + `claim_to_headers`：`sub → x-cats-user-id`、
+   `roles_csv → x-cats-roles`）+ 每条路由显式 `request_headers_to_remove`。
+   同样**不配 `issuer` / `audiences`**（Claims 无 `iss` / `aud`）。
+2. **JWT 密钥不进 ConfigMap**：envoy bootstrap **不支持环境变量替换**，所以
+   ConfigMap 留占位符 `__CATS_JWT_KEY_B64URL__`，由新增的 initContainer
+   `edge-config-init` 从 `cats-jwt-secret` 现算 base64url 并替换到 emptyDir，
+   envoy 只读挂载 emptyDir。initContainer 另有两道自检：Secret 为空则拒绝
+   启动；替换后仍见占位符则拒绝启动（否则 envoy 会拿字面量当密钥）。
+3. **跨 namespace Secret**：k8s 不允许跨 namespace 引用 Secret，而 envoy-edge
+   在 `cats-edge`、`cats-jwt-secret` 原声明在 `cats-core`。已在
+   `deploy/k3s/secrets/secrets-placeholder.yaml` 补一份 `cats-edge` 的，
+   并用注解 `cats.io/must-match` 标注**必须与 cats-core 那份逐字节相同**
+   （不同则全员 401，排查方向极易被带偏）。
+4. **两份 envoy 都补 `user_service` cluster** 并把 `/v1/users` 指过去；
+   删掉 k3s 里那句不实注释，改为写明实情。
+
+#### 门禁：规则 16 改为全仓发现，新增规则 17
+
+| 规则 | 改动 |
+|---|---|
+| 规则 16 | 不再硬编码单个路径。**全仓发现**两类边缘配置：独立 bootstrap（`deploy/envoy-mvp.yaml`）与嵌在 k8s ConfigMap 字符串里的（`deploy/k3s/**`）。发现数 < 2 直接 FAIL —— "扫不到 ≠ 没问题" |
+| 规则 17（新增） | 路由的 cluster 落点必须与**真正注册该前缀的 crate** 一致。查两件事：路由引用的 cluster 必须存在；该前缀在 `crates/` 里的归属 crate 必须与 cluster 后端主机同名 |
+
+规则 17 刻意把"`/v1/worker/tick` 没有边缘路由"记为**设计决定**而不是错误
+（`_INTENTIONAL_INTERNAL_ONLY` 白名单）。理由：worker tick 是运维端点，
+compose 只把它绑在 `127.0.0.1:8089`，不暴露公网边缘是合理选择。把"没路由"
+和"路由指错"混成同一条错误，只会逼人把告警静音。
+
+**变异验证 8/8**（`D:\Temp\mutate-edge-authz.py`），每次恰好 1 条 FAIL：
+
+| 变异 | 精确报错 |
+|---|---|
+| R1 未变异（反向用例） | exit 0 且零 FAIL |
+| M1 k3s 删 jwt_authn | `规则 16：…envoy-deployment.yaml (ConfigMap/envoy.yaml) 没有 jwt_authn 过滤器` |
+| M2 k3s 拿掉 `/v1/tasks` 的剥离 | `规则 16：…的路由 /v1/tasks 没有剥离客户端自带的头` |
+| M3 k3s `/v1/users` 指回 auth_service | `规则 17：…但该前缀是由 user-service 注册的` |
+| M4 k3s 密钥写成具体值 | `规则 16：…出现了具体密钥值且不是占位符` |
+| M5 k3s 指向不存在的 cluster | `规则 17：…但配置里没有这个 cluster` |
+| M6 compose `/v1/projects` 指回 auth_service | `规则 17：…但该前缀是由 project-service 注册的` |
+| M7 compose 删 jwt_authn | `规则 16：deploy/envoy-mvp.yaml 没有 jwt_authn 过滤器` |
+
+还原后 sha256 与变异前逐字节一致（从**运行前的内存快照**还原 —— 不用
+`shutil.copy2`，它会连 mtime 一起复制，让下游判定"没变过"而跳过重扫）。
+
+扫描器自身也被自查过两轮：k3s YAML 是多文档（`---` 分隔），最初用
+`yaml.safe_load` 会在第一个 `---` 处抛错 → 整个文件被判"读不到" → 又一次
+变成"扫不到"。改用 `safe_load_all` 后，自失效阈值立刻抓出"全仓只发现 1 份
+边缘配置"。
+
+#### ❌ 仍未验证：运行时（阻塞原因已查实到宿主机层）
+
+**Docker Desktop 在这台机器上起不来**，不是"没启动"。实证（`docker info` 与
+`com.docker.backend.exe.log`）：
+
+```
+Wsl/Service/CreateInstance/MountVhd/HCS/E_ACCESSDENIED:
+  无法将磁盘 \?\E:\wsl\DockerDesktopWSL\main\ext4.vhdx 附加到 WSL2 虚拟机。拒绝访问。
+engine linux/wsl failed to start: bootstrapping main distribution
+```
+
+`Get-CimInstance Win32_ComputerSystem` → `HypervisorPresent = True`，
+`Win32_Processor` → `VirtualizationFirmwareEnabled = False`：本机本身是
+虚拟机里的客户机，**嵌套虚拟化未开**，HCS 因此无法挂载 VHDX。`wsl --shutdown`
+后重启 Docker Desktop 无效（同一 E_ACCESSDENIED）。这是宿主机层面的阻塞，
+不是仓库配置问题。
+
+所以以下三项**在补上之前不得宣称边缘鉴权已生效**：
+
+1. 真 JWT 经 8080 打通（`POST /v1/auth/login` → 带 Bearer 调 `/v1/projects`）
+2. 自填 `X-Cats-Roles: Sponsor` 被边缘剥离后按真实角色判定
+3. compose 侧 `JWT_SECRET` → base64url → JWK 整条注入链在真 envoy 里生效
+   （密钥注入的**逻辑**已本地真跑验证过，与 Python `urlsafe_b64encode` 逐字
+   一致且能反解回原密钥；**未**在真 envoy 里跑过）
+
+新增的 k3s initContainer 同样**未经运行时验证**。
+
+### §4.1aa 就绪语义整个失效：8 个服务的 readinessProbe 指向不查依赖的端点（2026-10-07）
+
+#### 缺口
+
+用 **YAML 解析器**（不是正则）盘点 k3s 的 12 个 Deployment：
+
+| readinessProbe | 数量 | 意味着 |
+|---|---|---|
+| `/readyz` | 2（audit、worker） | 真的查依赖 |
+| `/healthz` | **8** | **恒返 200、不碰任何依赖** |
+| tcpSocket | 2（envoy-edge、translation-core） | 只测端口通 |
+
+源码侧：17 个服务里 **15 个根本没有 `/readyz`**。
+
+后果不是"少个端点"，而是**就绪语义整个失效**：数据库挂了，那 8 个服务的 Pod
+依然被判 Ready，流量继续被派发进来，然后每个请求 500。
+
+同类缺陷在 audit / worker 上真实发生过 —— 它们的 `/readyz` 一度把
+`db: "fail"` 写进 body 却仍返回 **200**。k8s 的 readinessProbe **只看状态码、
+不看 body**，那等于骗调度器。
+
+#### 一个方法论教训：盘点用的正则错了两轮
+
+第一版盘点脚本用正则抠 YAML 块（`readinessProbe:\s*
+(?:\s{10,}.*
+)+`），
+得出"只有 5 个 Deployment 有探针"。直接 `Select-String` 数
+`readinessProbe` 出现次数才发现：**12 个 Deployment 全都有**。差异全在缩进宽度上。
+
+**扫出"意外少的数字"时，先怀疑扫描器。** 从 YAML 抠结构要用解析器，
+`yaml.safe_load_all` 是免费的，正则要跟缩进宽度搏斗。
+
+同一轮在 envoy 扫描器上还踩了三次形状错误（cluster 正则缩进 2 vs 4、
+`\s*` 贪婪吃掉换行、多文档 YAML 用 `safe_load` 抛错），每次都表现为
+"扫出 0 条"这种**看起来像事实的数字**。共同药方是**自失效阈值**：
+扫不到就 FAIL，并写明"扫描路径大概率写错了。**空结果不等于没有问题**"。
+
+#### 改法
+
+1. `cats-common` 新增 `ReadyResponse` + `status_code()`，形状与判定收在一处。
+   各服务自己写一遍必然漂移（字段、状态词、状态码各不相同），漂移之后
+   "就绪探针"就退化成"每个服务各写各的、其中几个在说谎"。
+   契约：`db=="ok"` → 200；`db=="fail"` → **503**。
+2. **7 个服务补 `/readyz`**（auth、project、task、file、notification、report、
+   user、cats-ai-gateway），k3s 的 readinessProbe 逐个从 `/healthz` 改指 `/readyz`。
+   每个服务配一个 `tests/readyz.rs`，4 个用例（跨两个独立子代理产出，
+   用例名与断言完全同构，说明范式写得够死）：
+   - 依赖不可达 → **503**（`connect_lazy` 指向 `127.0.0.1:1`，不需要真 PG）
+   - 顶层键固定为 `[db, service, status]`，`service` 等于 crate 名
+   - **反向**：`/healthz` 在同样条件下**仍必须 200**
+   - 依赖可达 → 200，标 `#[ignore]`，由 CI 的 `e2e (real PostgreSQL)` job 执行
+3. `cats-ai-gateway` 刻意**不探上游 LLM**：判据是 `Router::is_routable()`
+   （至少注册了一个 provider）。对 OpenAI / Anthropic / DeepSeek 发网络请求来做
+   就绪判定，意味着上游一限流就把整个网关摘出轮转，把**局部上游故障放大成
+   全站故障** —— 严格比现状更差。它的 4 个用例也全部不需要 PG 或网络。
+
+#### 代价不对称，所以 liveness 刻意不动
+
+- readiness 查依赖、失败返 503 → DB 故障时摘流量（正确）
+- liveness 不查依赖 → DB 故障**不该**重启进程：重启解决不了 DB，
+  只会把一次降级放大成 CrashLoop
+
+所以 `livenessProbe` 全部保留在 `/healthz`，规则 18 也只管 readiness。
+这条**反向约束**（"liveness 不许改成 /readyz"）写进了变异验证，
+因为"所有探针都必须 /readyz"的规则会把 liveness 一起改掉。
+
+#### 新增 lint 规则 18
+
+`readinessProbe` 不许指向 `/healthz`；且若指向 `/readyz`，对应 crate 必须真的
+注册了该路由（否则探针永远 404，Pod 永远进不了 Endpoints）。
+自失效阈值：读到 < 8 个 Deployment 即 FAIL。
+
+**验收证据是它在真实工作树上的首跑**：落地那一刻工作树正好有 7 处违规，
+它一次抓出 7 条、每条精确到 Deployment 名。这比任何人工构造的变异都更有说服力
+—— 如果门禁落地时工作树恰好干净，那它才是可疑的。
+
+#### 仍未覆盖（诚实记账）
+
+- **compose 侧 0 个应用服务有 `healthcheck`**（只有 postgres 与 kafka 有）。
+  所以 `depends_on: service_healthy` 目前只能用于 db-init / kafka-init，
+  服务之间无法按健康度排序启动。这需要真 Docker 才能验收。
+- **6 个媒体服务 + cats-bff + translation-core 没有 `/readyz`**：它们要么
+  没有 k3s Deployment（媒体服务、cats-bff），要么 readiness 是 tcpSocket
+  （translation-core 的 gRPC 50051）。前者在规则 18 范围外，后者需要另一套
+  gRPC 就绪机制。
+- **运行时验收仍受阻**（per §4.1z 的嵌套虚拟化问题）。本轮全部结论来自
+  静态检查与本地单元测试；"DB 真的挂掉时 Pod 真的会被摘流量"没有实证。
+
+### §4.1ab 每次 push 的 docker build 都恒红，而红的原因不在构建（2026-10-07）
+
+推 `feat/edge-authz-and-readiness` 开 PR #24 时，`statusCheckRollup` 里有 14 条
+`docker build (...)` 失败。乍看像是新改动把镜像构建搞坏了。**不是。**
+
+#### 定位过程（每一步的"证据"都来自直接查询，不是推测）
+
+1. `gh pr view 24` 的 rollup 里 14 条 FAILURE，但每条检查名**出现两次**
+   （一次 COMPLETED FAILURE、一次 QUEUED）。重名是关键线索：说明存在**两套**
+   workflow —— push 事件与 pull_request 事件各触发了一次。
+2. `gh run list --branch <branch>` 列出 14 个 run，`total` 里**没有一个 failed**，
+   全是 queued / in_progress / success。与 rollup 矛盾 ⇒ rollup 混入了别的来源。
+3. `gh api repos/.../commits/<sha>/check-runs` 才拿到真正的 14 条失败，
+   `details_url` 指向 run `37619893549` —— **push 事件**那次。
+4. 作业日志共 407 行、只跑了 **17 秒**、失败时没有任何构建输出：
+
+```
+2026-10-07T12:17:22.2771298Z ##[error]Username and password required
+```
+
+17 秒 = 死在 setup 阶段，根本没进到编译。
+
+#### 真因
+
+`ci-docker-build.yaml` 的 Login 步骤带 `if: github.event_name != 'pull_request'`，
+用的是 `secrets.HARBOR_USERNAME` / `secrets.HARBOR_PASSWORD`。而本仓库：
+
+```
+GET /repos/UlyssesLeoLee/CATs/actions/secrets
+{"total_count":0,"secrets":[]}
+```
+
+**一个 Actions secret 都没有。** 于是 push 事件拿着空凭据去登录 Harbor，
+每个作业都在同一行失败。
+
+#### 为什么一直没被发现
+
+因为 `concurrency: cancel-in-progress: true` —— **每次 push 都会取消上一次 push
+的 docker build**。被取消的作业不产生失败记录，于是：
+
+- 快速连续 push 时，看到的是"上一次被取消"，红不起来
+- 偶尔抢到 runner 跑满 17 秒的那几个，才是红的
+
+而**真正把关的从来是 PR 事件的 workflow**（它 `push: false`、跳过登录，所以一直
+是绿的）。也就是说：一条恒红的工作流藏在一条一直绿的后面，靠"被取消"掩盖了半年。
+
+#### 修法
+
+把"要不要发布"的条件从**事件类型**改成**事件类型 且 凭据存在**：
+
+```yaml
+env:
+  HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+  HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+...
+- name: Login to Harbor
+  if: github.event_name != 'pull_request' && env.HARBOR_USERNAME != '' && env.HARBOR_PASSWORD != ''
+...
+- name: Build and push
+  with:
+    push: ${{ github.event_name != 'pull_request' && env.HARBOR_USERNAME != '' && env.HARBOR_PASSWORD != '' }}
+```
+
+凭据配好之后 push 事件自动恢复登录并推送，行为不变；在此之前 push 事件只构建
+不推送 —— **CI 该验证的是"镜像能不能构建出来"，发布到 registry 是另一件事。**
+
+Login 与 push 两步的条件必须一致：只改一边会出现"推送了但没登录"或反之。
+
+**踩坑**：`secrets` 上下文在 step 级 `if` 里**不可用**（GitHub 文档里 `if`
+可用的上下文不含 `secrets`），只能借 `env` 中转。直接写
+`if: secrets.HARBOR_USERNAME != ''` 会被静默当成空字符串，条件恒假 ——
+又是一个"看起来在工作、其实没有"。
+
+#### 同类顺带排查
+
+`secrets.CODECOV_TOKEN`（`ci-rust-test.yaml`）同样不存在，但那个步骤带
+`fail_ci_if_error: False`，所以**不会**让流水线红。后果是覆盖率实际上没有上传
+（不是 CI 问题，是覆盖率数据缺失）。`secrets.GITHUB_TOKEN` 是内置的，不受影响。
+
+**通用判据：给仓库补的第一个 Actions secret 之前，先确认工作流里引用它的每个
+`if` 是不是真的可满足；不可满足的条件不会报错，只会恒假。**
+
+### §4.1ac 两套运行时镜像的差别，决定了 compose healthcheck 能不能用 curl（2026-10-07）
+
+§4.1aa 那批服务补完 `/readyz` 之后，剩下的一条待办是"compose 补 healthcheck"
+（目前 12 个应用服务里 **0 个**有 healthcheck，`depends_on: service_healthy`
+只对 db-init / kafka-init 用得上）。动手前先查可行性，结果查出一个**会让人
+把整套 compose 改瘫**的坑。
+
+#### 仓库里有两套运行时镜像，别混
+
+| 文件 | 谁在用 | 基础镜像 | 有 shell？ | 有 curl/wget？ |
+|---|---|---|---|---|
+| `deploy/Dockerfile.runtime` | **compose**（`build.dockerfile`） | `debian:bookworm-slim` | 有 | **没有** |
+| `deploy/docker/Dockerfile.rust` | **ci-docker-build** | `gcr.io/distroless/cc-debian12:nonroot` | **没有** | **没有** |
+
+前者只 `apt-get install ca-certificates libssl3 libpq5`，后者连 shell 都没有
+（distroless 按设计不含 shell / 包管理器）。
+
+我一开始**猜错了**：以为 compose 也用 distroless，于是准备写"镜像里没有 shell，
+shell 形式也不可行"。实际去读 `deploy/Dockerfile.runtime` 才发现是 debian-slim。
+**两套镜像的存在本身就说明这类判断不能靠印象。**
+
+#### 于是那条最常见的写法会让整套 compose 起不来
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8080/readyz"]        # ❌ 没有 curl
+  test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readyz"]      # ❌ 没有 wget
+```
+
+不是"探针偶尔失败"，是二进制不存在 ⇒ 容器**永远 unhealthy** ⇒
+`depends_on: service_healthy` 永不满足 ⇒ `docker compose up` 卡在等依赖。
+而这种 YAML **完全合法**，`docker compose config` 也不会拦。
+
+#### 为什么 k3s 没这个问题
+
+k8s 的 `readinessProbe` 是 **kubelet 在容器外**发起的 HTTP 请求，**不需要容器里
+装任何东西**。所以 §4.1aa 那 10 个 Deployment 的探针能直接用 HTTP，
+而 compose 的 `HEALTHCHECK` 必须**在容器内**执行 —— 两者的可行性完全是两回事，
+不能拿一边推另一边。
+
+#### lint 规则 19
+
+`healthcheck` 不得依赖运行时镜像里没有的程序。只管用 `<<: *cargo-base` 构建的
+那 12 个 service —— postgres / kafka 用官方镜像，镜像里有什么不由本仓库决定，
+对它们套这条是误报。
+
+**变异验证 6/6**（含 3 条反向用例）：
+
+| 用例 | 期望 | 结果 |
+|---|---|---|
+| R1 未变异 | exit 0、零 FAIL | ✅ |
+| R2 官方镜像的 `pg_isready` / `kafka-topics.sh` | **不得**被报 | ✅ |
+| M1 curl 版 healthcheck | 精确报"镜像里没有 curl" | ✅ |
+| M2 CMD-SHELL + wget 版 | 精确报"镜像里没有 wget" | ✅ |
+| R3 CMD-SHELL 但只用 `/bin/sh`（镜像里有） | 不得被报 | ✅ |
+| M4 Dockerfile.runtime 装了 curl | **必须放行** | ✅（修完才通过，见下） |
+
+#### 规则本身被变异验证抓出两个真缺陷
+
+1. **算出了 `_installed_clients` 却在判断里没用它** —— 于是这条规则实际含义变成
+   "不许用 curl"，而正确做法恰恰**可以是**在 Dockerfile.runtime 里装 curl。
+   M4 抓出来的。
+2. **包列表写在反斜杠续行里**，`apt-get install` 与包名**不在同一行**，
+   所以 `[^
+]*` 一律匹配不上 —— 于是"镜像里明明装了 curl"也被判成没装。
+   修法：先把续行接成一行再搜。
+
+两个都是"**验证器自己也要验证**"才暴露的：不跑 M4，规则看起来完全正常。
+
+顺带一次扫描器事故：找 `<<: *cargo-base` 的服务名时，我用了
+`^  (name):
+(?:^[ 	]+.*
+)*?^[ 	]+<<:\s*\*cargo-base\s*$` —— 外层量词套着
+`.*
+`，作用在 40KB 文件上**灾难性回溯**，lint 直接卡死（实测烧掉 1370 秒 CPU，
+输出文件 0 字节）。改成逐行扫描。同一个教训的第四次出现。
+
+#### 要真正补 compose healthcheck，只有一条干净的路
+
+在 `Dockerfile.runtime` 里装一个 HTTP 客户端（或做一个静态探针二进制），
+然后按真实路径配 healthcheck。在此之前 §4.1u 那条待办**保持未做** ——
+宁可不做，也不要加一堆会让整套 compose 永远起不来的假 healthcheck。
+
+### §4.1ad §4.1y 的鉴权改造自己炸了 e2e：7 个用例红，且暴露"只有 Sponsor 能建用户"（2026-10-07）
+
+PR #24 head `27542f7` 上 `e2e (real PostgreSQL)` **失败**（check-run `112794634614`）。
+这是本轮改造引入的**真实回归**，不是历史遗留。
+
+| crate | 失败用例 | 实测症状 |
+|---|---|---|
+| user-service `e2e_t02` | 4 / 5 | `left: 401`（create / get_by_id / get_not_found / update_partial） |
+| notification-service `integration` | 3 / 6 | `left: "00000000-...-0001"` vs `right: "7a003618-..."` |
+
+#### 两个根因不同，但都不是代码错了
+
+**user-service 是 401 —— 测试没带身份头。**
+§4.1y 之前这三条路由**完全没有鉴权**（`user-service/src/rbac.rs` 顶部有说明），
+所以不带任何头也能过。§4.1y 上了闸门，测试就撞上了。
+
+生产链路里请求**必然**经过 envoy：`jwt_authn` 验签后按 `claim_to_headers` 注入
+`sub → X-Cats-User-Id`、`roles_csv → X-Cats-Roles`，而 route 上的
+`request_headers_to_remove` 会先剥掉客户端自带的同名头。所以"不带身份头"在生产中
+不可能发生 —— 发生 401 正是期望行为。**是测试错了，不是代码错了。**
+
+**notification-service 是身份不匹配 —— 而且是安全修复在正常工作。**
+handler 里那行
+`let user_id = auth.user_id.unwrap_or(req_body.user_id);`
+此前永远走**兜底分支**，因为老的 `cats-role:` 契约压根解析不出 `user_id`。
+§4.1y 之后 `auth.user_id` **真的能解析出来**了，于是身份头开始**覆盖** body ——
+而测试发的是写死的常量 `0000...0001`，却期望 body 里的随机 UUID 生效。
+这说明 `unwrap_or` 这条兜底路径以前是**从未被真正执行过的死逻辑**，
+一接上真实凭据就暴露了。修法：头里的身份改成 `user_id.to_string()`，与 body 一致。
+
+#### 修法：改测试，不改生产代码，也不给测试开后门
+
+- 没有加 `#[cfg(test)]` 跳过鉴权的分支。那会让**真正缺鉴权的回归测试不出来**，
+  那才是更贵的错误。
+- 顺带给 `e2e_update_user_partial_returns_200` 的 create 步骤补了显式
+  `assert_eq!(status, 201)`：原先 create 失败时是崩在
+  `test_utils.rs:261` 的反序列化里，报错信息完全指不到真正原因。
+
+#### 顺手挖出来的设计问题（新增待拍板，见 §4.1u）
+
+`route_to_resource_action` 把三条路由映射成 `(User, Create)` / `(User, Read)` /
+`(User, Update)`。逐个角色核过 `cats_rbac::default_permissions()` 之后：
+
+| 角色 | `User × Create` | `User × Read` | `User × Update` |
+|---|---|---|---|
+| Sponsor | ✅ | ✅ | ✅ |
+| User | ❌ | ✅ | ❌ |
+| ArchitectLead / QualityLead / DatabaseLead | ❌ | ✅ | ❌ |
+| RustLead / ProjectLead / SRELead | ❌ | ❌ | ❌ |
+
+**⇒ 普通用户既不能自助注册、也不能改自己的档案。**
+crate 内已有单测 `plain_user_cannot_create_users` 把这条钉住了，所以它不是
+刚引入的，但直到这次为了修 e2e 而去查矩阵才被摆到台面上。
+
+对"达到商业产品标准"这个目标来说，这大概率不是本意（自助注册和改自己的
+资料是常规需求）。但**改权限矩阵是设计决策，不在修 CI 的范围内**，
+所以 e2e 里用的是 Sponsor，并把这段原因原样写在
+`crates/user-service/tests/e2e_t02.rs` 的文件头注释里 ——
+免得下一个读的人以为 Sponsor 是随手选的。
+
+#### 一条容易踩的坑
+
+修这个的时候先试了提取一个 `as_caller()` 辅助函数返回
+`ServiceRequest`。**actix-web 4.15 的 `TestRequest::to_request()` 返回的是
+`actix_http::Request`，不是 `ServiceRequest`**（`E0308`）。
+而 `actix_web::dev` 只 re-export 了
+`{Extensions, Payload, RequestHead, Response, ResponseHead}`，**不含 `Request`** ——
+要命名这个返回类型就得给 user-service 加一条 `actix-http` dev-dependency。
+为省 6 行重复代码而加依赖不值得，最后直接内联。
