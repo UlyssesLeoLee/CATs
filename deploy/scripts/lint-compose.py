@@ -1995,6 +1995,120 @@ if _18_checked:
     note("规则 18 检查了 %d 个 Deployment 的 readinessProbe 指向（共读到 %d 个 "
          "Deployment）" % (_18_checked, len(_deploys)))
 
+# 规则 19: compose 的 healthcheck 不得依赖运行时镜像里没有的程序
+#
+# 这条守的是一个**还没发生、但一发生就会全盘变红**的坑。
+#
+# 仓库里有**两套**运行时镜像，别混（per BACKEND_STATUS §4.1ac）：
+#   deploy/Dockerfile.runtime  → compose 用，基础镜像 debian:bookworm-slim
+#                                 装了 ca-certificates / libssl3 / libpq5，
+#                                 **有 /bin/sh，但没有 curl / wget**
+#   deploy/docker/Dockerfile.rust → ci-docker-build 用，distroless/cc-debian12
+#                                 **连 shell 都没有**
+#
+# 所以照着网上最常见的写法给这些服务加 healthcheck：
+#     test: ["CMD", "curl", "-f", "http://localhost:8080/readyz"]
+#     test: ["CMD-SHELL", "wget -qO- ..."]
+# 会让容器**永远 unhealthy** —— 不是"探针偶尔失败"，是二进制不存在，
+# 于是 `depends_on: condition: service_healthy` 永远不满足、整套 compose 起不来。
+# 而这类失败在 YAML 上完全合法，`docker compose config` 也不会拦。
+#
+# 顺带说明为什么 k8s 没这个问题：readinessProbe 是 **kubelet 在容器外**发起的
+# HTTP 请求，不需要容器里装任何东西。所以 k8s 探针与 compose healthcheck
+# 的可行性完全是两回事。
+
+with io.open(COMPOSE, encoding="utf-8", errors="replace") as _f:
+    _compose_raw = _f.read()
+
+
+def _cargo_base_services(raw):
+    """找出在 raw 里写了 `<<: *cargo-base` 的 service 名。
+
+    逐行扫描，**不用正则跨行匹配**。第一版写成
+        ^  (name):\\s*\\n(?:^[ \\t]+.*\\n)*?^[ \\t]+<<:\\s*\\*cargo-base\\s*$
+    —— 外层 `(?:...)*?` 套着 `.*\\n`，作用在 40KB 的文件上会**灾难性回溯**：
+    lint 直接卡死（我实测挂到 1370 秒 CPU 才被杀掉，输出文件 0 字节）。
+    这和本文件里其他几次扫描器事故是同一个形状：**别用正则去扫结构**。
+    """
+    found, cur = set(), None
+    for line in raw.splitlines():
+        m = re.match(r"^  ([A-Za-z][\w.-]*):\s*$", line)
+        if m:
+            cur = m.group(1)
+            continue
+        if re.match(r"^[ \t]+<<:\s*\*cargo-base\s*$", line) and cur:
+            found.add(cur)
+    return found
+
+
+# 只管**我们自己用 Dockerfile.runtime 构建**的那批镜像。
+# postgres / kafka 用的是官方镜像，它们镜像里有什么工具不由本仓库决定 ——
+# 对它们套用"运行时镜像里没有 curl"是误报。
+_our_images = _cargo_base_services(_compose_raw)
+if len(_our_images) < 10:
+    err("规则 19 失效：只认出 %d 个使用 `<<: *cargo-base` 的 service（阈值 10）—— "
+        "扫描路径写错了。**扫不到不等于没有问题**" % len(_our_images))
+
+_http_clients = ("curl", "wget")
+_runtime_dockerfile = os.path.join(ROOT, "deploy", "Dockerfile.runtime")
+_runtime_src = ""
+if os.path.isfile(_runtime_dockerfile):
+    with io.open(_runtime_dockerfile, encoding="utf-8", errors="replace") as _f:
+        _runtime_src = _f.read()
+# apt-get 的包列表常写在反斜杠续行里：
+#     RUN apt-get update && apt-get install -y --no-install-recommends \
+#             ca-certificates libssl3 libpq5 && rm -rf ...
+# `install` 与包名**不在同一行**，所以 `[^\n]*` 一律匹配不上，
+# 第一版因此把"镜像里明明装了 curl"也判成没装（变异 M4 抓出来的）。
+# 先把续行接成一行再搜。
+_runtime_joined = re.sub(r"\\\s*\n\s*", " ", _runtime_src)
+_installed_clients = [
+    c for c in _http_clients
+    if re.search(r"apt-get\b.*?\binstall\b.*?(?<![\w-])%s(?![\w-])" % c, _runtime_joined)
+]
+
+_checked_hc = []
+for _sname in sorted(_our_images):
+    _svc = (services or {}).get(_sname) or {}
+    _hc = _svc.get("healthcheck")
+    if not _hc:
+        continue
+    _test = _hc.get("test")
+    if not _test:
+        continue
+    _joined = " ".join(_test) if isinstance(_test, list) else str(_test)
+    _checked_hc.append(_sname)
+    for _c in _http_clients:
+        # 只在真正把该程序当作可执行文件时才报（避免误伤 URL 里的字符）
+        if not re.search(r"(^|[\s\"'])%s([\s\"']|$)" % _c, _joined):
+            continue
+        # 镜像里**确实装了**它就别报 —— 否则这条规则会变成"不许用 curl"，
+        # 而正确做法恰恰可以是"在 Dockerfile.runtime 里装 curl"。
+        # 第一版算出了 `_installed_clients` 却在判断里没用它，
+        # 是变异验证 M4（装了 curl 仍被拦）抓出来的。
+        if _c in _installed_clients:
+            continue
+        err("规则 19：compose service `%s` 的 healthcheck 调用了 `%s`，"
+            "但 deploy/Dockerfile.runtime 的运行时镜像只装了 "
+            "ca-certificates / libssl3 / libpq5 —— **镜像里没有 %s**。"
+            "该 healthcheck 会让容器永远 unhealthy，"
+            "`depends_on: service_healthy` 随之永不满足。"
+            "要么在 Dockerfile.runtime 里装它，要么改用镜像里已有的程序，"
+            "要么改用 k8s 探针（kubelet 在容器外发起，不需要容器内有客户端）"
+            % (_sname, _c, _c))
+
+if not _runtime_src:
+    err("规则 19 失效：读不到 deploy/Dockerfile.runtime —— "
+        "无法判断运行时镜像里有哪些程序，**扫描不到不等于没有问题**")
+else:
+    # 刻意报告**扫了几个**而不是"有几个带 healthcheck"。
+    # 今天后者是 0（自建镜像的服务一个 healthcheck 都没有），而
+    # "扫了 0 个所以没问题"和"扫了 12 个、其中 0 个有问题"输出完全一样 ——
+    # 这是本文件里反复出现的那个形状：空结果看起来像结论。
+    note("规则 19 扫了 %d 个自建镜像 service（用 `<<: *cargo-base`），"
+         "其中 %d 个带 healthcheck；Dockerfile.runtime 里可用的 HTTP 客户端: %s"
+         % (len(_our_images), len(_checked_hc), _installed_clients or "无"))
+
 print("=" * 66)
 print("compose 静态不变量检查")
 print("=" * 66)
@@ -2042,6 +2156,8 @@ print("  OK    规则 17 %d 条 envoy 路由的 cluster 落点与 crates/ 的路
       % _17_total)
 print("  OK    规则 18 %d 个 Deployment 的 readinessProbe 不指向不查依赖的 /healthz"
       % _18_checked)
+print("  OK    规则 19 %d 个自建镜像 service 的 healthcheck 不依赖运行时镜像里没有的程序"
+      % len(_our_images))
 print("")
 for n in notes:
     print("  提醒  " + n)

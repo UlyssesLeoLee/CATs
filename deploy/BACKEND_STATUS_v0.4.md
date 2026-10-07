@@ -2679,3 +2679,86 @@ Login 与 push 两步的条件必须一致：只改一边会出现"推送了但�
 
 **通用判据：给仓库补的第一个 Actions secret 之前，先确认工作流里引用它的每个
 `if` 是不是真的可满足；不可满足的条件不会报错，只会恒假。**
+
+### §4.1ac 两套运行时镜像的差别，决定了 compose healthcheck 能不能用 curl（2026-10-07）
+
+§4.1aa 那批服务补完 `/readyz` 之后，剩下的一条待办是"compose 补 healthcheck"
+（目前 12 个应用服务里 **0 个**有 healthcheck，`depends_on: service_healthy`
+只对 db-init / kafka-init 用得上）。动手前先查可行性，结果查出一个**会让人
+把整套 compose 改瘫**的坑。
+
+#### 仓库里有两套运行时镜像，别混
+
+| 文件 | 谁在用 | 基础镜像 | 有 shell？ | 有 curl/wget？ |
+|---|---|---|---|---|
+| `deploy/Dockerfile.runtime` | **compose**（`build.dockerfile`） | `debian:bookworm-slim` | 有 | **没有** |
+| `deploy/docker/Dockerfile.rust` | **ci-docker-build** | `gcr.io/distroless/cc-debian12:nonroot` | **没有** | **没有** |
+
+前者只 `apt-get install ca-certificates libssl3 libpq5`，后者连 shell 都没有
+（distroless 按设计不含 shell / 包管理器）。
+
+我一开始**猜错了**：以为 compose 也用 distroless，于是准备写"镜像里没有 shell，
+shell 形式也不可行"。实际去读 `deploy/Dockerfile.runtime` 才发现是 debian-slim。
+**两套镜像的存在本身就说明这类判断不能靠印象。**
+
+#### 于是那条最常见的写法会让整套 compose 起不来
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8080/readyz"]        # ❌ 没有 curl
+  test: ["CMD-SHELL", "wget -qO- http://localhost:8080/readyz"]      # ❌ 没有 wget
+```
+
+不是"探针偶尔失败"，是二进制不存在 ⇒ 容器**永远 unhealthy** ⇒
+`depends_on: service_healthy` 永不满足 ⇒ `docker compose up` 卡在等依赖。
+而这种 YAML **完全合法**，`docker compose config` 也不会拦。
+
+#### 为什么 k3s 没这个问题
+
+k8s 的 `readinessProbe` 是 **kubelet 在容器外**发起的 HTTP 请求，**不需要容器里
+装任何东西**。所以 §4.1aa 那 10 个 Deployment 的探针能直接用 HTTP，
+而 compose 的 `HEALTHCHECK` 必须**在容器内**执行 —— 两者的可行性完全是两回事，
+不能拿一边推另一边。
+
+#### lint 规则 19
+
+`healthcheck` 不得依赖运行时镜像里没有的程序。只管用 `<<: *cargo-base` 构建的
+那 12 个 service —— postgres / kafka 用官方镜像，镜像里有什么不由本仓库决定，
+对它们套这条是误报。
+
+**变异验证 6/6**（含 3 条反向用例）：
+
+| 用例 | 期望 | 结果 |
+|---|---|---|
+| R1 未变异 | exit 0、零 FAIL | ✅ |
+| R2 官方镜像的 `pg_isready` / `kafka-topics.sh` | **不得**被报 | ✅ |
+| M1 curl 版 healthcheck | 精确报"镜像里没有 curl" | ✅ |
+| M2 CMD-SHELL + wget 版 | 精确报"镜像里没有 wget" | ✅ |
+| R3 CMD-SHELL 但只用 `/bin/sh`（镜像里有） | 不得被报 | ✅ |
+| M4 Dockerfile.runtime 装了 curl | **必须放行** | ✅（修完才通过，见下） |
+
+#### 规则本身被变异验证抓出两个真缺陷
+
+1. **算出了 `_installed_clients` 却在判断里没用它** —— 于是这条规则实际含义变成
+   "不许用 curl"，而正确做法恰恰**可以是**在 Dockerfile.runtime 里装 curl。
+   M4 抓出来的。
+2. **包列表写在反斜杠续行里**，`apt-get install` 与包名**不在同一行**，
+   所以 `[^
+]*` 一律匹配不上 —— 于是"镜像里明明装了 curl"也被判成没装。
+   修法：先把续行接成一行再搜。
+
+两个都是"**验证器自己也要验证**"才暴露的：不跑 M4，规则看起来完全正常。
+
+顺带一次扫描器事故：找 `<<: *cargo-base` 的服务名时，我用了
+`^  (name):
+(?:^[ 	]+.*
+)*?^[ 	]+<<:\s*\*cargo-base\s*$` —— 外层量词套着
+`.*
+`，作用在 40KB 文件上**灾难性回溯**，lint 直接卡死（实测烧掉 1370 秒 CPU，
+输出文件 0 字节）。改成逐行扫描。同一个教训的第四次出现。
+
+#### 要真正补 compose healthcheck，只有一条干净的路
+
+在 `Dockerfile.runtime` 里装一个 HTTP 客户端（或做一个静态探针二进制），
+然后按真实路径配 healthcheck。在此之前 §4.1u 那条待办**保持未做** ——
+宁可不做，也不要加一堆会让整套 compose 永远起不来的假 healthcheck。
