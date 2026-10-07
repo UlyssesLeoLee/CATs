@@ -1933,6 +1933,38 @@ liveness/readiness/startup 探针路径，回源码查该服务注册过的路�
 排期建议：照 `audit-service`（生产 `main.rs:87` 与 15 处测试**共用同一个**
 `handlers::configure`，本仓唯一做到这点的 crate）与 `cats-ai-gateway` 的样子收敛。
 
+> **进展（2026-10-07，本节后半段全部完成）**：6 个 crate 已全部收敛。
+>
+> | crate | 路由（生产 = 测试） | app_data | 受影响用例 | 收进 |
+> |---|---|---|---|---|
+> | task-service | 7（测试原本只抄 3 条） | 1 | 3 | `handlers::configure_app`（已有，接入） |
+> | auth-service | 5 = 5（`e2e_auth` 漏 `logout`，`e2e_t01` 两处漏 `healthz`） | 1 | 17 | `handlers::configure_routes`（新建） |
+> | user-service | 4 = 4 | 1 | 5 | `handlers::configure_routes`（新建） |
+> | project-service | 6 = 6 | 2 | 7 | `handlers::configure_routes`（新建） |
+> | file-service | 6 = 6 | 2 | 8 | `handlers::configure_routes`（新建） |
+> | notification-service | 5 = 5 | **3** | 6 | `handlers::configure_routes`（新建） |
+>
+> **本仓 7 个有集成测试的服务现已全部单一事实来源**；只剩 `cats-mock` 仍按
+> flag 条件装配（它的"生产"是 mock server，语义不同，不在本条范围）。
+>
+> 顺带消除了一类隐患：这几个 crate 的 app_data 都不止一个。测试漏注册 RBAC /
+> 事件总线那个时，actix extractor 取不到 → 500 `Requested application data is
+> not configured correctly`；而 `/healthz` **不吃**这些 extractor —— 症状是
+> **"healthz 过、其余全挂"**，极易被误判成 RBAC 逻辑或事件总线坏了。把 app_data
+> 与路由一起收进 `configure_routes` 后，这类"忘了注册"只剩一种写法。
+>
+> 三个坑记在各 commit message 里：`HttpServer::new` 的闭包是 `Fn` 不是
+> `FnOnce`（每个 worker 线程各调一次，**必须先 `clone()` 再 move**），
+> 四个 crate 里有三个在这里撞过；测试文件对 handler 的引用风格不统一
+> （有的 `use handlers`，有的全限定），按错风格改会编译不过；以及
+> `e2e_t01.rs` 的 import 收窄（原来 import 的四个 handler 名在文件里只出现在
+> 字符串与注释中，零函数引用）。
+>
+> **验证状态**：43 个受影响的 e2e 用例全部带 `#[ignore = "e2e-needs-real-pg"]`，
+> **本地一个都跑不到**（无真 PostgreSQL）。它们的唯一执行点是 CI 的
+> `e2e (real PostgreSQL)` job —— auth 那一轮与这四个 crate 那一轮均为
+> **success**。这是本轮第四次撞上"本地全绿必须连 ignored 计数一起读"。
+
 #### 3. 反向缺口：生产注册了但零测试覆盖
 
 `worker-service`（3 条）、`report-service`（4 条）、`asr` / `ocr` / `ingestion` /
@@ -2052,3 +2084,98 @@ openapi 的 `servers[0].url` 是 `https://api.cats.internal/v1`，而 `/healthz`
 全部注册在根 `/healthz`，envoy 更是对 `/healthz` 直接 `direct_response`、
 根本不代理。`/auth/login` 因为代码里确实是 `/v1/auth/login` 所以对得上，
 `/healthz` 对不上。缺一份"envoy 是否重写前缀"的权威说明，故只记录不判定。
+
+### §4.1v RBAC 的「第二参数」语义被误读，导致 `worker/tick` 的鉴权从未生效（2026-10-07）
+
+#### 缺陷：`require_roles` 的第二个参数是**调用者角色**，不是「允许的角色」
+
+`cats_rbac::service_helpers::require_roles(checker, roles, resource, action)` 内部是
+
+```rust
+for role in allowed_roles {                 // 循环的是**传进来的那个列表**
+    match checker.check_roles(&[*role], resource, action).await { Ok(()) => return Ok(()), ... }
+}
+```
+
+而 `check_roles(user_roles, ...)` 问的是「**给定这些角色**，有没有 `resource:action`
+权限」。于是这段循环在问「**这个角色**有没有权限」，而不是「调用者是不是这个角色」。
+
+worker-service 的 `POST /v1/worker/tick` 把
+
+```rust
+&[Role::Sponsor, Role::RustLead, Role::SRELead]   // 作者想表达"允许的角色"
+```
+
+传了进去，同时把从 header 解出来的角色丢进了 `let (_user_id, _roles)`。
+第一个迭代就查「Sponsor 有没有 Task:Update」——有（Sponsor 全权 `resource_all ×
+action_all`）——直接 `Ok`。**调用者是谁完全不影响结果。**
+
+#### 实测（修复前，`X-Cats-User-Id` 合法，只改 `X-Cats-Roles`）
+
+| `X-Cats-Roles` | 应有结果 | 实得 |
+|---|---|---|
+| 不带头 | 401 `missing_authorization` | 401 ✅ |
+| 只有 uid | 401 `unauthorized` | 401 ✅ |
+| uid 非法 | 401 `invalid_token` | 401 ✅ |
+| `NoSuchRole` | 401 `unauthorized` | 401 ✅ |
+| `Sponsor` | 500（放行，库死） | 500 ✅ |
+| **`User`** | **403** | **500 ← 进了 `tick()`** |
+| **`Guest`** | **401/403** | **500 ← 进了 `tick()`** |
+
+#### 波及范围：全仓只有这一处
+
+其余 6 个服务（file / project / report / task / notification / cats-bff）都是
+`check_roles(&auth.roles, ...)`，audit-service 是
+`require_roles(&state.checker, &roles, ...)` —— 都传**请求头解出来的调用者角色**，
+用法正确。
+
+#### 可达性：潜伏，未兑现
+
+该端点**未被 envoy 路由**；compose 里 worker 只绑 `127.0.0.1:8089`；k3s 是
+ClusterIP 且无网关路由。所以这不是「正在被利用」，而是「一旦有人加了网关路由或把
+绑定改成 `0.0.0.0` 就直接可用」。
+
+#### 修法：显式白名单，且**不用**权限矩阵
+
+改为比对从 header 解出来的角色是否持有 `TICK_ROLES` 之一。
+
+**为什么不用矩阵判定**：`default_permissions()` 里 `Task:Update` 目前**只有
+Sponsor 持有**（RustLead 只对 `Service` 域全权，SRELead 无 Update）。若改成
+`require_roles(&checker, &caller_roles, Task, Update)`，RustLead 与 SRELead 会被
+矩阵挡掉，与本 handler「这三个角色可 tick」的原意相反。白名单才是这里真正想
+表达的东西 —— 测试 `tick_as_rustlead_passes_allowlist_even_without_task_update_perm`
+专门把这两条判定路径区分开。
+
+#### 同批修掉：`/readyz` 在 DB 挂时仍返 200
+
+worker-service 与 audit-service 的 `readyz` 是逐字相同的两份实现，DB 连不上时
+**仍返回 200**，只在 body 写 `db:"fail"`。k8s 的 readinessProbe **只看状态码**，
+而 `deploy/k3s/cats-core/worker-service.yaml:33` 正是拿 `/readyz` 当 readinessProbe
+—— 库挂掉的 Pod 会被判 Ready、继续接流量。改为 DB 失败时返回 **503**（两者同步），
+响应体不变。
+
+#### 门禁：lint 规则 15
+
+扫 `crates/*/src`，禁止把角色**字面量数组**传给 `require_roles`。排除
+`cats-rbac` 自身 —— 它自己的单元测试用字面量模拟调用者角色是合法用法。
+自失效保护：扫到的 `.rs` < 10 或全仓 `require_roles` < 5 处时报错
+（「空结果不等于没有问题」）。当前实测 127 个 `.rs` / 18 处。
+
+变异验证 14/14，含双向：
+
+| 变异 | 期望 | 实得 |
+|---|---|---|
+| 退回绕过形态 | User / Guest 用例 FAILED，Sponsor 用例仍 ok | PASS |
+| 改成纯矩阵判定 | RustLead 用例 FAILED，lint 仍 exit 0 | PASS |
+| 注入字面量数组调用 | lint exit 1 且点名 worker-service | PASS |
+| 传变量（合法写法） | lint 仍 exit 0（不误报） | PASS |
+
+#### 本轮我自己踩的两个坑（都是「验证器骗人」）
+
+1. **变异脚本用 `shutil.copy2` 还原会连 mtime 一起复制**。还原后源文件时间戳比
+   上次编译还早，cargo 的 mtime 指纹判定「没变过」→ **跳过重编** → 跑出来的是
+   **变异体编译出的旧二进制**。当时 sha256 对得上、git status 干净、clippy exit 0，
+   只有测试仍在报变异态的失败。**还原必须刷新 mtime。**
+2. 用 `io.open(p,'w').write(io.open(p).read())` 刷新时间戳时，**`open(p,'w')` 先求值
+   并把文件截断**，随后才读 —— 两个 crate 下 16 个 `.rs` 全被清成 0 字节。刷新
+   时间戳要用 `os.utime`，或先读进变量再写。

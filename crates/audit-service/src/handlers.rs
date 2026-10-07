@@ -59,11 +59,20 @@ pub async fn readyz(pool: web::Data<PgPool>) -> impl Responder {
         .execute(pool.get_ref())
         .await
         .is_ok();
-    HttpResponse::Ok().json(ReadyResponse {
+    let body = ReadyResponse {
         status: if db_ok { "ready" } else { "not_ready" },
         service: "audit-service",
         db: if db_ok { "ok" } else { "fail" },
-    })
+    };
+    // 2026-10-07 行为变更：DB 连不上时原来仍返回 **200**，只在 body 里写 `db:"fail"`。
+    // k8s readinessProbe 只看状态码，于是库挂掉的 Pod 会被判 Ready 继续接流量。
+    // 与 worker-service 同步改（两者原本是逐字相同的两份实现）。
+    // 响应体保持不变，便于监控同时看状态码和 body。
+    if db_ok {
+        HttpResponse::Ok().json(body)
+    } else {
+        HttpResponse::ServiceUnavailable().json(body)
+    }
 }
 
 #[derive(Deserialize)]

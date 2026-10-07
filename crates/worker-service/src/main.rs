@@ -57,12 +57,13 @@ async fn main() -> std::io::Result<()> {
     let pool_data = web::Data::new(pool);
 
     HttpServer::new(move || {
+        // 路由表 + app_data 都在 handlers::configure_routes 里，与集成测试共用一份。
+        // `HttpServer::new` 的闭包是 `Fn`，每个 worker 线程都会再调一次，
+        // 所以先把两个 `web::Data` clone 出来再 move 进 configure 的闭包里。
+        let app_state = app_state.clone();
+        let pool_data = pool_data.clone();
         App::new()
-            .app_data(app_state.clone())
-            .app_data(pool_data.clone())
-            .route("/healthz", web::get().to(handlers::healthz))
-            .route("/readyz", web::get().to(handlers::readyz))
-            .route("/v1/worker/tick", web::post().to(handlers::manual_tick))
+            .configure(move |c| handlers::configure_routes(c, app_state.clone(), pool_data.clone()))
     })
     .bind(&bind_addr)?
     .run()
