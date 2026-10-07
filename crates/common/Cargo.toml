@@ -21,6 +21,16 @@ tracing-subscriber.workspace = true
 serde.workspace       = true
 serde_json.workspace  = true
 tokio.workspace       = true
+# error 模块的映射函数要产出这两种响应:
+#   cats_error_to_response -> actix_web::HttpResponse
+#   grpc_status()          -> tonic::Status
+# 也就是说 CatsError 同时服务 HTTP 与 gRPC 两条链路, 共享库因此绑定这两个框架。
+# 这是 error.rs 既定设计的代价, 不是新引入的耦合。
+actix-web.workspace   = true
+tonic.workspace       = true
+# error.rs 里 `from_sqlx_error` / `from_sqlx_row` 把 sqlx 的错误映射成
+# ErrorCode（对外只暴露消息，不把 sqlx 类型泄漏到业务层）
+sqlx.workspace        = true
 
 [dev-dependencies]
 # 预留：M1 阶段加 tokio-test / mockall / testcontainers

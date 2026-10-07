@@ -1,0 +1,347 @@
+openapi: 3.0.3
+info:
+  title: CATs Platform Core REST API
+  description: |
+    Universal Computer-Assisted Translation SaaS API Gateway Contracts
+
+    **版本**: v1.0.1 (per §8.5 决议 10 错误码引用闭环前置同步)
+    **升版触发**: per `doc/03-详细设计/接口设计/CATs_接口设计书_v2.0.md` §3.5 + 启动会决议 10 (T-07 9/27)
+    **基线**: v1.0.0 (`cats-openapi-v1.yaml`)
+    **改动**: 加 `components.schemas.ErrorBody` (3 字段, 跟 Rust impl `crates/auth-service/src/models.rs:42` 对齐)
+             + `components.schemas.ErrorCode` enum (28 条, 引用 `doc/05-其他/管理/CATs_错误码表_v1.0.md` §3)
+    **接口设计书 v2.0+2 引用**: per `git log -1 --format='%H'` on `doc/03-详细设计/接口设计/CATs_接口设计书_v2.0.md`
+  version: 1.0.1
+servers:
+  - url: https://api.cats.internal/v1
+    description: Internal K3s Envoy Gateway Endpoint
+
+paths:
+  /auth/login:
+    post:
+      summary: User Login
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, tenant_id]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                tenant_id: { type: string }
+      responses:
+        '200':
+          description: Login Successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer }
+        '400':
+          description: Validation Error (per 错误码表 §3.2)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Authentication Failed (per 错误码表 §3.3)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '500':
+          description: Server Error (per 错误码表 §3.6)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /auth/refresh:
+    post:
+      summary: Refresh Access Token
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: Token Refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer }
+        '401':
+          description: Token Invalid / Revoked / Wrong Type (per 错误码表 §3.3)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '500':
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /auth/logout:
+    post:
+      summary: Logout (Revoke Refresh Token)
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+            application/json:
+              schema:
+                type: object
+                required: [refresh_token]
+                properties:
+                  refresh_token: { type: string }
+      responses:
+        '200':
+          description: Logout Success
+        '401':
+          description: Token Invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /auth/me:
+    get:
+      summary: Get Current User
+      tags: [Auth]
+      responses:
+        '200':
+          description: Current User Info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string }
+                  username: { type: string }
+                  email: { type: string }
+        '401':
+          description: Unauthorized (per 错误码表 §3.3 missing_authorization / invalid_token / user_inactive)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+  /healthz:
+    get:
+      summary: Health Check (per service)
+      tags: [Health]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "ok" }
+                  service: { type: string, example: "auth-service" }
+
+  /projects:
+    get:
+      summary: List Workspace Projects
+      tags: [Project]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Projects list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create Project
+      tags: [Project]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, source_lang, target_lang]
+              properties:
+                name: { type: string }
+                source_lang: { type: string }
+                target_lang: { type: string }
+                tm_id: { type: string }
+                termbase_id: { type: string }
+      responses:
+        '201':
+          description: Project created
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /tasks:
+    post:
+      summary: Dispatch Media Translation Task
+      tags: [Task]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, file_id, media_type]
+              properties:
+                project_id: { type: string }
+                file_id: { type: string }
+                media_type:
+                  type: string
+                  enum: [TEXT, AUDIO, VIDEO, PDF, OFFICE, GAME]
+      responses:
+        '202':
+          description: Task Accepted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  # ===========================================================
+  # ErrorBody schema (v1.0.1 新增, 决议 10 错误码引用闭环前置同步)
+  # 引用: doc/05-其他/管理/CATs_错误码表_v1.0.md §2.1 + §3 + Rust impl
+  #       crates/auth-service/src/models.rs:42 (3 字段 struct ErrorBody)
+  # 接口设计书 v2.0+2 §3.5.1 (本次升版) 引用
+  # ===========================================================
+  schemas:
+    ErrorBody:
+      type: object
+      description: |
+        统一错误响应 schema (per 错误码表 v1.0 §2.1 + Rust impl)
+        3 字段 (error + message + detail), 跟 §1.3 高层嵌套信封 (4 字段) 不同
+        §1.3 是 v2.0 大版本基线设计 (8/18 8aed5d0), §3.5 是 Sprint 1 落地 schema (per 错误码表 8/27)
+        真实落地以本 schema 为准 (3 字段, snake_case 28 codes)
+      required: [error, message]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: |
+            人类可读错误描述 (i18n 前缀, 默认 en-US, per 错误码表 §2.1)
+        detail:
+          type: string
+          nullable: true
+          description: |
+            可选上下文 (不暴露 secret / PII, 内部 detail 走 detail 不走 message, per 错误码表 §2.1)
+
+    # ===========================================================
+    # ErrorCode enum (v1.0.1 新增, 28 条 snake_case 业务错误码)
+    # 引用: doc/05-其他/管理/CATs_错误码表_v1.0.md §3.2-§3.7 (28 条枚举)
+    # commit baseline: 2146f53 (T-01 实战深化, 错误码表 v1.0)
+    # Single Source of Truth: 错误码表 v1.0 §3, 跟 Rust impl 一致
+    # 接口设计书 v2.0+2 §3.5.4 反向引用
+    # ===========================================================
+    ErrorCode:
+      type: string
+      description: |
+        业务错误码枚举 (per 错误码表 v1.0 §3, 28 条, snake_case, machine-readable)
+        必须枚举本表全部 28 条值 (per 错误码表 §6.3 实施要求)
+      enum:
+        # 客户端请求错误 (§3.2, 5 条)
+        - invalid_request
+        - invalid_payload
+        - invalid_header
+        - invalid_query
+        - unsupported_version
+        # 鉴权错误 (§3.3, 8 条)
+        - invalid_credentials
+        - invalid_token
+        - token_expired
+        - token_revoked
+        - invalid_token_type
+        - missing_authorization
+        - invalid_authorization_scheme
+        - user_inactive
+        # 资源错误 (§3.4, 6 条)
+        - user_not_found
+        - token_not_found
+        - resource_not_found
+        - username_conflict
+        - email_conflict
+        - token_already_revoked
+        # 限流 / 配额 (§3.5, 2 条)
+        - rate_limited
+        - quota_exceeded
+        # 服务端错误 (§3.6, 4 条)
+        - server_error
+        - server_misconfigured
+        - dependency_unavailable
+        - dependency_timeout
+        # 业务规则 (§3.7, 2 条有效, user_inactive 已在 §3.3)
+        - password_mismatch
+        - operation_not_permitted
+
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer, default: 1 }
+        page_size: { type: integer, default: 20 }
+
+  # ===========================================================
+  # Reusable responses (v1.0.1 新增, per §8.5 决议 10)
+  # ===========================================================
+  responses:
+    BadRequest:
+      description: Validation Error (HTTP 400, per 错误码表 §3.2)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    Unauthorized:
+      description: Unauthorized (HTTP 401, per 错误码表 §3.3)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    NotFound:
+      description: Resource Not Found (HTTP 404, per 错误码表 §3.4)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    Conflict:
+      description: Resource Conflict (HTTP 409, per 错误码表 §3.4)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    RateLimited:
+      description: Rate Limited (HTTP 429, per 错误码表 §3.5)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    InternalError:
+      description: Internal Server Error (HTTP 500, per 错误码表 §3.6)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'

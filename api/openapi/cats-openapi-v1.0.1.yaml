@@ -9,6 +9,13 @@ info:
     **基线**: v1.0.0 (`cats-openapi-v1.yaml`)
     **改动**: 加 `components.schemas.ErrorBody` (3 字段, 跟 Rust impl `crates/auth-service/src/models.rs:42` 对齐)
              + `components.schemas.ErrorCode` enum (28 条, 引用 `doc/05-其他/管理/CATs_错误码表_v1.0.md` §3)
+    **2026-10-07 追加（未升版，刻意）**: `/healthz` 的响应体统一为
+             `components.schemas.HealthResponse`，并移除旧的顶层 `service` /
+             `name` / `version`。这是**破坏性变更**，按 `CATs_接口设计书_v2.0.md`
+             §7 接口版本控制应当走 minor 升版（1.0.1 → 1.1.0），但该流程会牵动
+             约 20 处跨文档引用（proto 注释 / 各 crate lib.rs 头 / README /
+             接口设计书 §9 关联表），故**本轮只订正内容、暂不动版本号**，
+             升版作为独立工单待拍板。在升版完成之前，本文件的内容以本段为准。
     **接口设计书 v2.0+2 引用**: per `git log -1 --format='%H'` on `doc/03-详细设计/接口设计/CATs_接口设计书_v2.0.md`
   version: 1.0.1
 servers:
@@ -26,10 +33,15 @@ paths:
           application/json:
             schema:
               type: object
-              required: [username, password, tenant_id]
+              required: [username, password]
               properties:
                 username: { type: string }
                 password: { type: string }
+                # 可选：auth-service 的 LoginRequest **没有**这个字段
+                # (models.rs:9-12)，而 cats-bff 侧是 Option + serde(default)
+                # (upstream/auth.rs:22-27)。原文把它列为 required，会让按本
+                # 规格生成的客户端强制发送一个后端并不读取的字段。
+                # per BACKEND_STATUS §4.1u。
                 tenant_id: { type: string }
       responses:
         '200':
@@ -38,10 +50,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [access_token, refresh_token, expires_in]
                 properties:
                   access_token: { type: string }
                   refresh_token: { type: string }
                   expires_in: { type: integer }
+                  # 原文漏了这三个：实现（models.rs:16-23）确实返回它们，
+                  # 漏声明会让生成的客户端读不到 token_type / user_id /
+                  # username —— 登录后无法直接渲染当前用户。
+                  # per BACKEND_STATUS §4.1u。
+                  token_type: { type: string, example: "Bearer" }
+                  user_id: { type: string }
+                  username: { type: string }
         '400':
           description: Validation Error (per 错误码表 §3.2)
           content:
@@ -81,10 +101,13 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [access_token, refresh_token, expires_in]
                 properties:
                   access_token: { type: string }
                   refresh_token: { type: string }
                   expires_in: { type: integer }
+                  # 同样漏了 token_type（models.rs:33-38）
+                  token_type: { type: string, example: "Bearer" }
         '401':
           description: Token Invalid / Revoked / Wrong Type (per 错误码表 §3.3)
           content:
@@ -114,6 +137,16 @@ paths:
       responses:
         '200':
           description: Logout Success
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked, revoked_at]
+                properties:
+                  # 原文的 200 完全没有 body schema，而实现返回这两个字段
+                  # （models.rs:136-139）。客户端无从判断登出是否真的生效。
+                  revoked: { type: boolean }
+                  revoked_at: { type: string, format: date-time }
         '401':
           description: Token Invalid
           content:
@@ -146,6 +179,23 @@ paths:
   /healthz:
     get:
       summary: Health Check (per service)
+      description: |
+        2026-10-07 起全仓 18 个注册 `/healthz` 的服务统一为**唯一形状**
+        （实施记录见 `deploy/BACKEND_STATUS_v0.4.md` §4.1o）。
+
+        **破坏性变更**：旧形状里的顶层 `service`（auth / report / worker /
+        cats-bff）、扁平 `name` + `version`（file / notification / project /
+        task / user）已**移除**，改由 `app.name` / `app.version` 承载。
+        另有一处**新增**：cats-bff 原先还多吐 `bind_addr` 与 `upstreams`
+        （5 个内部上游 URL），现已移除 —— 它们没有任何消费者，且属内部拓扑。
+
+        **迁移**：读 `.service` 的改读 `.app.name`；读 `.name` 的改读 `.app.name`；
+        读 `.version` 的改读 `.app.version`。
+
+        **部署侧不受影响**：K8s liveness/readiness、compose `healthcheck`、
+        envoy 的 `/healthz` 都只判状态码不看 body（envoy 那个还是
+        `direct_response` 的纯文本 `ok`，根本不代理）。受影响的只有解析响应体的
+        外部监控/仪表盘。
       tags: [Health]
       responses:
         '200':
@@ -153,10 +203,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status: { type: string, example: "ok" }
-                  service: { type: string, example: "auth-service" }
+                $ref: '#/components/schemas/HealthResponse'
 
   /projects:
     get:
@@ -298,6 +345,32 @@ components:
         # 业务规则 (§3.7, 2 条有效, user_inactive 已在 §3.3)
         - password_mismatch
         - operation_not_permitted
+
+    HealthResponse:
+      type: object
+      description: |
+        健康检查响应 —— 全仓唯一形状（2026-10-07 统一）。
+
+        Rust impl：每个服务的 `HealthResponse { status, app: AppMeta }`；
+        `AppMeta` 定义在 `crates/common`，两个字段由
+        `env!("CARGO_PKG_NAME")` / `env!("CARGO_PKG_VERSION")` 填充。
+
+        **不要**改用 `AppMeta::current()` —— 它返回的是共享库 `cats-common`
+        自己的 `CARGO_PKG_NAME`，会让所有服务都自报 `"cats-common"`，监控无法
+        分辨是哪个服务应答的（2026-10-05 修过一次，踩坑记录见
+        `crates/asr-service/src/main.rs` 里 healthz 上方的注释）。
+
+        常设门禁：`deploy/scripts/lint-compose.py` 规则 10 检查形状、规则 11
+        检查测试不再断言旧形状。
+      required: [status, app]
+      properties:
+        status: { type: string, example: "ok" }
+        app:
+          type: object
+          required: [name, version]
+          properties:
+            name: { type: string, example: "auth-service" }
+            version: { type: string, example: "0.1.0" }
 
     Pagination:
       type: object

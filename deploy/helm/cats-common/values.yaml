@@ -5,6 +5,9 @@
 # 副本数（per 任务要求: replicaCount: 2）
 replicaCount: 2
 
+
+autoscaling:
+  enabled: false
 image:
   # service chart 必须覆盖
   repository: harbor.cats.internal/cats/placeholder

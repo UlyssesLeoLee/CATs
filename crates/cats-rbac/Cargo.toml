@@ -23,3 +23,7 @@ serde_json.workspace     = true
 tracing.workspace        = true
 tracing-subscriber.workspace = true
 async-trait.workspace    = true
+# service_helpers.rs 的依赖：它做 HttpRequest 层的 RBAC 取值，
+# 并用 uuid 解析主体 id
+actix-web.workspace      = true
+uuid = { version = "1", features = ["v4", "serde"] }

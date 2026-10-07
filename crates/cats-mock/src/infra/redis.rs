@@ -8,12 +8,19 @@
 //! - EXPIRE / TTL
 //! - SADD / SMEMBERS / SREM
 //! - ZADD / ZRANGE / ZSCORE
+//!
+//! 已清理: `set_ex()` — 全仓零调用; `set()` + `expire()` 已完全覆盖其行为
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-type Expiry = Option<Duration>;
+/// 过期时刻（绝对时间点），`None` = 不过期。
+///
+/// 2026-10-05 修正：原先存的是**相对时长** `Duration`，而 `is_expired` 只判断
+/// `ttl.is_zero()` —— 于是 `expire(key, 60)` 存进去的 60s 永远不等于 0，
+/// **任何 key 都不会过期**。改为在 `expire()` 时就记下绝对截止时刻。
+type Expiry = Option<Instant>;
 
 /// Redis mock (in-mem, 单实例简化)
 #[derive(Default)]
@@ -24,13 +31,19 @@ pub struct MockRedis {
 }
 
 impl MockRedis {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// 当前 KV key 数量
-    pub fn kv_len(&self) -> usize { self.kv.lock().unwrap().len() }
+    pub fn kv_len(&self) -> usize {
+        self.kv.lock().unwrap().len()
+    }
 
     /// 当前 set key 数量
-    pub fn set_len(&self) -> usize { self.sets.lock().unwrap().len() }
+    pub fn set_len(&self) -> usize {
+        self.sets.lock().unwrap().len()
+    }
 
     // ---- KV ----
 
@@ -38,12 +51,6 @@ impl MockRedis {
     pub fn set(&self, key: impl Into<String>, value: impl Into<String>) {
         let mut kv = self.kv.lock().unwrap();
         kv.insert(key.into(), (value.into(), None));
-    }
-
-    /// SET key value EX seconds
-    pub fn set_ex(&self, key: impl Into<String>, value: impl Into<String>, ttl_secs: u64) {
-        let mut kv = self.kv.lock().unwrap();
-        kv.insert(key.into(), (value.into(), Some(Duration::from_secs(ttl_secs))));
     }
 
     /// GET key
@@ -66,7 +73,9 @@ impl MockRedis {
     }
 
     /// EXISTS key
-    pub fn exists(&self, key: &str) -> bool { self.get(key).is_some() }
+    pub fn exists(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
 
     /// INCR key (key 不存在时初始化为 0)
     pub fn incr(&self, key: &str) -> i64 {
@@ -81,7 +90,9 @@ impl MockRedis {
     }
 
     /// DECR key
-    pub fn decr(&self, key: &str) -> i64 { self.incr_by(key, -1) }
+    pub fn decr(&self, key: &str) -> i64 {
+        self.incr_by(key, -1)
+    }
 
     /// INCRBY key delta
     pub fn incr_by(&self, key: &str, delta: i64) -> i64 {
@@ -96,10 +107,13 @@ impl MockRedis {
     }
 
     /// EXPIRE key seconds
+    ///
+    /// 记下**绝对截止时刻**（而非相对时长），否则无法判断"过了多久"。
     pub fn expire(&self, key: &str, ttl_secs: u64) -> bool {
         let mut kv = self.kv.lock().unwrap();
         if let Some((v, _)) = kv.get(key).cloned() {
-            kv.insert(key.to_string(), (v, Some(Duration::from_secs(ttl_secs))));
+            let deadline = Instant::now() + Duration::from_secs(ttl_secs);
+            kv.insert(key.to_string(), (v, Some(deadline)));
             true
         } else {
             false
@@ -113,7 +127,11 @@ impl MockRedis {
         let mut sets = self.sets.lock().unwrap();
         let s = sets.entry(key.into()).or_default();
         let m = member.into();
-        if s.insert(m.clone()) { 1 } else { 0 }
+        if s.insert(m.clone()) {
+            1
+        } else {
+            0
+        }
     }
 
     /// SMEMBERS key (sorted)
@@ -138,7 +156,12 @@ impl MockRedis {
 
     /// SCARD key
     pub fn scard(&self, key: &str) -> usize {
-        self.sets.lock().unwrap().get(key).map(|s| s.len()).unwrap_or(0)
+        self.sets
+            .lock()
+            .unwrap()
+            .get(key)
+            .map(|s| s.len())
+            .unwrap_or(0)
     }
 
     // ---- ZSET ----
@@ -146,7 +169,10 @@ impl MockRedis {
     /// ZADD key score member
     pub fn zadd(&self, key: impl Into<String>, member: impl Into<String>, score: f64) {
         let mut zsets = self.zsets.lock().unwrap();
-        zsets.entry(key.into()).or_default().insert(member.into(), score);
+        zsets
+            .entry(key.into())
+            .or_default()
+            .insert(member.into(), score);
     }
 
     /// ZSCORE key member
@@ -157,13 +183,26 @@ impl MockRedis {
     /// ZRANGE key start stop (按 score 升序)
     pub fn zrange(&self, key: &str, start: isize, stop: isize) -> Vec<String> {
         let zsets = self.zsets.lock().unwrap();
-        let Some(z) = zsets.get(key) else { return vec![] };
+        let Some(z) = zsets.get(key) else {
+            return vec![];
+        };
         let mut v: Vec<(&String, &f64)> = z.iter().collect();
         v.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
         let n = v.len() as isize;
-        let s = if start < 0 { (n + start).max(0) } else { start.min(n) } as usize;
-        let e = if stop < 0 { (n + stop + 1) } else { (stop + 1).min(n) } as usize;
-        v[s..e.min(v.len())].iter().map(|(m, _)| m.to_string()).collect()
+        let s = if start < 0 {
+            (n + start).max(0)
+        } else {
+            start.min(n)
+        } as usize;
+        let e = if stop < 0 {
+            n + stop + 1
+        } else {
+            (stop + 1).min(n)
+        } as usize;
+        v[s..e.min(v.len())]
+            .iter()
+            .map(|(m, _)| m.to_string())
+            .collect()
     }
 
     /// 清空所有
@@ -175,12 +214,13 @@ impl MockRedis {
 
     // ---- 内部 ----
 
-    /// 简化 TTL: 不真用定时器, get 时按 wall-clock 判过期
-    fn is_expired(ttl: Duration) -> bool {
-        let _now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        // 这里用 "创建时已记录 ttl" 简化 — 真生产应记录插入时间戳
-        // 当前用 ttl==0 视为过期, 否则未过期 (测试用)
-        ttl.is_zero()
+    /// 判断是否已到过期时刻
+    ///
+    /// 2026-10-05 修正：原先形参是相对时长 `Duration`，函数体算了个 `_now` 又丢掉，
+    /// 然后 `return ttl.is_zero()` —— 结果**非零 TTL 永远判为未过期**。
+    /// 现在形参是 `expire()` 时记下的绝对截止时刻。
+    fn is_expired(deadline: Instant) -> bool {
+        Instant::now() >= deadline
     }
 }
 
@@ -266,6 +306,61 @@ mod tests {
         r.set("k", "v");
         assert!(r.expire("k", 60));
         assert!(!r.expire("nonexistent", 60));
+    }
+
+    // 2026-10-05 新增。`expire_returns_bool` 只断言 `expire()` 的返回值，
+    // 完全没有验证 key 是否真的会过期 —— 而在修复前它**永远不会**过期
+    // （除 TTL=0 外），那个测试却是绿的。这里补上真正查行为的用例。
+    //
+    // 注意：只测 TTL=0 抓不住旧 bug —— 旧实现 `Duration::from_secs(0).is_zero()`
+    // 为 true，TTL=0 照样会过期。旧 bug 是**非零 TTL 永远不过期**，
+    // 所以下面第一个用例才是判别性的那个。
+    #[test]
+    fn is_expired_uses_absolute_deadline() {
+        // 判定函数是私有的，但测试模块能直接调：过去的时刻必须判为过期。
+        // 旧实现形参是相对时长、对"1 秒前"返回 is_zero()==false ⇒ 此断言会红。
+        assert!(
+            MockRedis::is_expired(Instant::now() - Duration::from_secs(1)),
+            "已经过去的时刻必须判为过期"
+        );
+        assert!(
+            !MockRedis::is_expired(Instant::now() + Duration::from_secs(60)),
+            "尚未到来的时刻必须判为未过期"
+        );
+    }
+
+    #[test]
+    fn expired_key_is_gone_after_ttl_elapses() {
+        let r = MockRedis::new();
+        r.set("k", "v");
+        assert!(r.expire("k", 1));
+        assert_eq!(r.get("k").as_deref(), Some("v"), "TTL 内应当仍可读");
+        std::thread::sleep(Duration::from_millis(1_100));
+        assert!(r.get("k").is_none(), "TTL 走完后 key 必须读不到");
+        assert!(!r.exists("k"));
+        assert_eq!(r.kv_len(), 0, "已过期的 key 必须被逐出, 而不只是读不到");
+    }
+
+    #[test]
+    fn ttl_zero_key_is_expired_and_evicted() {
+        let r = MockRedis::new();
+        r.set("k", "v");
+        assert!(r.expire("k", 0));
+        assert!(r.get("k").is_none(), "TTL 0 的 key 必须读作已过期");
+        assert_eq!(r.kv_len(), 0, "已过期的 key 必须被逐出, 而不只是读不到");
+    }
+
+    #[test]
+    fn unexpired_key_still_readable() {
+        let r = MockRedis::new();
+        r.set("k", "v");
+        assert!(r.expire("k", 3600));
+        assert_eq!(
+            r.get("k").as_deref(),
+            Some("v"),
+            "TTL 1 小时的 key 不能被立刻判为过期"
+        );
+        assert!(r.exists("k"));
     }
 
     #[test]

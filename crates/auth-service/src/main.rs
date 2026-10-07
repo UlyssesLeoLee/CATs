@@ -58,22 +58,14 @@ async fn main() -> std::io::Result<()> {
     let state = auth_service::handlers::AppState::new(pool);
     let state_data = web::Data::new(state);
     HttpServer::new(move || {
-        App::new()
-            .app_data(state_data.clone())
-            .route("/healthz", web::get().to(auth_service::handlers::healthz))
-            .route(
-                "/v1/auth/login",
-                web::post().to(auth_service::handlers::login),
-            )
-            .route(
-                "/v1/auth/refresh",
-                web::post().to(auth_service::handlers::refresh),
-            )
-            .route(
-                "/v1/auth/logout",
-                web::post().to(auth_service::handlers::logout),
-            )
-            .route("/v1/auth/me", web::get().to(auth_service::handlers::me))
+        // 路由表只有这一份 —— main.rs 与集成测试共用
+        // `handlers::configure_routes`（per BACKEND_STATUS §4.1t）
+        //
+        // 先 `clone()` 再 move：HttpServer 的这个闭包是 `Fn`（每个 worker
+        // 线程各调用一次），不能把捕获的 `state_data` 直接 move 进内层闭包 ——
+        // 那等于只能被调用一次。`web::Data` 内封 Arc，clone 是廉价的。
+        let state = state_data.clone();
+        App::new().configure(move |c| auth_service::handlers::configure_routes(c, state.clone()))
     })
     .bind(&bind_addr)?
     .run()

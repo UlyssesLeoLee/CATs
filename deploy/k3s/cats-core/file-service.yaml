@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: file-service
+  namespace: cats-core
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: file-service }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: file-service }
+    spec:
+      serviceAccountName: file-service
+      containers:
+        - name: file-service
+          image: cats/file-service:dev
+          imagePullPolicy: Never
+          ports: [{ containerPort: 8080, name: http }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: cats-db-credentials, key: file-db-url } }
+            - name: BIND_ADDR
+              value: "0.0.0.0:8080"
+            - name: FILES_DIR
+              value: "/var/lib/cats/files"
+            - name: RUST_LOG
+              value: "info"
+          volumeMounts:
+            - name: files-pvc
+              mountPath: /var/lib/cats/files
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { cpu: 500m, memory: 1Gi }
+          livenessProbe:  { httpGet: { path: /healthz, port: 8080 } }
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+      volumes:
+        - name: files-pvc
+          persistentVolumeClaim: { claimName: cats-files-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: file-service
+  namespace: cats-core
+spec:
+  selector: { app.kubernetes.io/name: file-service }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cats-files-pvc
+  namespace: cats-core
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: local-path

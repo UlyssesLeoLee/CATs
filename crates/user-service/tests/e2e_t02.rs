@@ -69,18 +69,16 @@ fn make_app(
     >,
 > {
     let pool_data = web::Data::new(pool);
-    App::new()
-        .app_data(pool_data)
-        .route("/healthz", web::get().to(handlers::healthz))
-        .route("/v1/users", web::post().to(handlers::create_user))
-        .route("/v1/users/{id}", web::get().to(handlers::get_user))
-        .route("/v1/users/{id}", web::put().to(handlers::update_user))
+    // 2026-10-07: 挂生产的 `handlers::configure_routes`，不再自己抄一份路由
+    // （原来 4 = 4 完全一致，所以改之前不是假绿；per BACKEND_STATUS §4.1t）
+    App::new().configure(move |c| handlers::configure_routes(c, pool_data.clone()))
 }
 
 // =====================================================================
 // 1. healthz
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -90,14 +88,16 @@ async fn e2e_healthz_returns_200() {
     assert_eq!(resp.status().as_u16(), 200);
     let body: serde_json::Value = actix_test::read_body_json(resp).await;
     assert_eq!(body["status"], json!("ok"));
-    assert_eq!(body["name"], json!("user-service"));
-    assert!(body["version"].as_str().unwrap().starts_with("0.1."));
+    // 形状 per BACKEND_STATUS §4.1m 统一后的全仓唯一形状
+    assert_eq!(body["app"]["name"], json!(env!("CARGO_PKG_NAME")));
+    assert!(body["app"]["version"].as_str().unwrap().starts_with("0.1."));
 }
 
 // =====================================================================
 // 2. POST /v1/users 创建 → 201
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_create_user_returns_201() {
     setup_env();
     let pool = make_pool().await;
@@ -129,6 +129,7 @@ async fn e2e_create_user_returns_201() {
 // 3. GET /v1/users/{id} 命中
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_user_by_id_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -175,6 +176,7 @@ async fn e2e_get_user_by_id_returns_200() {
 // 4. GET /v1/users/{id} 不存在 → 404 user_not_found
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_user_not_found_returns_404() {
     setup_env();
     let pool = make_pool().await;
@@ -194,6 +196,7 @@ async fn e2e_get_user_not_found_returns_404() {
 // 5. PUT /v1/users/{id} 部分更新
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_update_user_partial_returns_200() {
     setup_env();
     let pool = make_pool().await;

@@ -3,6 +3,9 @@
 
 replicaCount: 2
 
+
+autoscaling:
+  enabled: false
 image:
   repository: harbor.cats.internal/cats/ingestion-service
   tag: 0.1.0

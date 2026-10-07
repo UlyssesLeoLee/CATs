@@ -39,6 +39,9 @@ worktrees/
 
 # === 客户端构建产物 ===
 apps/cats-client/src-tauri/target/
+# 2026-10-06: E:\DevCache\cargo\ 整棵树执行被拒时的本地备用 target 目录
+# （见 BACKEND_STATUS_v0.4 §4.1l）。必须 gitignore，否则会被误提交。
+/.target-verify/
 apps/cats-client/dist/
 apps/cats-client/node_modules/
 
@@ -53,6 +56,13 @@ deploy/helm/**/*.tgz
 # === proto / OpenAPI 编辑器缓存 ===
 **/*.pb.go
 **/*_grpc.pb.go
+
+# === vercelserver/ Vercel 部署套件 ===
+# 内部 src/cats-client/ 是构建产物 (npm run build 产出), 不入仓
+# 内部 src/web-console-mock/ 和 src/media-pipeline-mock/ 是 commit-once 副本
+#   (build.sh 重新生成时覆盖, 但默认状态从仓复制, 保证 vercelserver/ 独立可复用)
+vercelserver/src/cats-client/
+vercelserver/src/node_modules/
 
 # Worker 临时文件（不入仓）
 _worker-tmp/

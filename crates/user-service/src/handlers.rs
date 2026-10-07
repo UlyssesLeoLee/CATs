@@ -28,16 +28,24 @@ use uuid::Uuid;
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
-    name: &'static str,
-    version: &'static str,
+    app: cats_common::AppMeta,
 }
 
 /// `GET /healthz` — 存活探针 + 启动探针复用
+///
+/// 响应形状 = 全仓统一后的唯一形状（per BACKEND_STATUS §4.1m）：
+/// `{"status":"ok","app":{"name":...,"version":...}}`
+///
+/// 用 `env!("CARGO_PKG_NAME")` 而不是 `AppMeta::current()` —— 后者返回的是
+/// **cats-common 自己**的包名，会让每个服务都自报 "cats-common"，监控分不出
+/// 是谁应答的。这个坑见 asr-service/src/main.rs 里的同款注释。
 pub async fn healthz() -> impl Responder {
     HttpResponse::Ok().json(HealthResponse {
         status: "ok",
-        name: env!("CARGO_PKG_NAME"),
-        version: env!("CARGO_PKG_VERSION"),
+        app: cats_common::AppMeta {
+            name: env!("CARGO_PKG_NAME").to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
     })
 }
 
@@ -184,6 +192,25 @@ pub async fn update_user(
             })
         }
     }
+}
+
+// =====================================================================
+// **唯一路由表** —— `main.rs` 与集成测试都从这里接进来
+// =====================================================================
+//
+// 2026-10-07。这 4 条原本内联在 `main.rs`，而 `tests/e2e_t02.rs` 的
+// `make_app` 逐条抄了一份（4 = 4，逐条核对完全一致，所以改之前不是假绿）。
+// 与 `auth-service` / `task-service` / `audit-service` 一样收敛到单一事实来源。
+//
+// 这里的 app_data 是 `web::Data<PgPool>`（不是自定义 AppState）：三个 handler
+// 直接取连接池。`main.rs` 的 HttpServer 闭包是 `Fn`，每个 worker 线程各调一次，
+// 所以要**先 clone 再 move**（`web::Data` 内封 Arc，clone 廉价）。
+pub fn configure_routes(cfg: &mut web::ServiceConfig, pool: web::Data<PgPool>) {
+    cfg.app_data(pool)
+        .route("/healthz", web::get().to(healthz))
+        .route("/v1/users", web::post().to(create_user))
+        .route("/v1/users/{id}", web::get().to(get_user))
+        .route("/v1/users/{id}", web::put().to(update_user));
 }
 
 // =====================================================================

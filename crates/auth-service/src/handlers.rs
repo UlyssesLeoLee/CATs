@@ -18,6 +18,19 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// M1 默认角色 (per ULYS-149 第二层缺口修复)
+///
+/// 简化版: 所有登录用户默认获得 ["User"] 角色.
+/// Sprint 2 接 user-service / workspace-membership 时, 应从 user_roles 表 JOIN 注入.
+fn default_roles_for(user: &crate::models::UserCredential) -> Vec<String> {
+    // 简化逻辑: superadmin 用户 (硬编码 username "admin") 额外给 Sponsor; 其余只给 User.
+    if user.username == "admin" {
+        vec!["User".to_string(), "Sponsor".to_string()]
+    } else {
+        vec!["User".to_string()]
+    }
+}
+
 /// AppState: PgPool + AuditSink (dyn) + 配置
 #[derive(Clone)]
 pub struct AppState {
@@ -105,8 +118,24 @@ async fn build_audit(
 // =====================================================================
 
 /// GET /healthz
+///
+/// 响应形状 = 全仓统一后的唯一形状（per BACKEND_STATUS §4.1m）：
+/// `{"status":"ok","app":{"name":...,"version":...}}`
+///
+/// 用 `env!("CARGO_PKG_NAME")` 而不是 `AppMeta::current()` —— 后者返回的是
+/// **cats-common 自己**的包名，会让每个服务都自报 "cats-common"，监控分不出
+/// 是谁应答的。这个坑见 asr-service/src/main.rs 里的同款注释。
 pub async fn healthz() -> impl Responder {
-    HttpResponse::Ok().json(json!({"status": "ok", "service": "auth-service"}))
+    // 先建成变量再放进 `json!`：宏有自己的分词器，在其值位置内嵌 struct
+    // 字面量并在里面写 `"key": value` 会被它当成 JSON 的键值对解析。
+    let app = cats_common::AppMeta {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    HttpResponse::Ok().json(json!({
+        "status": "ok",
+        "app": app,
+    }))
 }
 
 // =====================================================================
@@ -168,14 +197,16 @@ pub async fn login(
         .await;
         return unauthorized();
     }
-    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access") {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt issue failed: {e}")),
-    };
-    let (refresh_token, _refresh_exp) = match issue_jwt(user.id, &user.username, "refresh") {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
-    };
+    let (access_token, access_exp) =
+        match issue_jwt(user.id, &user.username, "access", default_roles_for(&user)) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt issue failed: {e}")),
+        };
+    let (refresh_token, _refresh_exp) =
+        match issue_jwt(user.id, &user.username, "refresh", default_roles_for(&user)) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
+        };
 
     // 审计: login success
     build_audit(
@@ -313,15 +344,17 @@ pub async fn refresh(
         return server_error(&format!("revoke_jti failed: {e}"));
     }
 
-    // 签发新 access + 新 refresh (新 jti)
-    let (access_token, access_exp) = match issue_jwt(user.id, &user.username, "access") {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt issue failed: {e}")),
-    };
-    let (refresh_token, _) = match issue_jwt(user.id, &user.username, "refresh") {
-        Ok(p) => p,
-        Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
-    };
+    // 签发新 access + 新 refresh (新 jti) — 从现有 claims.roles 复刻 (per ULYS-149 第二层缺口)
+    let (access_token, access_exp) =
+        match issue_jwt(user.id, &user.username, "access", claims.roles.clone()) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt issue failed: {e}")),
+        };
+    let (refresh_token, _) =
+        match issue_jwt(user.id, &user.username, "refresh", claims.roles.clone()) {
+            Ok(p) => p,
+            Err(e) => return server_error(&format!("jwt refresh issue failed: {e}")),
+        };
 
     // 审计: refresh success + refresh_revoked
     build_audit(
@@ -518,4 +551,28 @@ fn unauthorized_token(reason: &str) -> HttpResponse {
         message: format!("token validation failed: {reason}"),
         detail: None,
     })
+}
+
+// =====================================================================
+// **唯一路由表** —— `main.rs` 与集成测试都从这里接进来
+// =====================================================================
+//
+// 2026-10-07。这 5 条原本内联在 `main.rs` 里，而三个测试文件
+// （`tests/e2e_auth.rs`、`tests/e2e_t01.rs` 的两个 make_app）各自抄了
+// 3~4 条 —— 合计三到四张表。**当时逐条核对是一致的，所以不是假绿**，
+// 但形态本身是隐患：改这张表不会被任何测试发现。
+//
+// 现在与 `task-service`（`configure_app`）和 `audit-service`（`configure`）
+// 一样收敛到单一事实来源，17 个用例全部挂到这里。
+//
+// 参数用 `web::Data<AppState>`（而不是 `AppState`）：`main.rs` 里状态只
+// 构造一次，HttpServer 的闭包每次连接重复消费，`web::Data` 内封 Arc 可以
+// 安全 clone。测试侧同理。
+pub fn configure_routes(cfg: &mut web::ServiceConfig, state: web::Data<AppState>) {
+    cfg.app_data(state)
+        .route("/healthz", web::get().to(healthz))
+        .route("/v1/auth/login", web::post().to(login))
+        .route("/v1/auth/refresh", web::post().to(refresh))
+        .route("/v1/auth/logout", web::post().to(logout))
+        .route("/v1/auth/me", web::get().to(me));
 }
