@@ -27,25 +27,83 @@ data:
                         - name: cats_api
                           domains: ["*"]
                           routes:
+                            # 每条路由都显式剥离客户端自带的身份头。
+                            # 不能只依赖 jwt_authn 自带的清理：那个行为由 runtime
+                            # feature 控制，旧版本没有。缺了这一条，调用方自填
+                            # `X-Cats-Roles: Sponsor` 就会被下游当成 Sponsor。
                             - match: { prefix: "/v1/auth/" }
                               route: { cluster: auth_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
+                            # 2026-10-07 修正：这一行原本指向 auth_service，注释写着
+                            # "# user nested in auth"，**该注释是错的**。user-service 是
+                            # cats-core 里独立的 Deployment（deploy/k3s/cats-core/
+                            # user-service.yaml），auth-service 只注册了
+                            # /healthz 与 /v1/auth/*，根本不认识 /v1/users。
+                            # 结果是所有 /v1/users 流量打到 auth-service 后 404，
+                            # user-service 从来没被边缘真正路由到过。
                             - match: { prefix: "/v1/users" }
-                              route: { cluster: auth_service }  # user nested in auth
+                              route: { cluster: user_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                             - match: { prefix: "/v1/projects" }
                               route: { cluster: project_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                             - match: { prefix: "/v1/tasks" }
                               route: { cluster: task_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                             - match: { prefix: "/v1/files" }
                               route: { cluster: file_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                             - match: { prefix: "/v1/notifications" }
                               route: { cluster: notification_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                             - match: { prefix: "/v1/reports" }
                               route: { cluster: report_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                             - match: { prefix: "/v1/audit-logs" }
                               route: { cluster: audit_service }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                             - match: { prefix: "/healthz" }
                               direct_response: { status: 200, body: { inline_string: "ok" } }
+                              request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                     http_filters:
+                      # 2026-10-07 新增。**此前这份生产配置里一个 http_filter 都没有，
+                      # 只有 router** —— 也就是说 k3s 上的边缘完全不做认证：
+                      # 任何人都能直连 8080 调 /v1/*，也能自填 X-Cats-Roles 冒充
+                      # 任意角色。compose 那份（deploy/envoy-mvp.yaml）早已有
+                      # jwt_authn，但门禁规则 16 硬编码只扫那一个文件，
+                      # 于是生产这份一路绿灯。per BACKEND_STATUS §4.1z
+                      - name: envoy.filters.http.jwt_authn
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                          providers:
+                            - name: cats_auth
+                              # 刻意不配 issuer / audiences：auth-service 签的 Claims
+                              # 里没有 iss 也没有 aud，配上会让每个请求都被拒。
+                              jwks:
+                                inline_jwks:
+                                  keys:
+                                    - kty: oct
+                                      kid: cats-hs256
+                                      # 占位符：initContainer 用 cats-jwt-secret
+                                      # 里的 secret 现算 base64url 替换（见下方
+                                      # edge-config-init）。密钥不进版本库。
+                                      k: "__CATS_JWT_KEY_B64URL__"
+                              forward: true
+                              claim_to_headers:
+                                # sub 是字符串 → 原样拷贝
+                                - header_name: x-cats-user-id
+                                  claim_name: sub
+                                # roles_csv 是**字符串** → 原样拷贝。
+                                # 不能直接映射 roles 数组：envoy 的 claim_to_headers
+                                # 对 array/object 是「序列化 JSON 再 Base64」，
+                                # 下游按逗号切分必然解析不出角色 → 全员 401。
+                                - header_name: x-cats-roles
+                                  claim_name: roles_csv
+                          rules:
+                            # 认证端点本身不能要求 JWT，否则无法登录
+                            - match: { prefix: "/v1/auth/" }
+                            - match: { prefix: "/v1/" }
+                              requires: any
                       - name: envoy.filters.http.router
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -64,6 +122,15 @@ data:
                         socket_address:
                           address: auth-service.cats-core.svc.cluster.local
                           port_value: 8080
+        - name: user_service
+          connect_timeout: 1s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: user_service
+            endpoints:
+              - lb_endpoints:
+                  - endpoint: { address: { socket_address: { address: user-service.cats-core.svc.cluster.local, port_value: 8080 } } }
         - name: project_service
           connect_timeout: 1s
           type: STRICT_DNS
@@ -130,6 +197,46 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: envoy-edge }
     spec:
+      initContainers:
+        # 2026-10-07 新增。envoy 的 bootstrap 配置**不做**环境变量替换，
+        # 但 jwt_authn 的 inline_jwks 又必须拿到和 auth-service 同一把
+        # HS256 密钥。所以密钥不能进 ConfigMap（进版本库即永久泄露），
+        # 也不能靠 env 插值（envoy 不支持）。做法：ConfigMap 里留占位符，
+        # 由本 initContainer 从 Secret 现算 base64url 并替换到 emptyDir，
+        # envoy 只读挂载那个 emptyDir。
+        #
+        # base64url 的字符集是 [A-Za-z0-9_-]，不含 / 与 &，
+        # 所以作为 sed 的替换串是安全的。
+        - name: edge-config-init
+          image: envoyproxy/envoy:v1.31-latest
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              KEY_B64URL=$(printf '%s' "$(cat /secret/secret)" \
+                | base64 -w0 | tr '+/' '-_' | tr -d '=')
+              if [ -z "$KEY_B64URL" ]; then
+                echo "cats-jwt-secret.secret 为空，拒绝用空密钥启动边缘" >&2
+                exit 1
+              fi
+              sed "s|__CATS_JWT_KEY_B64URL__|${KEY_B64URL}|g" \
+                /etc/envoy-src/envoy.yaml > /etc/envoy-out/envoy.yaml
+              # 替换后仍能看到占位符 = Secret 没读到或 sed 没生效，
+              # 此时 envoy 会拿着字面量占位符去验签，所有请求都会被拒。
+              if grep -q '__CATS_JWT_KEY_B64URL__' /etc/envoy-out/envoy.yaml; then
+                echo "占位符未被替换，envoy 会用字面量当密钥" >&2
+                exit 1
+              fi
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy-src
+              readOnly: true
+            - name: cats-jwt-secret
+              mountPath: /secret
+              readOnly: true
+            - name: envoy-config-out
+              mountPath: /etc/envoy-out
       containers:
         - name: envoy
           image: envoyproxy/envoy:v1.31-latest
@@ -138,7 +245,7 @@ spec:
             - containerPort: 8080
               name: http
           volumeMounts:
-            - name: envoy-config
+            - name: envoy-config-out
               mountPath: /etc/envoy
               readOnly: true
           resources:
@@ -151,6 +258,16 @@ spec:
       volumes:
         - name: envoy-config
           configMap: { name: envoy-config }
+        - name: envoy-config-out
+          emptyDir: {}
+        # k8s **不允许跨 namespace 引用 Secret**，而这个 Deployment 在
+        # cats-edge、cats-jwt-secret 原本声明在 cats-core。所以 cats-edge
+        # 需要自己的一份，且必须与 cats-core 那份逐字节相同 ——
+        # 不然 auth-service 签的 token 边缘验不过，表现为全员 401。
+        - name: cats-jwt-secret
+          secret:
+            secretName: cats-jwt-secret
+            optional: false
 ---
 apiVersion: v1
 kind: Service

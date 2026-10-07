@@ -2376,3 +2376,136 @@ array / object 序列化成 JSON 再 Base64 编码**。而 `Claims.roles` 是数
 本轮做到的只有：Rust 侧全部有测试、YAML 能解析、lint 规则 16 静态守住三条不变量。
 真正的验收（拿真 JWT 经 8080 打通、再自填 `X-Cats-Roles: Sponsor` 验证被拒）
 必须等 Docker 可用后补，**在补上之前不得宣称边缘鉴权已生效**。
+
+### §4.1z 生产边缘此前完全无鉴权，且 `/v1/users` 从未被真正路由到（2026-10-07）
+
+#### ⚠️ 先更正 §4.1y 的一处过度声明
+
+§4.1y 写的是"envoy 加边缘验签"已落地，并在末尾注明运行时未验证。**但它漏了
+一件更要紧的事：它只改了 `deploy/envoy-mvp.yaml` 一份。**
+
+事实：`deploy/k3s/cats-edge/envoy-deployment.yaml`（**k3s 生产部署**）在当时
+的 `http_filters` 里**只有 router 一个**，实测计数：
+
+```
+jwt_authn                  = 0
+ext_authz                  = 0
+request_headers_to_remove  = 0
+request_headers_to_add     = 0
+roles_csv / claim_to_headers = 0
+```
+
+即：**生产边缘不做任何认证，也不剥离任何身份头。** 任何能连到 8080 的调用方
+可以直调 `/v1/*`，也可以自填 `X-Cats-Roles: Sponsor` 被下游当成 Sponsor。
+而 §4.1y 的运行时未验证声明是针对 compose 那份的，两份配置的差距当时没有被
+任何人（包括门禁）发现。
+
+**为什么没被发现**：规则 16 是我自己在 §4.1y 加的，它硬编码只扫
+`deploy/envoy-mvp.yaml` 这一个路径（L30-31）。**一个只看一个文件的检查，
+证明不了"边缘是安全的"，只证明那一个文件是安全的。**
+
+#### 实缺陷：`/v1/users` 指向了不提供该路由的容器
+
+```
+- match: { prefix: "/v1/users" }
+  route: { cluster: auth_service }   # k3s 那份还带注释 "# user nested in auth"
+```
+
+**那条注释是假的。** 实证：
+
+| 对象 | 注册的路由 |
+|---|---|
+| `auth-service` | `/healthz`, `/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/me` |
+| `user-service`（独立 Deployment，`deploy/k3s/cats-core/user-service.yaml`） | `/healthz`, `/v1/users`, `/v1/users/{id}` |
+
+auth-service 根本不认识 `/v1/users`，所有流量到那儿必 404。envoy 里也
+**没有 `user_service` cluster**（7 个 cluster：auth / project / task / file /
+notification / report / audit）。
+
+`git log -S 'prefix: "/v1/users"' -- deploy/envoy-mvp.yaml` 只有一条命中：
+`c699b73`（引入边缘配置的那次提交）。而 user-service 自 `855fb59`
+（monorepo 脚手架）就存在。**也就是说这个错配从边缘配置诞生的第一天就在，
+从未被修过。**
+
+**后果**：§4.1y 给 user-service 补的那套 RBAC，在 MVP 与 k3s 两种部署下
+**都执行不到** —— 补丁本身是对的，但流量到不了。同理，"某服务有鉴权"这句话
+必须先确认边缘真能路由到它，否则等于没做。
+
+#### 修法
+
+1. **k3s 边缘补齐鉴权**（与 compose 那份对齐）：`jwt_authn`（HS256
+   inline_jwks + `claim_to_headers`：`sub → x-cats-user-id`、
+   `roles_csv → x-cats-roles`）+ 每条路由显式 `request_headers_to_remove`。
+   同样**不配 `issuer` / `audiences`**（Claims 无 `iss` / `aud`）。
+2. **JWT 密钥不进 ConfigMap**：envoy bootstrap **不支持环境变量替换**，所以
+   ConfigMap 留占位符 `__CATS_JWT_KEY_B64URL__`，由新增的 initContainer
+   `edge-config-init` 从 `cats-jwt-secret` 现算 base64url 并替换到 emptyDir，
+   envoy 只读挂载 emptyDir。initContainer 另有两道自检：Secret 为空则拒绝
+   启动；替换后仍见占位符则拒绝启动（否则 envoy 会拿字面量当密钥）。
+3. **跨 namespace Secret**：k8s 不允许跨 namespace 引用 Secret，而 envoy-edge
+   在 `cats-edge`、`cats-jwt-secret` 原声明在 `cats-core`。已在
+   `deploy/k3s/secrets/secrets-placeholder.yaml` 补一份 `cats-edge` 的，
+   并用注解 `cats.io/must-match` 标注**必须与 cats-core 那份逐字节相同**
+   （不同则全员 401，排查方向极易被带偏）。
+4. **两份 envoy 都补 `user_service` cluster** 并把 `/v1/users` 指过去；
+   删掉 k3s 里那句不实注释，改为写明实情。
+
+#### 门禁：规则 16 改为全仓发现，新增规则 17
+
+| 规则 | 改动 |
+|---|---|
+| 规则 16 | 不再硬编码单个路径。**全仓发现**两类边缘配置：独立 bootstrap（`deploy/envoy-mvp.yaml`）与嵌在 k8s ConfigMap 字符串里的（`deploy/k3s/**`）。发现数 < 2 直接 FAIL —— "扫不到 ≠ 没问题" |
+| 规则 17（新增） | 路由的 cluster 落点必须与**真正注册该前缀的 crate** 一致。查两件事：路由引用的 cluster 必须存在；该前缀在 `crates/` 里的归属 crate 必须与 cluster 后端主机同名 |
+
+规则 17 刻意把"`/v1/worker/tick` 没有边缘路由"记为**设计决定**而不是错误
+（`_INTENTIONAL_INTERNAL_ONLY` 白名单）。理由：worker tick 是运维端点，
+compose 只把它绑在 `127.0.0.1:8089`，不暴露公网边缘是合理选择。把"没路由"
+和"路由指错"混成同一条错误，只会逼人把告警静音。
+
+**变异验证 8/8**（`D:\Temp\mutate-edge-authz.py`），每次恰好 1 条 FAIL：
+
+| 变异 | 精确报错 |
+|---|---|
+| R1 未变异（反向用例） | exit 0 且零 FAIL |
+| M1 k3s 删 jwt_authn | `规则 16：…envoy-deployment.yaml (ConfigMap/envoy.yaml) 没有 jwt_authn 过滤器` |
+| M2 k3s 拿掉 `/v1/tasks` 的剥离 | `规则 16：…的路由 /v1/tasks 没有剥离客户端自带的头` |
+| M3 k3s `/v1/users` 指回 auth_service | `规则 17：…但该前缀是由 user-service 注册的` |
+| M4 k3s 密钥写成具体值 | `规则 16：…出现了具体密钥值且不是占位符` |
+| M5 k3s 指向不存在的 cluster | `规则 17：…但配置里没有这个 cluster` |
+| M6 compose `/v1/projects` 指回 auth_service | `规则 17：…但该前缀是由 project-service 注册的` |
+| M7 compose 删 jwt_authn | `规则 16：deploy/envoy-mvp.yaml 没有 jwt_authn 过滤器` |
+
+还原后 sha256 与变异前逐字节一致（从**运行前的内存快照**还原 —— 不用
+`shutil.copy2`，它会连 mtime 一起复制，让下游判定"没变过"而跳过重扫）。
+
+扫描器自身也被自查过两轮：k3s YAML 是多文档（`---` 分隔），最初用
+`yaml.safe_load` 会在第一个 `---` 处抛错 → 整个文件被判"读不到" → 又一次
+变成"扫不到"。改用 `safe_load_all` 后，自失效阈值立刻抓出"全仓只发现 1 份
+边缘配置"。
+
+#### ❌ 仍未验证：运行时（阻塞原因已查实到宿主机层）
+
+**Docker Desktop 在这台机器上起不来**，不是"没启动"。实证（`docker info` 与
+`com.docker.backend.exe.log`）：
+
+```
+Wsl/Service/CreateInstance/MountVhd/HCS/E_ACCESSDENIED:
+  无法将磁盘 \?\E:\wsl\DockerDesktopWSL\main\ext4.vhdx 附加到 WSL2 虚拟机。拒绝访问。
+engine linux/wsl failed to start: bootstrapping main distribution
+```
+
+`Get-CimInstance Win32_ComputerSystem` → `HypervisorPresent = True`，
+`Win32_Processor` → `VirtualizationFirmwareEnabled = False`：本机本身是
+虚拟机里的客户机，**嵌套虚拟化未开**，HCS 因此无法挂载 VHDX。`wsl --shutdown`
+后重启 Docker Desktop 无效（同一 E_ACCESSDENIED）。这是宿主机层面的阻塞，
+不是仓库配置问题。
+
+所以以下三项**在补上之前不得宣称边缘鉴权已生效**：
+
+1. 真 JWT 经 8080 打通（`POST /v1/auth/login` → 带 Bearer 调 `/v1/projects`）
+2. 自填 `X-Cats-Roles: Sponsor` 被边缘剥离后按真实角色判定
+3. compose 侧 `JWT_SECRET` → base64url → JWK 整条注入链在真 envoy 里生效
+   （密钥注入的**逻辑**已本地真跑验证过，与 Python `urlsafe_b64encode` 逐字
+   一致且能反解回原密钥；**未**在真 envoy 里跑过）
+
+新增的 k3s initContainer 同样**未经运行时验证**。

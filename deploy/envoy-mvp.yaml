@@ -32,8 +32,11 @@ static_resources:
                         - match: { prefix: "/v1/auth/" }
                           route: { cluster: auth_service }
                           request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
+                        # 2026-10-07 修正：原本指向 auth_service。user-service 在
+                        # compose 里是独立容器（内部监听 8080，主机 8082），
+                        # auth-service 根本没注册 /v1/users，所有流量到那儿必 404。
                         - match: { prefix: "/v1/users" }
-                          route: { cluster: auth_service }
+                          route: { cluster: user_service }
                           request_headers_to_remove: ["x-cats-user-id", "x-cats-roles"]
                         - match: { prefix: "/v1/projects" }
                           route: { cluster: project_service }
@@ -112,6 +115,15 @@ static_resources:
         endpoints:
           - lb_endpoints:
               - endpoint: { address: { socket_address: { address: auth-service, port_value: 8080 } } }
+    - name: user_service
+      connect_timeout: 1s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: user_service
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: user-service, port_value: 8080 } } }
     - name: project_service
       connect_timeout: 1s
       type: STRICT_DNS

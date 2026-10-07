@@ -16,6 +16,7 @@ lint-compose.py — docker-compose-mvp.yml 的静态不变量检查
 
 import io
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -1664,40 +1665,125 @@ _IDENTITY_HEADERS = ("x-cats-user-id", "x-cats-roles")
 _JWT_KEY_PLACEHOLDER = "__CATS_JWT_KEY_B64URL__"
 _PROTO_ROUTES_MIN = 8
 
-_envoy_doc = None
-if os.path.isfile(ENVOY):
-    with io.open(ENVOY, encoding="utf-8", errors="replace") as _f:
-        _envoy_doc = yaml.safe_load(_f)
+# 2026-10-07 修正：规则 16 原来只扫 `deploy/envoy-mvp.yaml` 这**一个**硬编码路径。
+# 后果很直接：k3s 生产配置（deploy/k3s/cats-edge/envoy-deployment.yaml）里
+# 当时一个 http_filter 都没有 —— 生产边缘完全不做认证、也不剥离身份头 ——
+# 而门禁一路绿灯。**一个只看一个文件的检查，证明不了"边缘是安全的"**，
+# 只能证明那一个文件是安全的。现在改成全仓发现：扫不到预期数量就 FAIL。
+#
+# 两类形态都要认：
+#   1) 独立的 envoy bootstrap（deploy/envoy-mvp.yaml）
+#   2) 嵌在 k8s ConfigMap 字符串里的（k3s cats-edge）
+# 只认第 1 种就等于看不见生产。
+_ENVOY_CONFIGS_MIN = 2
 
-if _envoy_doc is None:
-    err("规则 16 失效：读不到 %s —— 边缘配置缺失，身份头将无人剥离" % ENVOY)
+
+def _load_yaml_safe(path):
+    """k8s 的 YAML 是多文档（--- 分隔），必须用 safe_load_all。
+
+    用 safe_load 会在第一个 `---` 处抛 "expected a single document"，
+    于是**整个文件被判为读不到** —— 而"读不到"会被当成"没有问题"，
+    正是这份门禁当初放过生产配置的原因之一。
+    """
+    try:
+        with io.open(path, encoding="utf-8", errors="replace") as fh:
+            return [d for d in yaml.safe_load_all(fh.read()) if d is not None]
+    except Exception as exc:  # noqa: BLE001
+        err("规则 16 失效：%s 解析失败（%s）" % (path, exc))
+        return None
+
+
+def _discover_envoy_configs():
+    """返回 [(显示名, envoy 文档或 None, 原始文本)]，覆盖仓库里**所有**边缘配置。"""
+    out = []
+    # 1) 独立 bootstrap（单文档）
+    p = os.path.join(ROOT, "deploy", "envoy-mvp.yaml")
+    if os.path.isfile(p):
+        docs = _load_yaml_safe(p)
+        with io.open(p, encoding="utf-8", errors="replace") as fh:
+            raw = fh.read()
+        out.append(("deploy/envoy-mvp.yaml", (docs or [None])[0], raw))
+    # 2) ConfigMap 内嵌
+    k3s = os.path.join(ROOT, "deploy", "k3s")
+    for dirpath, _dirs, files in os.walk(k3s):
+        for fn in sorted(files):
+            if not (fn.endswith(".yaml") or fn.endswith(".yml")):
+                continue
+            fp = os.path.join(dirpath, fn)
+            docs = _load_yaml_safe(fp)
+            if not docs:
+                continue
+            for item in docs:
+                if not isinstance(item, dict) or item.get("kind") != "ConfigMap":
+                    continue
+                data = item.get("data") or {}
+                if "envoy.yaml" not in data:
+                    continue
+                rel = os.path.relpath(fp, ROOT).replace("\\", "/")
+                try:
+                    inner = yaml.safe_load(data["envoy.yaml"])
+                except Exception as exc:  # noqa: BLE001
+                    err("规则 16 失效：%s 里 ConfigMap 的 envoy.yaml 解析失败（%s）"
+                        % (rel, exc))
+                    inner = None
+                out.append(("%s (ConfigMap/envoy.yaml)" % rel, inner, data["envoy.yaml"]))
+    return out
+
+
+def _envoy_routes_and_http_filters(doc):
+    """从 envoy bootstrap 里取 (http_filter 名列表, 路由列表)。
+
+    两层都要看：网络层 filter（http_connection_manager）在 filters 列表里，
+    它的 **HTTP** filter（jwt_authn / router）在 typed_config.http_filters 里。
+    只扫一层就会得出「没有 jwt_authn」的错误结论。
+    """
+    http_filters, routes = [], []
+    sr = doc.get("static_resources") or {}
+    for lst in sr.get("listeners") or []:
+        for fc in (lst.get("filter_chains") or []):
+            for f in (fc.get("filters") or []):
+                tc = f.get("typed_config") or {}
+                http_filters.extend(
+                    (h.get("name") or "") for h in (tc.get("http_filters") or []))
+                rc = tc.get("route_config") or {}
+                for vh in (rc.get("virtual_hosts") or []):
+                    routes.extend(vh.get("routes") or [])
+    return http_filters, routes
+
+
+if sys.argv[2:]:  # 保留位置参数：变异验证需要单独喂一份配置进来
+    _argv_docs = _load_yaml_safe(sys.argv[2])
+    if os.path.isfile(sys.argv[2]):
+        with io.open(sys.argv[2], encoding="utf-8", errors="replace") as fh:
+            _envoy_targets = [("<argv[2]>", (_argv_docs or [None])[0], fh.read())]
+    else:
+        _envoy_targets = [("<argv[2]>", None, "")]
 else:
-    _sr = _envoy_doc.get("static_resources") or {}
-    _listeners = _sr.get("listeners") or []
-    _http_filters = []
-    _routes = []
-    for _l in _listeners:
-        for _fc in (_l.get("filter_chains") or []):
-            for _f in (_fc.get("filters") or []):
-                # 网络层 filter（如 http_connection_manager）在 filters 列表里；
-                # 它的 **HTTP** filter（jwt_authn / router）在 typed_config.http_filters 里。
-                # 两层都要看，只扫一层就会得出"没有 jwt_authn"的错误结论。
-                _tc = _f.get("typed_config") or {}
-                _http_filters.extend(
-                    (h.get("name") or "") for h in (_tc.get("http_filters") or []))
-                _rc = _tc.get("route_config") or {}
-                for _vh in (_rc.get("virtual_hosts") or []):
-                    _routes.extend(_vh.get("routes") or [])
+    _envoy_targets = _discover_envoy_configs()
+
+if len(_envoy_targets) < _ENVOY_CONFIGS_MIN:
+    err("规则 16 失效：全仓只发现 %d 份边缘配置（阈值 %d）—— "
+        "扫描路径写错了。**扫不到不等于没有问题**："
+        "生产配置多半就在没被认出来的那份里。"
+        % (len(_envoy_targets), _ENVOY_CONFIGS_MIN))
+
+_envoy_checked = 0
+for _name, _doc, _raw in _envoy_targets:
+    if _doc is None:
+        err("规则 16：%s 读不到 envoy bootstrap —— 该边缘的身份头将无人剥离" % _name)
+        continue
+    _http_filters, _routes = _envoy_routes_and_http_filters(_doc)
+    _envoy_checked += 1
 
     if not any("jwt_authn" in n for n in _http_filters):
-        err("规则 16：envoy 没有 `jwt_authn` 过滤器 —— 它不验签 JWT，也就不会注入 "
+        err("规则 16：%s 没有 `jwt_authn` 过滤器 —— 它不验签 JWT，也就不会注入 "
             "`X-Cats-*`，于是 ① 七个服务的受保护端点经网关会全部 401；"
-            "② 那个角色头变成客户端可自填的字段。per BACKEND_STATUS §4.1x")
+            "② 那个角色头变成客户端可自填的字段。per BACKEND_STATUS §4.1x" % _name)
 
     if len(_routes) < _PROTO_ROUTES_MIN:
-        err("规则 16 失效：只读到 %d 条 envoy 路由（阈值 %d）—— "
+        err("规则 16 失效：%s 只读到 %d 条 envoy 路由（阈值 %d）—— "
             "扫描路径大概率写错了。**空结果不等于没有问题**"
-            % (len(_routes), _PROTO_ROUTES_MIN))
+            % (_name, len(_routes), _PROTO_ROUTES_MIN))
     else:
         for _r in _routes:
             _m = _r.get("match") or {}
@@ -1705,20 +1791,128 @@ else:
             _rm = [_h.lower() for _h in (_r.get("request_headers_to_remove") or [])]
             _missing = [h for h in _IDENTITY_HEADERS if h not in _rm]
             if _missing:
-                err("规则 16：路由 `%s` 没有剥离客户端自带的头 %s —— "
+                err("规则 16：%s 的路由 `%s` 没有剥离客户端自带的头 %s —— "
                     "调用方自填 `X-Cats-Roles: Sponsor` 就能冒充 Sponsor。"
                     "在该路由上加 `request_headers_to_remove: [\"x-cats-user-id\", "
-                    "\"x-cats-roles\"]`" % (_prefix, ", ".join(_missing)))
+                    "\"x-cats-roles\"]`" % (_name, _prefix, ", ".join(_missing)))
 
-    with io.open(ENVOY, encoding="utf-8", errors="replace") as _f:
-        _envoy_raw = _f.read()
-    if "k:" in _envoy_raw and _JWT_KEY_PLACEHOLDER not in _envoy_raw:
-        err("规则 16：envoy 的 inline_jwks 里出现了具体密钥值且不是占位符 %s —— "
+    if "k:" in _raw and _JWT_KEY_PLACEHOLDER not in _raw:
+        err("规则 16：%s 的 inline_jwks 里出现了具体密钥值且不是占位符 %s —— "
             "JWT 共享密钥不得进版本库（提交一次就永远留在 git 历史里）。"
-            "改回占位符，由 compose 启动时注入" % _JWT_KEY_PLACEHOLDER)
-    else:
-        note("规则 16 检查了 %d 条 envoy 路由的身份头剥离 + jwt_authn 存在性 + "
-             "JWT 密钥仍是占位符" % len(_routes))
+            "改回占位符，由部署时注入" % (_name, _JWT_KEY_PLACEHOLDER))
+
+if _envoy_checked:
+    note("规则 16 检查了 %d 份边缘配置（共发现 %d 份）的身份头剥离 + jwt_authn "
+         "存在性 + JWT 密钥仍是占位符"
+         % (_envoy_checked, len(_envoy_targets)))
+
+# 规则 17: 边缘路由的后端落点必须与真正拥有该路径的 crate 一致
+#
+# 2026-10-07 查实的实缺陷（per BACKEND_STATUS §4.1z）：envoy 里
+# `- match: { prefix: "/v1/users" }` 指向 `auth_service`，k3s 那份还带着
+# 注释 `# user nested in auth`。**该注释是假的** —— user-service 是
+# cats-core / compose 里独立的 Deployment，只注册 /healthz 与 /v1/users*，
+# 而 auth-service 只注册 /healthz 与 /v1/auth/*，根本不认识 /v1/users。
+# 于是所有 /v1/users 流量打到 auth-service 后 404，user-service 从来没被
+# 边缘真正路由到过（从 c699b73 引入边缘配置起就一直是这样）。
+#
+# 也就是说：user-service 里那套 RBAC 在 MVP 部署下**根本执行不到** ——
+# 补丁是对的，但流量到不了。同理，任何"某服务有鉴权"的说法，
+# 都要先确认边缘真能路由到它，否则等于没做。
+#
+# 这条规则把「前缀归谁」和「cluster 指向谁」摆在一起对拍，不一致就报。
+# 它不需要业务语义，只看两件事：
+#   1. 路由引用的 cluster 必须存在
+#   2. 该前缀在 crates/ 里注册路由的 crate，必须与 cluster 的后端主机同名
+
+# 刻意不暴露到公网边缘的内部端点。列在这里是因为"没有路由"是设计决定，
+# 不该和"路由指错"混在一起报错 —— 混在一起会逼人把告警静音。
+_INTENTIONAL_INTERNAL_ONLY = ("/v1/worker/tick", "/internal/")
+
+
+def _crate_route_owners():
+    """crate 名 → 它注册的路由字面量集合。"""
+    owners = {}
+    crates_dir = os.path.join(ROOT, "crates")
+    for crate in sorted(os.listdir(crates_dir)):
+        cdir = os.path.join(crates_dir, crate)
+        if not os.path.isdir(cdir):
+            continue
+        rs = set()
+        for fn in ("src/handlers.rs", "src/main.rs", "src/lib.rs", "src/app.rs"):
+            fp = os.path.join(cdir, fn)
+            if not os.path.isfile(fp):
+                continue
+            with io.open(fp, encoding="utf-8", errors="replace") as fh:
+                rs.update(re.findall(r'\.route\(\s*"([^"]+)"', fh.read()))
+            if rs:
+                break
+        if rs:
+            owners[crate] = rs
+    return owners
+
+
+def _cluster_backends(doc):
+    """cluster 名 → 后端主机名（去掉 k8s 的 .svc.cluster.local 后缀与端口）。"""
+    out = {}
+    for c in (doc.get("static_resources") or {}).get("clusters") or []:
+        name = c.get("name")
+        if not name:
+            continue
+        try:
+            ep = (c["load_assignment"]["endpoints"][0]["lb_endpoints"][0]
+                  ["endpoint"]["address"]["socket_address"])
+            out[name] = ep["address"]
+        except (KeyError, IndexError, TypeError):
+            out[name] = None  # 存在但解不出后端，交给下面报错
+    return out
+
+
+_owners = _crate_route_owners()
+if len(_owners) < 10:
+    err("规则 17 失效：只从 crates/ 读到 %d 个有路由的 crate（阈值 10）—— "
+        "扫描路径写错了。**空结果不等于没有问题**" % len(_owners))
+
+_17_total = 0
+for _name, _doc, _raw in _envoy_targets:
+    if _doc is None:
+        continue
+    _http_filters, _routes = _envoy_routes_and_http_filters(_doc)
+    _backends = _cluster_backends(_doc)
+    for _r in _routes:
+        _m = _r.get("match") or {}
+        _prefix = _m.get("prefix") or _m.get("path")
+        _cl = ((_r.get("route") or {}).get("cluster"))
+        if not _prefix or not _cl:
+            continue  # direct_response（如 /healthz），没有后端可对拍
+        _17_total += 1
+        if _cl not in _backends:
+            err("规则 17：%s 的路由 `%s` 指向 cluster `%s`，但配置里没有这个 "
+                "cluster —— envoy 启动即失败" % (_name, _prefix, _cl))
+            continue
+        _host = _backends[_cl] or ""
+        _short = _host.split(".")[0]
+        _cands = sorted(
+            c for c, rs in _owners.items()
+            if any(r.startswith(_prefix) for r in rs)
+        )
+        if not _cands:
+            if not any(_prefix.startswith(p) for p in _INTENTIONAL_INTERNAL_ONLY):
+                note("规则 17：%s 的路由 `%s` 指向 %s，但 crates/ 里没有任何 crate "
+                     "注册了匹配该前缀的路由" % (_name, _prefix, _cl))
+            continue
+        if _short not in _cands:
+            err("规则 17：%s 的路由 `%s` 指向 cluster `%s`（后端 %s），"
+                "但该前缀是由 %s 注册的 —— 流量会送到不认识这个路径的容器上，"
+                "结果是 404，而且 %s 上的鉴权永远不会被执行到"
+                % (_name, _prefix, _cl, _short, "/".join(_cands), "/".join(_cands)))
+
+if _17_total < 8:
+    err("规则 17 失效：只对拍了 %d 条 envoy 路由（阈值 8）—— "
+        "扫描路径写错了。**空结果不等于没有问题**" % _17_total)
+else:
+    note("规则 17 对拍了 %d 条 envoy 路由的 cluster 落点与 crates/ 的路由归属"
+         % _17_total)
 
 print("=" * 66)
 print("compose 静态不变量检查")
@@ -1761,7 +1955,10 @@ print("  OK    规则 13 %d 条 k8s/helm 探针的路径都在对应服务的源
 print("  OK    规则 14 doc/ 下 %d 个 .md 里没有统一前的 /healthz 形状" % _doc_files)
 print("  OK    规则 15 全仓 %d 处 `require_roles` 里没有把角色字面量当调用者角色传"
       % _rbac_any_calls)
-print("  OK    规则 16 边缘剥离客户端身份头 + jwt_authn 在位 + JWT 密钥仍是占位符")
+print("  OK    规则 16 %d 份边缘配置：剥离客户端身份头 + jwt_authn 在位 + JWT 密钥仍是占位符"
+      % _envoy_checked)
+print("  OK    规则 17 %d 条 envoy 路由的 cluster 落点与 crates/ 的路由归属一致"
+      % _17_total)
 print("")
 for n in notes:
     print("  提醒  " + n)
