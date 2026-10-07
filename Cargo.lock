@@ -373,6 +373,7 @@ dependencies = [
  "cats-common",
  "cats-mock",
  "cats-proto",
+ "cats-rbac",
  "chrono",
  "dotenvy",
  "jsonwebtoken",
