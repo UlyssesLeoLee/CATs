@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 # workspace 共享依赖
 cats-common.workspace = true
+cats-rbac.workspace   = true
 tokio.workspace       = true
 actix-web.workspace   = true
 anyhow.workspace      = true
@@ -23,7 +24,13 @@ tracing.workspace     = true
 serde.workspace       = true
 serde_json.workspace  = true
 sqlx.workspace        = true
+# 业务级
+uuid   = { version = "1", features = ["v4", "serde"] }
+chrono = { workspace = true }
 # 暂未挂接 gRPC 契约（M1 阶段按需引入）
 
 [dev-dependencies]
+actix-web = { workspace = true, features = ["macros"] }
+serde_json = "1"
+
 cats-mock = { workspace = true }

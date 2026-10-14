@@ -2,7 +2,7 @@
 //!
 //! 引用: 设计书 §4.1.2
 
-use super::{pick_random, random_past_within_days, Factory, ProjectStatus};
+use super::{random_past_within_days, Factory, ProjectStatus};
 use fake::faker::lorem::en::Sentence;
 use fake::Fake;
 use serde::{Deserialize, Serialize};
@@ -75,8 +75,14 @@ impl ProjectFactory {
         let owner_id = self.owner_id.unwrap_or_else(uuid::Uuid::new_v4);
         let name: String = Sentence(3..6).fake();
         let description: Option<String> = Some(Sentence(8..15).fake());
-        let source_lang = self.source_lang.clone().unwrap_or_else(|| "zh-CN".to_string());
-        let target_lang = self.target_lang.clone().unwrap_or_else(|| "en-US".to_string());
+        let source_lang = self
+            .source_lang
+            .clone()
+            .unwrap_or_else(|| "zh-CN".to_string());
+        let target_lang = self
+            .target_lang
+            .clone()
+            .unwrap_or_else(|| "en-US".to_string());
         let status = self.status.unwrap_or(ProjectStatus::Draft);
         let created_at = random_past_within_days(30);
 
@@ -95,12 +101,16 @@ impl ProjectFactory {
 }
 
 impl Default for ProjectFactory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Factory for ProjectFactory {
     type Output = Project;
-    fn build(&self) -> Project { self.build_one() }
+    fn build(&self) -> Project {
+        self.build_one()
+    }
     fn build_many(&self, count: usize) -> Vec<Project> {
         (0..count).map(|_| self.build_one()).collect()
     }
@@ -128,7 +138,9 @@ mod tests {
 
     #[test]
     fn with_status_applied() {
-        let p = ProjectFactory::new().with_status(ProjectStatus::Archived).build();
+        let p = ProjectFactory::new()
+            .with_status(ProjectStatus::Archived)
+            .build();
         assert_eq!(p.status, ProjectStatus::Archived);
     }
 

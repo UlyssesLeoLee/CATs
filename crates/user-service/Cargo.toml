@@ -17,6 +17,7 @@ workspace = true
 cats-common.workspace = true
 tokio.workspace       = true
 actix-web.workspace   = true
+cats-rbac.workspace   = true
 anyhow.workspace      = true
 thiserror.workspace   = true
 tracing.workspace     = true

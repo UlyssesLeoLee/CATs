@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CATs 后台管理 (Web Console Mock)</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="console-shell">
+      <aside class="sidebar">
+        <div class="logo">
+          <span class="logo-mark">CATs</span>
+          <span class="logo-sub">Admin Console</span>
+          <span class="badge-mock" title="Mock preview — 真实 Next.js 控制台 ADR-015 排期 Sprint 3 / V2 落地, 当前仅用于 ULYS-110 截图验收">MOCK</span>
+        </div>
+
+        <nav>
+          <a href="#dashboard" class="active">仪表盘</a>
+          <a href="#projects">项目管理</a>
+          <a href="#users">用户管理</a>
+          <a href="#audit">审计日志</a>
+          <a href="#monitoring">监控告警</a>
+          <a href="#settings">系统设置</a>
+        </nav>
+
+        <div class="user-card">
+          <div class="avatar">U</div>
+          <div class="info">
+            <div class="name">Ulysses (D-Boy)</div>
+            <div class="role">platform_admin</div>
+          </div>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <h1>仪表盘</h1>
+            <p class="subtitle">CATs 全平台运营总览 · 数据快照 2026-09-20 14:00 JST</p>
+          </div>
+          <div class="topbar-actions">
+            <input type="search" placeholder="搜索项目 / 用户 / 任务 ID" />
+            <button>导出报表</button>
+          </div>
+        </header>
+
+        <section class="metric-grid">
+          <article class="metric">
+            <h3>活跃用户 (DAU)</h3>
+            <p class="value">287 <span class="delta up">+12.3%</span></p>
+            <p class="hint">vs 7 日均值 256</p>
+          </article>
+          <article class="metric">
+            <h3>翻译任务 (今日)</h3>
+            <p class="value">1,438 <span class="delta up">+8.7%</span></p>
+            <p class="hint">完成率 94.2%</p>
+          </article>
+          <article class="metric">
+            <h3>项目总数</h3>
+            <p class="value">52 <span class="delta up">+3</span></p>
+            <p class="hint">8 个跨语言对</p>
+          </article>
+          <article class="metric warn">
+            <h3>系统健康</h3>
+            <p class="value">🟡 1 告警 <span class="delta">2 alertmanager</span></p>
+            <p class="hint">12 service / pgvector / Kafka 全 UP</p>
+          </article>
+        </section>
+
+        <section class="two-col">
+          <article class="panel">
+            <header>
+              <h2>最近项目</h2>
+              <a href="#projects" class="link">查看全部 →</a>
+            </header>
+            <table>
+              <thead>
+                <tr>
+                  <th>项目 ID</th>
+                  <th>名称</th>
+                  <th>语言对</th>
+                  <th>状态</th>
+                  <th>字数</th>
+                  <th>负责人</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>PRJ-024</td><td>游戏官网多语言</td><td>zh ⇄ en/ja</td><td><span class="badge ok">进行中</span></td><td>124,580</td><td>译员 A</td></tr>
+                <tr><td>PRJ-023</td><td>学术论文合集</td><td>en ⇄ zh</td><td><span class="badge warn">审核中</span></td><td>87,210</td><td>译员 B</td></tr>
+                <tr><td>PRJ-022</td><td>产品手册 v2.3</td><td>zh ⇄ de/fr</td><td><span class="badge ok">进行中</span></td><td>56,890</td><td>译员 C</td></tr>
+                <tr><td>PRJ-021</td><td>会议纪要 9月</td><td>zh ⇄ en</td><td><span class="badge done">已完成</span></td><td>3,420</td><td>译员 A</td></tr>
+                <tr><td>PRJ-020</td><td>字幕组 S05</td><td>zh ⇄ ja</td><td><span class="badge ok">进行中</span></td><td>12,800</td><td>译员 D</td></tr>
+              </tbody>
+            </table>
+          </article>
+
+          <article class="panel">
+            <header>
+              <h2>实时审计流</h2>
+              <a href="#audit" class="link">查看全部 →</a>
+            </header>
+            <ul class="audit-feed">
+              <li><span class="time">14:02:18</span><span class="actor">user_031</span><span class="action">create</span><span class="target">project:PRJ-024</span></li>
+              <li><span class="time">14:01:55</span><span class="actor">user_017</span><span class="action">login</span><span class="target">role:translator</span></li>
+              <li><span class="time">14:00:42</span><span class="actor">user_002</span><span class="action">delete</span><span class="target">tm_entry:TM-9921</span></li>
+              <li><span class="time">13:59:30</span><span class="actor">user_008</span><span class="action">export</span><span class="target">glossary:GL-014</span></li>
+              <li><span class="time">13:58:11</span><span class="actor">system</span><span class="action">elevate</span><span class="target">user_031 → admin</span></li>
+              <li><span class="time">13:57:00</span><span class="actor">user_005</span><span class="action">update</span><span class="target">task:T-7782</span></li>
+              <li><span class="time">13:56:14</span><span class="actor">user_017</span><span class="action">login</span><span class="target">role:translator</span></li>
+              <li><span class="time">13:55:02</span><span class="actor">user_031</span><span class="action">create</span><span class="target">task:T-7782</span></li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="panel">
+          <header>
+            <h2>微服务健康 (12 service + cats-bff + ai-gateway)</h2>
+            <a href="#monitoring" class="link">Grafana →</a>
+          </header>
+          <div class="service-grid">
+            <div class="svc up"><span class="dot"></span><span>auth-service</span><span class="meta">:8081</span></div>
+            <div class="svc up"><span class="dot"></span><span>user-service</span><span class="meta">:8082</span></div>
+            <div class="svc up"><span class="dot"></span><span>project-service</span><span class="meta">:8083</span></div>
+            <div class="svc up"><span class="dot"></span><span>task-service</span><span class="meta">:8084</span></div>
+            <div class="svc up"><span class="dot"></span><span>file-service</span><span class="meta">:8085</span></div>
+            <div class="svc up"><span class="dot"></span><span>notification-service</span><span class="meta">:8086</span></div>
+            <div class="svc up"><span class="dot"></span><span>report-service</span><span class="meta">:8087</span></div>
+            <div class="svc up"><span class="dot"></span><span>audit-service</span><span class="meta">:8088</span></div>
+            <div class="svc up"><span class="dot"></span><span>asr-service</span><span class="meta">:8090</span></div>
+            <div class="svc up"><span class="dot"></span><span>ocr-service</span><span class="meta">:8091</span></div>
+            <div class="svc up"><span class="dot"></span><span>subtitle-service</span><span class="meta">:8092</span></div>
+            <div class="svc up"><span class="dot"></span><span>office-converter</span><span class="meta">:8093</span></div>
+            <div class="svc up"><span class="dot"></span><span>render-writer</span><span class="meta">:8094</span></div>
+            <div class="svc up"><span class="dot"></span><span>ingestion-service</span><span class="meta">:8095</span></div>
+            <div class="svc up"><span class="dot"></span><span>worker-service</span><span class="meta">:8096</span></div>
+            <div class="svc up"><span class="dot"></span><span>cats-bff</span><span class="meta">:8097</span></div>
+            <div class="svc warn"><span class="dot"></span><span>cats-ai-gateway</span><span class="meta">:8098 · 1 alert</span></div>
+            <div class="svc up"><span class="dot"></span><span>translation-core</span><span class="meta">lib</span></div>
+          </div>
+        </section>
+
+        <footer class="foot">
+          <span>© 2026 CATs · Universal Computer-Assisted Translation SaaS</span>
+          <span>后台管理原型 (mock preview) · per [CATs_技术选型书_v2.0 §ADR-15](./doc/02-基础设计/技术选型/CATs_技术选型书_v2.0.md)</span>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

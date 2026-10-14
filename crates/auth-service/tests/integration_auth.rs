@@ -62,7 +62,8 @@ fn issue_jwt_produces_valid_token() {
     setup_jwt_secret();
     let user_id = Uuid::new_v4();
     let username = "alice";
-    let (token, expiry) = issue_jwt(user_id, username, "access").expect("issue ok");
+    // issue_jwt 自 ULYS-149 起第 4 个参数是 roles（per BFF principal.roles 硬需求）
+    let (token, expiry) = issue_jwt(user_id, username, "access", vec![]).expect("issue ok");
     assert!(!token.is_empty());
     assert_eq!(expiry, 3600);
 }
@@ -72,19 +73,32 @@ fn verify_jwt_roundtrips_claims() {
     setup_jwt_secret();
     let user_id = Uuid::new_v4();
     let username = "bob";
-    let (token, _) = issue_jwt(user_id, username, "access").expect("issue ok");
+    let roles = vec!["tenant_admin".to_string(), "user".to_string()];
+    let (token, _) = issue_jwt(user_id, username, "access", roles.clone()).expect("issue ok");
     let claims = verify_jwt(&token).expect("verify ok");
     assert_eq!(claims.sub, user_id.to_string());
     assert_eq!(claims.username, username);
     assert_eq!(claims.token_type, "access");
+    // roles 必须穿过 JWT 往返（BFF 鉴权依赖该字段，ULYS-149）
+    assert_eq!(claims.roles, roles);
+}
+
+/// 无 roles 时应为空 vec，而不是反序列化失败（Claims.roles 带 serde default）
+#[test]
+fn issue_jwt_without_roles_yields_empty_roles() {
+    setup_jwt_secret();
+    let (token, _) = issue_jwt(Uuid::new_v4(), "carol", "access", vec![]).expect("issue ok");
+    let claims = verify_jwt(&token).expect("verify ok");
+    assert!(claims.roles.is_empty());
 }
 
 #[test]
 fn issue_jwt_refresh_has_longer_expiry() {
     setup_jwt_secret();
     let user_id = Uuid::new_v4();
-    let (_access_token, access_exp) = issue_jwt(user_id, "u", "access").expect("access ok");
-    let (_refresh_token, refresh_exp) = issue_jwt(user_id, "u", "refresh").expect("refresh ok");
+    let (_access_token, access_exp) = issue_jwt(user_id, "u", "access", vec![]).expect("access ok");
+    let (_refresh_token, refresh_exp) =
+        issue_jwt(user_id, "u", "refresh", vec![]).expect("refresh ok");
     assert!(refresh_exp > access_exp);
     assert_eq!(access_exp, 3600);
     assert_eq!(refresh_exp, 86400);
@@ -93,7 +107,7 @@ fn issue_jwt_refresh_has_longer_expiry() {
 #[test]
 fn verify_jwt_rejects_tampered_token() {
     setup_jwt_secret();
-    let (token, _) = issue_jwt(Uuid::new_v4(), "alice", "access").expect("issue ok");
+    let (token, _) = issue_jwt(Uuid::new_v4(), "alice", "access", vec![]).expect("issue ok");
     // 篡改 token 末位
     let mut tampered = token;
     let last = tampered.pop().unwrap();
@@ -117,6 +131,8 @@ fn claims_serialize_deserialize_roundtrip() {
         iat: 1234567800,
         jti: Uuid::new_v4().to_string(),
         token_type: "access".to_string(),
+        roles: vec!["user".to_string()],
+        roles_csv: "user".to_string(),
     };
     let json = serde_json::to_string(&claims).expect("serialize");
     let back: Claims = serde_json::from_str(&json).expect("deserialize");
@@ -124,6 +140,50 @@ fn claims_serialize_deserialize_roundtrip() {
     assert_eq!(back.username, claims.username);
     assert_eq!(back.exp, claims.exp);
     assert_eq!(back.token_type, claims.token_type);
+    assert_eq!(back.roles, claims.roles);
+}
+
+/// `roles` 数组与 `roles_csv` 逗号串必须同源派生。
+///
+/// 2026-10-07 新增。边缘（envoy `jwt_authn`）注入 `X-Cats-Roles` 用的是
+/// `roles_csv` —— 因为 `claim_to_headers` 对 array 会 Base64 编码、对 string
+/// 才原样拷贝。这条用例把"两份表示必须一致"钉住，防止将来只改其中一处。
+#[test]
+fn issued_token_carries_roles_and_matching_roles_csv() {
+    setup_jwt_secret();
+    let roles = vec!["User".to_string(), "QualityLead".to_string()];
+    let (token, _) =
+        issue_jwt(Uuid::new_v4(), "someone", "access", roles.clone()).expect("issue_jwt");
+
+    let claims = verify_jwt(&token).expect("verify_jwt");
+    assert_eq!(claims.roles, roles, "数组表示应原样保留");
+    assert_eq!(
+        claims.roles_csv, "User,QualityLead",
+        "逗号串必须是同一份 roles 的 join(',')，顺序不得变"
+    );
+
+    // 反向：数组每一项都必须能在逗号串里按序找到（防止任何一边被悄悄裁剪）
+    let parts: Vec<&str> = claims.roles_csv.split(',').collect();
+    assert_eq!(
+        parts,
+        claims.roles.iter().map(|s| s.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// 旧 token（JSON 里没有 roles 字段）必须仍能解析，靠 Claims.roles 的 serde(default)
+#[test]
+fn claims_deserialize_without_roles_field_defaults_to_empty() {
+    let json = r#"{
+        "sub": "00000000-0000-0000-0000-000000000001",
+        "username": "legacy",
+        "exp": 1234567890,
+        "iat": 1234567800,
+        "jti": "legacy-jti",
+        "token_type": "access"
+    }"#;
+    let back: Claims = serde_json::from_str(json).expect("legacy token must still parse");
+    assert_eq!(back.username, "legacy");
+    assert!(back.roles.is_empty());
 }
 
 // === 端到端测试占位 (M1 实战时填实) ===

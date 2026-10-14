@@ -7,6 +7,9 @@
 //! 注意: 当前实现是 actix-web test server (in-process, 适合单测),
 //!       不是 OS-level 端口绑定; 如果需要跨进程 e2e, 用 standalone mode
 //!       (把 cfg 转 actix_web::HttpServer 跑在 tokio runtime)
+//!
+//! 已清理: `MockServerConfig::auth_user_only()` — 全仓零调用; 该 struct 字段全 pub,
+//! 调用方直接写字面量即可 (见下方 start_healthz_only)
 
 use actix_web::{App, HttpServer};
 use std::net::TcpListener;
@@ -35,16 +38,6 @@ impl MockServerConfig {
             include_healthz: true,
         }
     }
-
-    /// 仅 auth + user
-    pub fn auth_user_only() -> Self {
-        Self {
-            include_auth: true,
-            include_user: true,
-            include_healthz: true,
-            ..Default::default()
-        }
-    }
 }
 
 /// MockServer handle (test server 包装)
@@ -62,15 +55,26 @@ impl MockServer {
         drop(listener); // 释放, 让 actix_web 重新 bind 同一端口
 
         let server = HttpServer::new(move || {
-            App::new()
-                .configure(|cfg| {
-                    if config.include_auth { super::routes::auth_routes(cfg); }
-                    if config.include_user { super::routes::user_routes(cfg); }
-                    if config.include_project { super::routes::project_routes(cfg); }
-                    if config.include_task { super::routes::task_routes(cfg); }
-                    if config.include_audit { super::routes::audit_routes(cfg); }
-                    if config.include_healthz { super::routes::healthz_routes(cfg); }
-                })
+            App::new().configure(|cfg| {
+                if config.include_auth {
+                    super::routes::auth_routes(cfg);
+                }
+                if config.include_user {
+                    super::routes::user_routes(cfg);
+                }
+                if config.include_project {
+                    super::routes::project_routes(cfg);
+                }
+                if config.include_task {
+                    super::routes::task_routes(cfg);
+                }
+                if config.include_audit {
+                    super::routes::audit_routes(cfg);
+                }
+                if config.include_healthz {
+                    super::routes::healthz_routes(cfg);
+                }
+            })
         })
         .bind(addr.clone())?
         .run();
@@ -89,10 +93,14 @@ impl MockServer {
     }
 
     /// base URL (e.g. "http://127.0.0.1:54321")
-    pub fn base_url(&self) -> String { format!("http://{}", self.addr) }
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
 
     /// addr
-    pub fn addr(&self) -> &str { &self.addr }
+    pub fn addr(&self) -> &str {
+        &self.addr
+    }
 }
 
 #[cfg(test)]

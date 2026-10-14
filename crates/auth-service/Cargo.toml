@@ -42,5 +42,9 @@ actix-rt = "2"
 actix-web = { workspace = true, features = ["macros"] }
 serde_json = "1"
 
+# 跨 crate 接缝测试：签发端（issue_jwt）→ 边缘注入的头 → 下游取值
+# （extract_user_id_and_roles）。cats-rbac 不依赖 auth-service，不构成环。
+cats-rbac.workspace = true
+
 cats-mock = { workspace = true }
 

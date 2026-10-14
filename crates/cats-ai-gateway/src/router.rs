@@ -75,6 +75,16 @@ impl Router {
         chain
     }
 
+    /// 是否至少注册了一个 provider（= 本网关还能路由任何请求）
+    ///
+    /// 2026-10-07 为 `/readyz` 而加。router 查表为空时，`chat()` 的
+    /// `fallback_chain()` 恒返回空 vec，于是每个请求都落到
+    /// `ProviderError::ProviderNotFound` —— 服务"活着"但一个请求也处理不了。
+    /// 这正是就绪探针要报告的"不能服务"，且不涉及任何上游网络调用。
+    pub fn is_routable(&self) -> bool {
+        !self.by_name.is_empty()
+    }
+
     /// 单 provider 直调 (不触发 fallback), 给 router 单点测试 / 单 provider 单元使用
     pub async fn route_single(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
         let provider = self
@@ -115,12 +125,15 @@ mod tests {
         let r = test_router();
         let chain = r.fallback_chain("claude-3-5-sonnet");
         let names: Vec<_> = chain.iter().map(|p| p.name()).collect();
-        assert_eq!(names, vec![
-            ProviderName::Anthropic,
-            ProviderName::OpenAi,    // FALLBACK_ORDER 后续
-            ProviderName::Gemini,
-            ProviderName::DeepSeek,
-        ]);
+        assert_eq!(
+            names,
+            vec![
+                ProviderName::Anthropic,
+                ProviderName::OpenAi, // FALLBACK_ORDER 后续
+                ProviderName::Gemini,
+                ProviderName::DeepSeek,
+            ]
+        );
     }
 
     #[test]
@@ -128,24 +141,30 @@ mod tests {
         let r = test_router();
         let chain = r.fallback_chain("unknown-xyz");
         let names: Vec<_> = chain.iter().map(|p| p.name()).collect();
-        assert_eq!(names, vec![
-            ProviderName::OpenAi,
-            ProviderName::Anthropic,
-            ProviderName::Gemini,
-            ProviderName::DeepSeek,
-        ]);
+        assert_eq!(
+            names,
+            vec![
+                ProviderName::OpenAi,
+                ProviderName::Anthropic,
+                ProviderName::Gemini,
+                ProviderName::DeepSeek,
+            ]
+        );
     }
 
     #[tokio::test]
     async fn route_single_unknown_model_returns_provider_not_found() {
         let r = test_router();
-        let err = r.route_single(&ChatRequest {
-            model: "unknown-xyz".into(),
-            messages: vec![],
-            temperature: 0.7,
-            max_tokens: 1024,
-            idempotency_key: "".into(),
-        }).await.unwrap_err();
+        let err = r
+            .route_single(&ChatRequest {
+                model: "unknown-xyz".into(),
+                messages: vec![],
+                temperature: 0.7,
+                max_tokens: 1024,
+                idempotency_key: "".into(),
+            })
+            .await
+            .unwrap_err();
         match err {
             ProviderError::ProviderNotFound(m) => assert_eq!(m, "unknown-xyz"),
             other => panic!("expected ProviderNotFound, got {:?}", other),

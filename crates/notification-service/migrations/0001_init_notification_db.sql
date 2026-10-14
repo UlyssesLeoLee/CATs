@@ -1,0 +1,32 @@
+-- CATs notification_db schema (per 数据库设计书 v2.0 §6.7)
+-- 引用: doc/03-详细设计/数据库设计/CATs_数据库设计书_v2.0.md §6.7
+--
+-- MVP 范围 (per brief §1 notification-service):
+-- - notifications 推送目标表 (in-app / email / webhook 三类 channel)
+-- - 内部事件消费 Kafka topic cats.notifications.v1 → 写库 + 输出 tracing log (MVP 不接 SMTP/WebSocket)
+--
+-- ---------------------------------------------------------------------
+-- 已停用 (per 2026-10-03 真实 PG 验证)
+--
+-- 本文件描述的是"投递队列"模型 (org_id / channel / event_type / sent_at)，
+-- 与 notification-service 实际代码不符：src/db.rs 读写的是"通知中心"模型
+-- (type / title / body / payload / read_at / status / updated_at)。
+--
+-- 三份 init 都以 IF NOT EXISTS 建同名 notifications 表，而本文件版本号
+-- 最小、最先执行，于是它抢先建成队列模型表，后两份 init 的
+-- CREATE TABLE 被静默跳过，随后它们的索引
+-- (WHERE read_at IS NULL) 引用不存在的列而失败：
+--     ERROR: column "read_at" does not exist
+--     ERROR: column "status" does not exist
+--
+-- 即：在全新数据库上，notification_db 的 schema 初始化无法完成。
+-- 生产首次部署同样会踩到。
+--
+-- 处理：以 src/db.rs 实际使用的列为权威，即 20260920_0001_init.sql。
+-- 本文件因此不再建表；channel / event_type 投递语义如需保留，应另起
+-- 投递队列表（delivery_queue），不要与 notifications 混用。
+-- ---------------------------------------------------------------------
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- 故意留空：权威 schema 见 20260920_0001_init.sql

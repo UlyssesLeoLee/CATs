@@ -100,17 +100,20 @@ fn make_app(
         InitError = (),
     >,
 > {
-    let pool_data = web::Data::new(pool);
-    App::new()
-        .app_data(pool_data)
-        .route("/healthz", web::get().to(handlers::healthz))
-        .route("/v1/auth/login", web::post().to(handlers::login))
-        .route("/v1/auth/refresh", web::post().to(handlers::refresh))
-        .route("/v1/auth/me", web::get().to(handlers::me))
+    // main.rs registers AppState (pool + audit sink), and every handler takes
+    // `web::Data<AppState>`. Registering only a bare pool makes actix fail the
+    // extractor, which surfaces as 500 "Requested application data is not
+    // configured correctly" on every route — not as a 401. Mirror main.rs.
+    //
+    // 2026-10-07: 挂生产的 `handlers::configure_routes`，不再自己抄一份路由
+    // （原来漏了 `/v1/auth/logout`，per BACKEND_STATUS §4.1t）。
+    let state_data = web::Data::new(handlers::AppState::new(pool));
+    App::new().configure(move |c| handlers::configure_routes(c, state_data.clone()))
 }
 
 // === (a) POST /v1/auth/login 成功 → 200 + JWT ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_login_success_returns_200_with_jwt() {
     setup_env();
     let pool = make_pool().await;
@@ -143,6 +146,7 @@ async fn e2e_login_success_returns_200_with_jwt() {
 
 // === (b) POST /v1/auth/login 错密码 → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_login_wrong_password_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -170,6 +174,7 @@ async fn e2e_login_wrong_password_returns_401() {
 
 // === (c) POST /v1/auth/refresh 成功 → 200 + 新 access_token ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_refresh_success_returns_new_access_token() {
     setup_env();
     let pool = make_pool().await;
@@ -216,6 +221,7 @@ async fn e2e_refresh_success_returns_new_access_token() {
 
 // === (d) POST /v1/auth/refresh 错 token → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_refresh_invalid_token_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -239,6 +245,7 @@ async fn e2e_refresh_invalid_token_returns_401() {
 
 // === (bonus) GET /healthz → 200 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -249,11 +256,14 @@ async fn e2e_healthz_returns_200() {
     assert_eq!(resp.status().as_u16(), 200);
     let body: serde_json::Value = actix_test::read_body_json(resp).await;
     assert_eq!(body["status"], json!("ok"));
-    assert_eq!(body["service"], json!("auth-service"));
+    // 形状 per BACKEND_STATUS §4.1m 统一后的全仓唯一形状
+    assert_eq!(body["app"]["name"], json!(env!("CARGO_PKG_NAME")));
+    assert!(body["app"]["version"].as_str().unwrap().starts_with("0.1."));
 }
 
 // === (e) GET /v1/auth/me 成功 → 200 + user_id/username/email ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_me_success_returns_user_info() {
     setup_env();
     let pool = make_pool().await;
@@ -298,6 +308,7 @@ async fn e2e_me_success_returns_user_info() {
 
 // === (f) GET /v1/auth/me 缺 Authorization → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_me_missing_token_returns_401() {
     setup_env();
     let pool = make_pool().await;
@@ -307,17 +318,21 @@ async fn e2e_me_missing_token_returns_401() {
         .uri("/v1/auth/me")
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
-    assert_eq!(
-        resp.status().as_u16(),
-        401,
-        "me without Authorization header should be 401"
+    let status = resp.status().as_u16();
+    let body_bytes = actix_test::read_body(resp).await;
+    eprintln!(
+        "[e2e diag] missing-token status={status} body={}",
+        String::from_utf8_lossy(&body_bytes)
     );
-    let body: ErrorBody = actix_test::read_body_json(resp).await;
+    assert_eq!(status, 401, "me without Authorization header should be 401");
+    let body: ErrorBody =
+        serde_json::from_slice(&body_bytes).expect("diag: body must be ErrorBody");
     assert_eq!(body.error, "invalid_token");
 }
 
 // === (g) GET /v1/auth/me 错 token → 401 ===
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_me_invalid_token_returns_401() {
     setup_env();
     let pool = make_pool().await;

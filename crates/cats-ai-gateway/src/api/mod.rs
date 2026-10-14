@@ -6,7 +6,8 @@
 //! MVP 端点:
 //! - POST /v1/llm/chat     同步 chat 调用 (给 translation-core 同步使用)
 //! - GET  /v1/llm/usage    用量查询 (?org_id=...)
-//! - GET  /healthz         健康检查
+//! - GET  /healthz         健康检查 (存活探针, 恒 200)
+//! - GET  /readyz          就绪探针, 不可服务时 **503** (2026-10-07 新增)
 //!
 //! 请求/响应 DTO 通过 serde + 错误信封 (per error.rs)
 
@@ -50,16 +51,25 @@ pub struct ChatMessageDto {
 
 impl From<ChatMessageDto> for ChatMessage {
     fn from(dto: ChatMessageDto) -> Self {
-        ChatMessage { role: dto.role, content: dto.content }
+        ChatMessage {
+            role: dto.role,
+            content: dto.content,
+        }
     }
 }
 
 /// POST /v1/llm/chat 响应体 (复用 ChatResponse)
 pub type ChatResponseDto = ChatResponse;
 
-fn default_temperature() -> f32 { 0.7 }
-fn default_max_tokens() -> u32 { 1024 }
-fn default_compliance() -> String { "cloud".to_string() }
+fn default_temperature() -> f32 {
+    0.7
+}
+fn default_max_tokens() -> u32 {
+    1024
+}
+fn default_compliance() -> String {
+    "cloud".to_string()
+}
 
 /// GET /v1/llm/usage 响应
 #[derive(Debug, Serialize)]
@@ -130,12 +140,57 @@ pub struct UsageQuery {
 /// GET /healthz handler
 pub async fn healthz_handler() -> impl Responder {
     use cats_common::AppMeta;
+    // 2026-10-05: 原来用 `AppMeta::current()`, 它返回的是 **cats-common 自己的**
+    // CARGO_PKG_NAME —— 于是本 service 在 healthz 里自报 "cats-common",
+    // 认不出是哪个服务, 版本号也是共享库的版本。`env!` 在编译期按**本 crate**
+    // 展开, 所以这里报的是 cats-ai-gateway 自己。
+    //
+    // 先建成变量再放进 `json!`: 宏有自己的分词器, 在其值位置内嵌一个
+    // struct 字面量并在里面写 `"key": value` 会被它当成 JSON 的键值对解析。
+    let app = AppMeta {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
     HttpResponse::Ok().json(serde_json::json!({
         "status": "ok",
-        "app": AppMeta::current(),
-        "service": "cats-ai-gateway",
-        "version": crate::version(),
+        "app": app,
     }))
+}
+
+/// `GET /readyz` — 就绪探针，**必须**在不可服务时返回 503
+///
+/// 2026-10-07 新增。此前本服务只有 `/healthz`，而 k3s 的
+/// `deploy/k3s/cats-core/cats-ai-gateway.yaml` 把 readinessProbe 指向了
+/// `/healthz` —— 那个端点恒返 200、不查任何东西，于是依赖不可用时 Pod 照样
+/// Ready，流量继续被派发进来。
+///
+/// # 探什么（本服务与 DB 型服务的区别）
+///
+/// 本 crate 的 `Cargo.toml` 里**没有 `sqlx`、没有任何连接池**：`cats-ai-gateway`
+/// 是外部 LLM provider 的网关，不持有数据库。所以这里**没有 DB 可探**。
+///
+/// 也**故意不探上游 provider**（OpenAI / Anthropic / DeepSeek）：对第三方
+/// 模型 API 发网络请求来做就绪判定，意味着上游一限流/抖动就把整个网关摘出
+/// 轮转，把局部上游故障放大成全站故障 —— 严格比现状更差。
+///
+/// 判定源是**本服务自己的启动状态**：`AiGatewayService::is_serving()`，即
+/// router 里至少有一个可路由的 provider。空 router 时每个请求都必然返回
+/// `ProviderNotFound`，此时报 503 是如实的。
+///
+/// `db` 字段：共享类型 `cats_common::ReadyResponse` 的顶层键固定为
+/// `["db","service","status"]`，本服务没有 DB，所以 `db` 这里承载的是上面那个
+/// 启动态判定（`"ok"` / `"fail"`）。它是本服务**唯一的**依赖判定位，不是假装的
+/// 数据库探针 —— 代码里不存在任何 DB 调用，也不声称有。
+///
+/// 形状与状态码判定都收在 `cats_common::ReadyResponse`，与其他服务一致。
+pub async fn readyz(svc: web::Data<AiGatewayService>) -> impl Responder {
+    let dep_ok = svc.is_serving();
+    let body = cats_common::ReadyResponse::new(env!("CARGO_PKG_NAME"), dep_ok);
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(body.status_code())
+            .expect("status_code 只返回 200/503，都是合法状态码"),
+    )
+    .json(body)
 }
 
 /// 配置 REST 路由 (给 main.rs 用)
@@ -145,7 +200,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/chat", web::post().to(chat_handler))
             .route("/usage", web::get().to(usage_handler)),
     )
-    .route("/healthz", web::get().to(healthz_handler));
+    .route("/healthz", web::get().to(healthz_handler))
+    .route("/readyz", web::get().to(readyz));
 }
 
 #[cfg(test)]
@@ -160,7 +216,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::get().uri("/healthz").to_request();
         let resp = test::call_service(&app, req).await;
@@ -174,7 +231,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::post()
             .uri("/v1/llm/chat")
@@ -189,7 +247,10 @@ mod tests {
         assert!(resp.status().is_success());
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["provider"], "openai");
-        assert!(body["content"].as_str().unwrap().starts_with("[mock-openai]"));
+        assert!(body["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("[mock-openai]"));
     }
 
     #[actix_web::test]
@@ -200,7 +261,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::post()
             .uri("/v1/llm/chat")
@@ -224,7 +286,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(svc))
                 .configure(configure_routes),
-        ).await;
+        )
+        .await;
 
         let req = test::TestRequest::get()
             .uri("/v1/llm/usage?org_id=org-test")

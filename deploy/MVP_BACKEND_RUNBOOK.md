@@ -1,9 +1,36 @@
 # CATs MVP Backend 启动 RUNBOOK (实测版)
 
-**版本**: v1.0
-**日期**: 2026-09-19
+> ## ⚠ 2026-10-04 起：启动请直接用 `bash deploy/scripts/mvp-backend-up.sh`
+>
+> 本文件 v1.0（2026-09-19）记录的是当天的状态，**其中 §3 的手工步骤已经
+> 不能照做**，原因不是过时而是当时就写错了。
+>
+> 2026-10-04 实际执行 `docker compose up` 时发现：这条路径此前**从未成功
+> 走到过能构建的那一步**。缺陷逐条记录在
+> **`deploy/COMPOSE_UP_DEFECTS_v1.0.md`**，主要几条：
+>
+> - `dockerfile` 路径错 → 构建期直接失败
+> - `Dockerfile.runtime` 第 2 行把 `FROM` 和 `WORKDIR` 挤在一行 → 解析失败
+> - 宿主端口 8090 被 `ai-gateway` 和 `cats-bff` 同时声明 → `up` 必失败
+> - 8 个 logical database 建了但**从不灌 migration**（全仓 `src/main.rs`
+>   搜 `migrat` 是 0 匹配）→ 服务能起、healthz 能过，第一个业务请求就
+>   `relation does not exist`
+> - `KAFKA_AUTO_CREATE_TOPICS_ENABLE=false` 而 2 个 topic 从没被创建
+> - 本文件 §5 的端口表与 compose 声明三处不一致（envoy 10000 vs 8080）
+>
+> 现在数据面初始化已内建进 compose（`db-init` / `kafka-init` 两个 oneshot
+> service），**不需要手工建库或建 topic**。脚本已把 12 个 `/healthz` 探活
+> 串成一次 smoke，任一失败即非 0 退出。
+>
+> §1 的状态表**保留原文未改**——那是 2026-09-19 的真实观察，不是今天的状态。
+> 其中「✅ 10 Kafka topic 创建 | OK」在今天的 compose 上**不成立**：
+> compose 只建 2 个 topic（`cats.notifications.v1` / `cats.audit.v1`），
+> 其余 8 个至今无人创建。
+
+**版本**: v1.0（原始） / 2026-10-04 增补说明
+**日期**: 2026-09-19（原始）
 **作者**: 架构师(Mavis 接手 agent per DEC-008)
-**状态**: 🟡 MVP 数据层(PG/Kafka/topic)+ 5 个 crate 实物已落地,后端 binary 待 cargo build 30-50 分钟
+**状态**: 🟡 见上方增补说明；启动入口以 `deploy/scripts/mvp-backend-up.sh` 为准
 
 ---
 

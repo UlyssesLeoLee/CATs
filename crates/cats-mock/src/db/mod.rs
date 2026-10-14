@@ -26,9 +26,9 @@
 //! let db = DbFixture::pg_testcontainers("postgres://...").await.unwrap();
 //! ```
 
+pub mod fixture;
 pub mod schema;
 pub mod seed;
-pub mod fixture;
 
 pub use fixture::*;
 pub use schema::*;

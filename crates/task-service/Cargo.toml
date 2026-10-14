@@ -20,12 +20,24 @@ actix-web.workspace   = true
 anyhow.workspace      = true
 thiserror.workspace   = true
 tracing.workspace     = true
+tracing-subscriber.workspace = true
 serde.workspace       = true
 serde_json.workspace  = true
 sqlx.workspace        = true
 # 跨服务 gRPC 契约（per common.proto）
 cats-proto.workspace = true
 tonic.workspace       = true
+# RBAC 路径/方法解析（per T-03 权限矩阵 + Sprint 1 §6.9 接口设计书 v2.0 升版路径）
+cats-rbac = { path = "../cats-rbac" }
+# 业务级
+uuid       = { version = "1", features = ["v4", "serde"] }
+chrono     = { version = "0.4", features = ["serde"] }
+# SSE 客户端/服务端字节流 (per ULYS-45 af8abb6 SSE 既有实现)
+async-stream = "0.3"
+futures-util  = "0.3"
 
 [dev-dependencies]
 cats-mock = { workspace = true }
+actix-web = { workspace = true, features = ["macros"] }
+tokio     = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+reqwest   = { workspace = true }

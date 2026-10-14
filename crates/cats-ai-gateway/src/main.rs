@@ -10,19 +10,18 @@
 //! - GRPC_BIND_ADDR (默认 0.0.0.0:50061)
 
 use actix_web::{web, App, HttpServer};
-use cats_common::AppMeta;
 use std::env;
 use tonic::transport::Server;
 use tracing::info;
 
-use cats_ai_gateway::api::{configure_routes, healthz_handler};
+use cats_ai_gateway::api::configure_routes;
 use cats_ai_gateway::compliance::ComplianceMode;
 use cats_ai_gateway::error::ProviderError;
-use cats_ai_gateway::provider::{anthropic, deepseek, gemini, openai, ChatMessage};
 use cats_ai_gateway::proto::llm::v1::{
     llm_gateway_server::{LlmGateway, LlmGatewayServer},
     ChatRequest as ProtoChatRequest, ChatResponse as ProtoChatResponse,
 };
+use cats_ai_gateway::provider::{anthropic, deepseek, gemini, openai, ChatMessage};
 use cats_ai_gateway::quota::QuotaTracker;
 use cats_ai_gateway::router::Router;
 use cats_ai_gateway::service::AiGatewayService;
@@ -38,12 +37,18 @@ struct Config {
 
 impl Config {
     fn from_env() -> Self {
-        let rest_bind_addr = env::var("REST_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8090".to_string());
-        let grpc_bind_addr = env::var("GRPC_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:50061".to_string());
+        let rest_bind_addr =
+            env::var("REST_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8090".to_string());
+        let grpc_bind_addr =
+            env::var("GRPC_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:50061".to_string());
         let compliance_mode = env::var("COMPLIANCE_MODE")
             .map(|s| ComplianceMode::parse(&s))
             .unwrap_or(ComplianceMode::Cloud);
-        Self { rest_bind_addr, grpc_bind_addr, compliance_mode }
+        Self {
+            rest_bind_addr,
+            grpc_bind_addr,
+            compliance_mode,
+        }
     }
 }
 
@@ -61,10 +66,14 @@ impl LlmGateway for GrpcGatewayServer {
         let req = request.into_inner();
         let domain_req = cats_ai_gateway::provider::ChatRequest {
             model: req.model.clone(),
-            messages: req.messages.into_iter().map(|m| ChatMessage {
-                role: m.role,
-                content: m.content,
-            }).collect(),
+            messages: req
+                .messages
+                .into_iter()
+                .map(|m| ChatMessage {
+                    role: m.role,
+                    content: m.content,
+                })
+                .collect(),
             temperature: req.temperature,
             max_tokens: req.max_tokens,
             idempotency_key: req.idempotency_key,
@@ -96,29 +105,15 @@ impl LlmGateway for GrpcGatewayServer {
 fn tonic_status_from_provider_error(e: &ProviderError) -> tonic::Status {
     use tonic::Code;
     let code = match e {
-        ProviderError::Validation(_)         => Code::InvalidArgument,
-        ProviderError::RateLimited { .. }    => Code::ResourceExhausted,
+        ProviderError::Validation(_) => Code::InvalidArgument,
+        ProviderError::RateLimited { .. } => Code::ResourceExhausted,
         ProviderError::ComplianceBlocked { .. } => Code::FailedPrecondition,
-        ProviderError::ProviderNotFound(_)   => Code::Unavailable,
-        ProviderError::AllFailed(_)          => Code::Unavailable,
-        ProviderError::Upstream { .. }       => Code::Unavailable,
-        ProviderError::Transient { .. }      => Code::Unavailable,
+        ProviderError::ProviderNotFound(_) => Code::Unavailable,
+        ProviderError::AllFailed(_) => Code::Unavailable,
+        ProviderError::Upstream { .. } => Code::Unavailable,
+        ProviderError::Transient { .. } => Code::Unavailable,
     };
     tonic::Status::new(code, e.to_string())
-}
-
-/// 健康检查 JSON (含 gRPC server 状态)
-#[derive(serde::Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    app: AppMeta,
-}
-
-async fn healthz() -> actix_web::HttpResponse {
-    actix_web::HttpResponse::Ok().json(HealthResponse {
-        status: "ok",
-        app: AppMeta::current(),
-    })
 }
 
 #[actix_web::main]
@@ -134,13 +129,14 @@ async fn main() -> std::io::Result<()> {
 
     // 构造 service
     let router = Router::new(vec![openai(), anthropic(), gemini(), deepseek()]);
-    let svc = AiGatewayService::new(router, QuotaTracker::new())
-        .with_compliance(cfg.compliance_mode);
+    let svc =
+        AiGatewayService::new(router, QuotaTracker::new()).with_compliance(cfg.compliance_mode);
     let svc_arc = std::sync::Arc::new(svc);
 
     // gRPC server (在后台 tokio task 里)
     let grpc_svc = svc_arc.clone();
-    let grpc_addr: std::net::SocketAddr = cfg.grpc_bind_addr.parse().expect("invalid GRPC_BIND_ADDR");
+    let grpc_addr: std::net::SocketAddr =
+        cfg.grpc_bind_addr.parse().expect("invalid GRPC_BIND_ADDR");
     tokio::spawn(async move {
         let server = GrpcGatewayServer { svc: grpc_svc };
         let result = Server::builder()
@@ -157,7 +153,14 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(svc_data.clone())
-            .route("/healthz", actix_web::web::get().to(healthz))
+            // `/healthz` 由 `configure_routes()`（api/mod.rs:168）注册，这里
+            // **不能**再注册一次。actix-web 对同一路径注册两次时**先注册的赢**
+            // （实测见 `tests/healthz_single_registration.rs` 的
+            // `first_registration_wins`：注册两次且 body 不同，返回先注册那个）。
+            // 本行曾经是第二次注册，于是 `api::healthz_handler` 运行时永远收不到
+            // 请求，而它自己的测试 `healthz_returns_ok` 单独 mount
+            // `configure_routes`、看不到这次覆盖，照样是绿的 —— 一条假绿。已删。
+            // 同文件的 `main_rs_registers_healthz_nowhere` 守住这个约束。
             .configure(configure_routes)
     })
     .bind(&cfg.rest_bind_addr)?

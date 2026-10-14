@@ -14,8 +14,8 @@ use crate::qa::QaEngine;
 use cats_common::{CatsError, ErrorCode};
 use cats_proto::cats::v1::{
     translation_core_service_server::TranslationCoreService, BatchTranslateRequest,
-    BatchTranslateResponse, MatchTMRequest, MatchTMResponse, RunQARequest, RunQAResponse,
-    TermItem, TMMatchItem, TranslateSegmentRequest, TranslateSegmentResponse,
+    BatchTranslateResponse, LanguageCode, MatchTmRequest, MatchTmResponse, RunQaRequest,
+    RunQaResponse, TmMatchItem, TranslateSegmentRequest, TranslateSegmentResponse,
 };
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -38,8 +38,8 @@ impl Default for TranslationCoreServiceImpl {
 impl TranslationCoreService for TranslationCoreServiceImpl {
     async fn match_tm(
         &self,
-        request: Request<MatchTMRequest>,
-    ) -> Result<Response<MatchTMResponse>, Status> {
+        request: Request<MatchTmRequest>,
+    ) -> Result<Response<MatchTmResponse>, Status> {
         let req = request.into_inner();
         info!(
             tenant = %req.tenant_id,
@@ -49,7 +49,9 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
         );
         // MVP: 不连 DB, 走 mock 返回
         let mock_items = mock_match_tm(&req.source_text, req.threshold);
-        Ok(Response::new(MatchTMResponse { matches: mock_items }))
+        Ok(Response::new(MatchTmResponse {
+            matches: mock_items,
+        }))
     }
 
     async fn translate_segment(
@@ -62,8 +64,8 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
             project_id: req.project_id.clone(),
             segment_id: req.segment_id.clone(),
             source_text: req.source_text.clone(),
-            source_lang: req.source_lang,
-            target_lang: req.target_lang,
+            source_lang: lang(req.source_lang),
+            target_lang: lang(req.target_lang),
             injected_terms: req
                 .injected_terms
                 .iter()
@@ -85,8 +87,8 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
 
     async fn run_qa(
         &self,
-        request: Request<RunQARequest>,
-    ) -> Result<Response<RunQAResponse>, Status> {
+        request: Request<RunQaRequest>,
+    ) -> Result<Response<RunQaResponse>, Status> {
         let req = request.into_inner();
         let violations = QaEngine::run(
             &req.segment_id,
@@ -95,7 +97,7 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
             &req.expected_terms,
         );
         let passed = violations.is_empty();
-        Ok(Response::new(RunQAResponse {
+        Ok(Response::new(RunQaResponse {
             segment_id: req.segment_id,
             passed,
             violations,
@@ -115,8 +117,8 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
                 project_id: req.project_id.clone(),
                 segment_id: seg.segment_id.clone(),
                 source_text: seg.source_text.clone(),
-                source_lang: seg.source_lang,
-                target_lang: seg.target_lang,
+                source_lang: lang(seg.source_lang),
+                target_lang: lang(seg.target_lang),
                 injected_terms: seg
                     .injected_terms
                     .iter()
@@ -140,34 +142,46 @@ impl TranslationCoreService for TranslationCoreServiceImpl {
 }
 
 fn to_grpc_status(e: CatsError) -> Status {
-    let code = e.error_code();
+    let code = e.code();
     let msg = e.to_string();
-    Status::new(match code {
-        ErrorCode::InvalidRequest => tonic::Code::InvalidArgument,
-        ErrorCode::NotFound => tonic::Code::NotFound,
-        ErrorCode::Unauthorized => tonic::Code::Unauthenticated,
-        ErrorCode::Forbidden => tonic::Code::PermissionDenied,
-        ErrorCode::Conflict => tonic::Code::AlreadyExists,
-        ErrorCode::ComplianceBlocked => tonic::Code::FailedPrecondition,
-        ErrorCode::QaBlocked => tonic::Code::FailedPrecondition,
-        ErrorCode::RateLimited => tonic::Code::ResourceExhausted,
-        ErrorCode::UpstreamError => tonic::Code::Unavailable,
-        ErrorCode::UpstreamTimeout => tonic::Code::DeadlineExceeded,
-        _ => tonic::Code::Internal,
-    }, msg)
+    Status::new(
+        match code {
+            ErrorCode::InvalidRequest => tonic::Code::InvalidArgument,
+            ErrorCode::NotFound => tonic::Code::NotFound,
+            ErrorCode::Unauthorized => tonic::Code::Unauthenticated,
+            ErrorCode::Forbidden => tonic::Code::PermissionDenied,
+            ErrorCode::Conflict => tonic::Code::AlreadyExists,
+            ErrorCode::ComplianceBlocked => tonic::Code::FailedPrecondition,
+            ErrorCode::QaBlocked => tonic::Code::FailedPrecondition,
+            ErrorCode::RateLimited => tonic::Code::ResourceExhausted,
+            ErrorCode::UpstreamError => tonic::Code::Unavailable,
+            ErrorCode::UpstreamTimeout => tonic::Code::DeadlineExceeded,
+            _ => tonic::Code::Internal,
+        },
+        msg,
+    )
+}
+
+/// prost 把 proto3 枚举字段生成为 `i32`，而 `TranslateInput` 用的是
+/// `LanguageCode` 枚举本身。这里做一次显式转换。
+///
+/// 真实事故（2026-10-04 接线时暴露）：本文件把 `req.source_lang` 直接
+/// 当枚举用，而它其实是 i32 —— 4 处类型不匹配。之所以一直没人发现，
+/// 是因为这 550 行从来没有被编译过。
+fn lang(v: i32) -> LanguageCode {
+    LanguageCode::try_from(v).unwrap_or(LanguageCode::LangUnspecified)
 }
 
 /// MVP mock: 任何 source_text 都返回 1 个 100% 命中
-fn mock_match_tm(source_text: &str, threshold: f32) -> Vec<TMMatchItem> {
+fn mock_match_tm(source_text: &str, threshold: f32) -> Vec<TmMatchItem> {
     if source_text.trim().is_empty() {
         return vec![];
     }
-    vec![TMMatchItem {
+    vec![TmMatchItem {
         tm_id: Uuid::new_v4().to_string(),
         source_text: source_text.into(),
         target_text: format!("[mock TM] {source_text}"),
         similarity: 1.0_f32.max(threshold),
         is_exact: true,
-        ..Default::default()
     }]
 }

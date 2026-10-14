@@ -15,6 +15,11 @@ use crate::router::Router;
 pub struct AiGatewayService {
     router: Router,
     quota: QuotaTracker,
+    /// 重试策略。**当前恒为 `RetryPolicy::default()`**（max_attempts=3 / base_backoff=100ms）：
+    /// 它没有任何 env / Config 入口，唯一能设置它的 `with_retry_policy` 已在 2026-10-06
+    /// 作为零引用代码删除。要做成可配需要补 `Config` 字段 + env + Helm values + compose，
+    /// 属新增功能，不在死代码清理范围内。这里写明事实，以免下一个读代码的人
+    /// 误以为它已经可配。
     retry_policy: RetryPolicy,
     compliance: ComplianceGate,
 }
@@ -36,20 +41,42 @@ impl AiGatewayService {
         self
     }
 
-    /// 设置重试策略
-    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
-        self.retry_policy = policy;
-        self
-    }
+    // 2026-10-05 死代码清理：删除 `with_retry_policy`。
+    // 全仓零调用；生产路径 (`main.rs`) 只走 `AiGatewayService::new(...).with_compliance(...)`。
+    // 删除后 `retry_policy` 字段恒为 `RetryPolicy::default()`（见字段上的注释）。
 
     /// 引用 router
-    pub fn router(&self) -> &Router { &self.router }
+    pub fn router(&self) -> &Router {
+        &self.router
+    }
 
     /// 引用 quota
-    pub fn quota(&self) -> &QuotaTracker { &self.quota }
+    pub fn quota(&self) -> &QuotaTracker {
+        &self.quota
+    }
 
     /// 引用 compliance
-    pub fn compliance(&self) -> &ComplianceGate { &self.compliance }
+    pub fn compliance(&self) -> &ComplianceGate {
+        &self.compliance
+    }
+
+    /// 本服务当前能否服务（`/readyz` 的判定源，2026-10-07 新增）
+    ///
+    /// # 为什么不探上游 LLM
+    ///
+    /// 本 crate 是外部 LLM provider 的网关，`Cargo.toml` 里**没有** `sqlx`，
+    /// 也没有任何连接池：它不持有数据库。唯一的"依赖"是 provider 列表，而
+    /// 探它意味着对 OpenAI / Anthropic / DeepSeek 发网络请求 —— 第三方
+    /// 限流或抖动就会把整个网关摘出轮转，把局部上游故障放大成全站故障，
+    /// 严格比现状更差。所以这里只判定**自身启动状态**：router 里有没有
+    /// 可路由的 provider。空 router ⇒ 每个请求必然 `ProviderNotFound`。
+    ///
+    /// 相应地，`/readyz` body 里的 `db` 字段（`cats_common::ReadyResponse`
+    /// 的固定形状，本服务**没有** DB）承载的是上面这个启动态判定结果。
+    /// 见 `api::readyz` 的同款说明。
+    pub fn is_serving(&self) -> bool {
+        self.router.is_routable()
+    }
 
     /// 业务级 chat 调用:
     /// 1. 合规预检 (按 model 字段命中的 provider, 必须在合规模式内)
@@ -78,7 +105,8 @@ impl AiGatewayService {
         self.quota.check(org_id, estimated_tokens).await?;
 
         // 3. retry + fallback
-        let outcome = execute_with_retry(&self.router, &retry_policy_via(&self.retry_policy), req).await;
+        let outcome =
+            execute_with_retry(&self.router, &retry_policy_via(&self.retry_policy), req).await;
 
         match outcome {
             RetryOutcome::Ok { response, .. } => {
@@ -92,7 +120,9 @@ impl AiGatewayService {
 }
 
 /// RetryPolicy 引用包装 (避免在 AiGatewayService 上持有 RetryPolicy 引用导致的 lifetime 麻烦)
-fn retry_policy_via(p: &RetryPolicy) -> RetryPolicy { p.clone() }
+fn retry_policy_via(p: &RetryPolicy) -> RetryPolicy {
+    p.clone()
+}
 
 /// 启发式 token 估算 (per 任务要求 7.3 配额)
 fn estimate_tokens(req: &ChatRequest) -> u32 {
@@ -131,7 +161,10 @@ mod tests {
         let svc = default_service();
         let req = ChatRequest {
             model: "gpt-4o-mini".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "translate hello".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "translate hello".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -150,7 +183,10 @@ mod tests {
         let svc = default_service().with_compliance(ComplianceMode::Local);
         let req = ChatRequest {
             model: "gpt-4o-mini".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -161,14 +197,20 @@ mod tests {
 
     #[tokio::test]
     async fn quota_exceeded_short_circuits_before_provider_call() {
-        let svc = default_service();
         // 用极小配额 (1 token), 即便 prompt 估算也超限
+        // 走 `service_for_test` 注入单 provider + 配额 (Cloud = `new()` 的默认值)
         let small_quota = QuotaTracker::with_limit(1);
-        let router = Router::new(vec![crate::provider::openai()]);
-        let svc = AiGatewayService::new(router, small_quota);
+        let svc = service_for_test(
+            vec![crate::provider::openai()],
+            small_quota,
+            ComplianceMode::Cloud,
+        );
         let req = ChatRequest {
             model: "gpt-4o-mini".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "x".repeat(1000) }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "x".repeat(1000),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
@@ -178,19 +220,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_model_returns_provider_not_found() {
+    async fn unknown_model_falls_back_to_default_provider() {
         let svc = default_service();
         let req = ChatRequest {
             model: "unknown-xyz".into(),
-            messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
             temperature: 0.7,
             max_tokens: 1024,
             idempotency_key: "".into(),
         };
-        let err = svc.chat("org-1", &req).await.unwrap_err();
         // fallback chain 会返回 default (openai), 所以这里不会 ProviderNotFound
         // 但 mock openai 会返回 — 应当 Ok
-        assert!(matches!(err, ProviderError::ProviderNotFound(_)) || err.to_string().contains("openai"));
+        //
+        // 之前的写法是 `svc.chat(...).await.unwrap_err()` 然后断言
+        // `ProviderNotFound || contains("openai")` —— 自相矛盾：注释和断言都说
+        // 可能返回 Ok，unwrap_err() 却会在这里直接 panic。改为如实断言实际行为。
+        match svc.chat("org-1", &req).await {
+            Ok(resp) => {
+                assert_eq!(
+                    resp.provider, "openai",
+                    "unknown model should fall back to the default provider"
+                );
+            }
+            Err(ProviderError::ProviderNotFound(m)) => {
+                panic!("unexpected ProviderNotFound for {m}: router falls back instead")
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+        }
         let _ = ProviderName::OpenAi; // suppress unused
     }
 }

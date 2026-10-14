@@ -8,9 +8,10 @@ use super::{random_past_within_days, Factory};
 use serde::{Deserialize, Serialize};
 
 /// Audit 事件结果
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditOutcome {
+    #[default]
     Success,
     Failure,
 }
@@ -22,10 +23,6 @@ impl AuditOutcome {
             Self::Failure => "failure",
         }
     }
-}
-
-impl Default for AuditOutcome {
-    fn default() -> Self { Self::Success }
 }
 
 /// AuditEvent 数据
@@ -143,12 +140,16 @@ impl AuditEventFactory {
 }
 
 impl Default for AuditEventFactory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Factory for AuditEventFactory {
     type Output = AuditEvent;
-    fn build(&self) -> AuditEvent { self.build_one() }
+    fn build(&self) -> AuditEvent {
+        self.build_one()
+    }
     fn build_many(&self, count: usize) -> Vec<AuditEvent> {
         (0..count).map(|_| self.build_one()).collect()
     }
@@ -168,7 +169,10 @@ mod tests {
 
     #[test]
     fn failed_event() {
-        let e = AuditEventFactory::new().failed().of_type("login_failed").build();
+        let e = AuditEventFactory::new()
+            .failed()
+            .of_type("login_failed")
+            .build();
         assert_eq!(e.outcome, AuditOutcome::Failure);
         assert_eq!(e.event_type, "login_failed");
     }

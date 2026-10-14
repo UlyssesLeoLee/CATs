@@ -1,8 +1,11 @@
 //! actix-web 4.x 兼容性冒烟
 //!
 //! 验证目标: 4.x 在 Rust 1.98.0 下编译 + /healthz 端点可启动可响应
+//!
+//! 已清理: `start_mock_server()` — 全仓零调用 (本 crate 无 bin 目标, 无外部依赖方);
+//! 真实 socket 冒烟由 cats_mock::http::server::MockServer::start 承担
 
-use actix_web::{get, web, App, HttpResponse, HttpServer};
+use actix_web::{get, web, HttpResponse};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -25,18 +28,10 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(healthz);
 }
 
-/// Smoke 入口: 编译即通过 + 测试不实际 bind 端口
-pub async fn start_mock_server() -> std::io::Result<()> {
-    HttpServer::new(|| App::new().configure(config))
-        .bind("127.0.0.1:0")?
-        .run()
-        .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::test as actix_test;
+    use actix_web::{test as actix_test, App};
 
     #[actix_web::test]
     async fn healthz_returns_ok_json() {

@@ -248,7 +248,8 @@ gRPC `details` 字段带 `ErrorBody` 序列化 payload（与 REST 一致）。
 
 ### 4.5 GET /healthz
 
-无错误（200 OK 永远返回 `{ "status": "ok", "service": "auth-service" }`；无 DB 依赖）。
+无错误（200 OK 永远返回 `{ "status": "ok", "app": { "name": "auth-service", "version": "<CARGO_PKG_VERSION>" } }`；无 DB 依赖）。
+  <!-- 2026-10-07 更正：原文写的是统一前的 `{ "status": "ok", "service": "auth-service" }`；全仓 18 个服务已于同日统一为 `{"status","app":{"name","version"}}`（per `deploy/BACKEND_STATUS_v0.4.md` §4.1o，常设门禁 `deploy/scripts/lint-compose.py` 规则 10/11/12）。-->
 
 ---
 

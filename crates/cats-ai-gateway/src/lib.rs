@@ -19,15 +19,15 @@
 //! - mTLS (per ADR-009, MVP 阶段不上)
 
 #![allow(missing_docs)]
-#![allow(clippy::needless_late_init)]  // mock impl 内 OK
+#![allow(clippy::needless_late_init)] // mock impl 内 OK
 
-pub mod provider;
-pub mod router;
-pub mod quota;
-pub mod retry;
+pub mod api;
 pub mod compliance;
 pub mod error;
-pub mod api;
+pub mod provider;
+pub mod quota;
+pub mod retry;
+pub mod router;
 pub mod service;
 
 // 由 tonic-build 在编译期生成（per build.rs）
@@ -56,9 +56,13 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
 /// 返回 crate 版本字符串
-pub fn version() -> &'static str { VERSION }
+pub fn version() -> &'static str {
+    VERSION
+}
 /// 返回 crate 名称
-pub fn name() -> &'static str { NAME }
+pub fn name() -> &'static str {
+    NAME
+}
 
 #[cfg(test)]
 mod tests {
@@ -67,7 +71,10 @@ mod tests {
     #[test]
     fn version_is_semver_like() {
         let v = version();
-        assert!(v.starts_with("0.1."), "version should start with '0.1.', got {v}");
+        assert!(
+            v.starts_with("0.1."),
+            "version should start with '0.1.', got {v}"
+        );
     }
 
     #[test]
@@ -78,6 +85,11 @@ mod tests {
     #[test]
     fn public_modules_are_exported() {
         // 回归保护：防重构时漏 pub
-        let _: fn() -> &'static str = provider::ProviderName::as_str;
+        // ProviderName::as_str 的签名是 fn(self) -> &'static str（按值接收 self），
+        // 之前的 fn() -> &'static str 与真实签名不符，导致 lib test 编译失败。
+        let _: fn(provider::ProviderName) -> &'static str = provider::ProviderName::as_str;
+
+        // 顺带确认它确实可调用，而不是只过类型检查
+        assert_eq!(provider::ProviderName::OpenAi.as_str(), "openai");
     }
 }

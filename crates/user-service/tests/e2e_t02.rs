@@ -69,18 +69,58 @@ fn make_app(
     >,
 > {
     let pool_data = web::Data::new(pool);
-    App::new()
-        .app_data(pool_data)
-        .route("/healthz", web::get().to(handlers::healthz))
-        .route("/v1/users", web::post().to(handlers::create_user))
-        .route("/v1/users/{id}", web::get().to(handlers::get_user))
-        .route("/v1/users/{id}", web::put().to(handlers::update_user))
+    // 2026-10-07: 挂生产的 `handlers::configure_routes`，不再自己抄一份路由
+    // （原来 4 = 4 完全一致，所以改之前不是假绿；per BACKEND_STATUS §4.1t）
+    App::new().configure(move |c| handlers::configure_routes(c, pool_data.clone()))
 }
+
+// =====================================================================
+// 关于身份头（2026-10-07）
+//
+// 本服务三条业务路由在 §4.1x 之前**完全没有鉴权**，之后统一走
+// `cats_rbac::service_helpers::extract_user_id_and_roles` —— 缺 `X-Cats-*`
+// 就该 401。e2e 用例原先不带这两个头，于是 `e2e (real PostgreSQL)` 里
+// 4 个用例全红（实测 `left: 401`，CI run 112794634614）。
+//
+// **是测试错了，不是代码错了。** 生产链路里请求必然经过 envoy：
+// `jwt_authn` 验签后按 `claim_to_headers` 注入 `sub → X-Cats-User-Id`、
+// `roles_csv → X-Cats-Roles`，而路由上的 `request_headers_to_remove` 会先
+// 剥掉客户端自带的同名头。所以"不带身份头"在生产中不可能发生 ——
+// 发生的是 401，而这正是期望行为。
+//
+// 给测试开后门（比如加一个 `#[cfg(test)]` 跳过鉴权的分支）会让**真正缺鉴权
+// 的回归测试不出来** —— 那才是更贵的错误。所以这里老老实实把头带上。
+//
+// ---------------------------------------------------------------------
+// 为什么角色是 Sponsor 而不是 User（这是个待拍板的发现，不是随手选的）
+//
+// `route_to_resource_action` 把三条路由映射成：
+//   POST /v1/users        → (User, Create)
+//   GET  /v1/users/{id}   → (User, Read)
+//   PUT  /v1/users/{id}   → (User, Update)
+//
+// 而 `cats_rbac::default_permissions()` 里 `Role::User` 对 `Resource::User`
+// **只有 Read**（lib.rs:283-296）—— 没有 Create，也没有 Update。
+// 逐个角色核过：Sponsor 全权；ArchitectLead 只有 Read；RustLead 只管
+// Service；DatabaseLead 对 User 只有 Read；QualityLead 只有 Read；
+// ProjectLead 只管 Sprint/Decision/Risk/Gap；SRELead 只管 Alert/KafkaTopic/
+// K8sResource；Guest 只读公开资源。
+//
+// ⇒ **`User × Create` 和 `User × Update` 在当前矩阵下只有 Sponsor 能过。**
+// crate 内已有单测 `plain_user_cannot_create_users` 把这条钉住了。
+//
+// 也就是说：普通用户既不能自助注册、也不能改自己的档案。对一个要商业化
+// 的产品来说这大概率不是本意，但**改权限矩阵是设计决策，不在修 CI 的范围
+// 内**，已单独记入 §4.1u 待拍板。这里用 Sponsor 让 e2e 覆盖到真正的 CRUD 路径，
+// 并且把上面这段原因写在文件里，免得下一个读的人以为 Sponsor 是随手选的。
+// ---------------------------------------------------------------------
+// =====================================================================
 
 // =====================================================================
 // 1. healthz
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_healthz_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -90,14 +130,16 @@ async fn e2e_healthz_returns_200() {
     assert_eq!(resp.status().as_u16(), 200);
     let body: serde_json::Value = actix_test::read_body_json(resp).await;
     assert_eq!(body["status"], json!("ok"));
-    assert_eq!(body["name"], json!("user-service"));
-    assert!(body["version"].as_str().unwrap().starts_with("0.1."));
+    // 形状 per BACKEND_STATUS §4.1m 统一后的全仓唯一形状
+    assert_eq!(body["app"]["name"], json!(env!("CARGO_PKG_NAME")));
+    assert!(body["app"]["version"].as_str().unwrap().starts_with("0.1."));
 }
 
 // =====================================================================
 // 2. POST /v1/users 创建 → 201
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_create_user_returns_201() {
     setup_env();
     let pool = make_pool().await;
@@ -106,6 +148,9 @@ async fn e2e_create_user_returns_201() {
     let app = actix_test::init_service(make_app(pool.clone())).await;
     let req = actix_test::TestRequest::post()
         .uri("/v1/users")
+        // 调用者就是被创建的那个用户自己
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(CreateUserRequest {
             user_id,
             display_name: "Alice T02".to_string(),
@@ -129,6 +174,7 @@ async fn e2e_create_user_returns_201() {
 // 3. GET /v1/users/{id} 命中
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_user_by_id_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -140,6 +186,8 @@ async fn e2e_get_user_by_id_returns_200() {
     // 先 create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/users")
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(CreateUserRequest {
             user_id,
             display_name: "Bob T02".to_string(),
@@ -157,6 +205,8 @@ async fn e2e_get_user_by_id_returns_200() {
     // 再 get by id
     let get_req = actix_test::TestRequest::get()
         .uri(&format!("/v1/users/{id}"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .to_request();
     let get_resp = actix_test::call_service(&app, get_req).await;
     assert_eq!(get_resp.status().as_u16(), 200);
@@ -175,6 +225,7 @@ async fn e2e_get_user_by_id_returns_200() {
 // 4. GET /v1/users/{id} 不存在 → 404 user_not_found
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_get_user_not_found_returns_404() {
     setup_env();
     let pool = make_pool().await;
@@ -183,6 +234,8 @@ async fn e2e_get_user_not_found_returns_404() {
     let non_existing = Uuid::new_v4();
     let req = actix_test::TestRequest::get()
         .uri(&format!("/v1/users/{non_existing}"))
+        .insert_header(("X-Cats-User-Id", Uuid::new_v4().to_string()))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 404);
@@ -194,6 +247,7 @@ async fn e2e_get_user_not_found_returns_404() {
 // 5. PUT /v1/users/{id} 部分更新
 // =====================================================================
 #[actix_web::test]
+#[ignore = "e2e-needs-real-pg: requires DATABASE_URL + JWT_SECRET (real PG); run with -- --ignored"]
 async fn e2e_update_user_partial_returns_200() {
     setup_env();
     let pool = make_pool().await;
@@ -204,6 +258,8 @@ async fn e2e_update_user_partial_returns_200() {
     // create
     let create_req = actix_test::TestRequest::post()
         .uri("/v1/users")
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(CreateUserRequest {
             user_id,
             display_name: "Carol T02".to_string(),
@@ -214,12 +270,20 @@ async fn e2e_update_user_partial_returns_200() {
         })
         .to_request();
     let create_resp = actix_test::call_service(&app, create_req).await;
+    assert_eq!(
+        create_resp.status().as_u16(),
+        201,
+        "create must succeed before update, got {}",
+        create_resp.status()
+    );
     let created: GetUserResponse = actix_test::read_body_json(create_resp).await;
     let id = created.id.clone();
 
     // update 部分字段 (display_name + timezone)
     let update_req = actix_test::TestRequest::put()
         .uri(&format!("/v1/users/{id}"))
+        .insert_header(("X-Cats-User-Id", user_id.to_string()))
+        .insert_header(("X-Cats-Roles", "Sponsor"))
         .set_json(UpdateUserRequest {
             display_name: Some("Carol T02 (updated)".to_string()),
             email: None,

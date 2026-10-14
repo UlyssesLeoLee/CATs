@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CATs Vercel Test Server</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="landing">
+      <header>
+        <span class="logo">CATs</span>
+        <span class="badge-test">VERCEL · TEST SERVER</span>
+      </header>
+
+      <section class="hero">
+        <h1>Vercel 测试服务器</h1>
+        <p class="lede">
+          本目录 (<code>vercelserver/</code>) 是 <strong>独立可复用</strong> 的 Vercel 静态部署套件。
+          3 个子应用共享同一域名不同路径:
+        </p>
+        <ul class="meta-list">
+          <li><span class="lbl">位置</span><span class="val"><code>vercelserver/</code> (本仓库)</span></li>
+          <li><span class="lbl">入口</span><span class="val">vercel.json (路由 + cache headers)</span></li>
+          <li><span class="lbl">部署</span><span class="val">GitHub Actions → vercel deploy --prod</span></li>
+          <li><span class="lbl">复用方式</span><span class="val"><code>scripts/build.sh</code> 从 <code>SOURCE_ROOT</code> env 拉取源</span></li>
+          <li><span class="lbl">子应用</span><span class="val">cats-client / web-console-mock / media-pipeline-mock</span></li>
+        </ul>
+      </section>
+
+      <section class="cards">
+        <a class="card" href="/cats-client/">
+          <div class="card-icon">🖥️</div>
+          <div class="card-body">
+            <h2>cats-client</h2>
+            <p>CATs 客户端 Svelte 5 + Vite 静态预览 — 桌面 / 浏览器双模式, 橙色 "web preview" badge 标识</p>
+            <code>/cats-client/</code>
+          </div>
+        </a>
+        <a class="card" href="/web-console-mock/">
+          <div class="card-icon">📊</div>
+          <div class="card-body">
+            <h2>web-console-mock</h2>
+            <p>Next.js 控制台静态 mock preview — 仪表盘 + 项目表 + 审计流 + 服务健康 (18 个 service 网格)</p>
+            <code>/web-console-mock/</code>
+          </div>
+        </a>
+        <a class="card" href="/media-pipeline-mock/">
+          <div class="card-icon">🎬</div>
+          <div class="card-body">
+            <h2>media-pipeline-mock</h2>
+            <p>MMDPGE 多模态预处理管道 mock — VAD 静音切除 + Whisper 转写 + 关键帧提取的算力节省可视化</p>
+            <code>/media-pipeline-mock/</code>
+          </div>
+        </a>
+      </section>
+
+      <section class="reusability">
+        <h2>复用指南</h2>
+        <ol>
+          <li><strong>直接复制</strong>: 把 <code>vercelserver/</code> 整个目录拷到任何静态站点项目的根。</li>
+          <li><strong>配置 source</strong>: 设置环境变量 <code>SOURCE_ROOT=/path/to/your/project</code> (默认 <code>..</code> = 父目录)。</li>
+          <li><strong>跑 build</strong>: <code>bash vercelserver/scripts/build.sh</code> — 自动构建源项目并复制到 <code>vercelserver/src/</code>。</li>
+          <li><strong>本地预览</strong>: <code>cd vercelserver/src && python -m http.server 8080</code>。</li>
+          <li><strong>部署</strong>: <code>vercel deploy --prod</code> 或推 trigger 分支触发 GitHub Actions。</li>
+        </ol>
+        <p class="note">
+          本套件 <strong>不依赖任何 Vercel 特有能力</strong> (无 Edge Functions / 无 Serverless) — 纯静态资源,
+          可平移到 Cloudflare Pages / Netlify / GitHub Pages / S3+CloudFront 等任何静态托管。
+        </p>
+      </section>
+
+      <footer class="foot">
+        <span>© 2026 CATs · Universal Computer-Assisted Translation SaaS</span>
+        <span>部署目标: Vercel (测试服务器) · 本地预览: <code>python -m http.server</code></span>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -13,6 +13,11 @@
 
 #![allow(missing_docs)]
 
+// 2026-10-04 接线：`service_helpers.rs`（178 行，HttpRequest 层的 RBAC
+// 辅助函数）此前从未被编译，`cats_rbac::service_helpers` 在整个仓库里
+// 都不可用 —— 唯一想用它的是 worker-service 的 handlers.rs。
+pub mod service_helpers;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -49,16 +54,10 @@ pub enum Role {
     Guest,
 }
 
-impl Role {
-    /// 代签理由 (per 守门 #14 v3 + 8/27 19:39/20:56/21:59/9/8 15:19)
-    pub fn proxy_reason(&self) -> ProxyReason {
-        match self {
-            Role::Sponsor => ProxyReason::NoProxy, // Sponsor Ulysses 本人签
-            Role::User | Role::Guest => ProxyReason::NoProxy, // 业务角色 0 代签
-            _ => ProxyReason::PersonNotAvailable, // 5 域 Lead 真人到位率 0%
-        }
-    }
-}
+// 2026-10-05 删除 `Role::proxy_reason()`: 全仓 0 调用方 (含 inline 测试)。
+// 代签理由只是 README §代签机制 的设计草图, 对应的 `ProxySignature` 结构体
+// 在代码里根本不存在, 代签实际由 Mavis 在代码外完成, 没有消费方。
+// `ProxyReason` 枚举保留 (pub API + 文档引用)。
 
 /// 代签理由
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,35 +79,35 @@ pub enum ProxyReason {
 /// 16 域资源 (per 微服务架构 v1.0 §4 8 域 MVP + 启动会 Sprint 1 范围)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Resource {
-    ApiDesign,        // /v1/api-designs/{id}
-    ModuleDesign,     // /v1/module-designs/{id}
-    User,             // /v1/users/{id}
-    Task,             // /v1/tasks/{id}
-    Project,          // /v1/projects/{id}
-    File,             // /v1/files/{id}
-    Audit,            // /v1/audit-logs/{id}
-    Report,           // /v1/reports/{id}
-    Alert,            // /v1/alerts/{id}
-    KafkaTopic,       // /v1/kafka-topics/{id}
-    K8sResource,      // /v1/k8s/{kind}/{name}
-    Service,          // /v1/services/{id}
-    Translation,      // /v1/translations/{id}
-    Sprint,           // /v1/sprints/{id}
-    Decision,         // /v1/decisions/{id}
-    Risk,             // /v1/risks/{id}
-    Gap,              // /v1/gaps/{id}
+    ApiDesign,    // /v1/api-designs/{id}
+    ModuleDesign, // /v1/module-designs/{id}
+    User,         // /v1/users/{id}
+    Task,         // /v1/tasks/{id}
+    Project,      // /v1/projects/{id}
+    File,         // /v1/files/{id}
+    Audit,        // /v1/audit-logs/{id}
+    Report,       // /v1/reports/{id}
+    Alert,        // /v1/alerts/{id}
+    KafkaTopic,   // /v1/kafka-topics/{id}
+    K8sResource,  // /v1/k8s/{kind}/{name}
+    Service,      // /v1/services/{id}
+    Translation,  // /v1/translations/{id}
+    Sprint,       // /v1/sprints/{id}
+    Decision,     // /v1/decisions/{id}
+    Risk,         // /v1/risks/{id}
+    Gap,          // /v1/gaps/{id}
 }
 
 /// 7 操作 (per 权限矩阵 v1.0 §3)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Action {
-    Read,             // GET
-    Create,           // POST
-    Update,           // PUT / PATCH
-    Delete,           // DELETE
-    Approve,          // 决议 / 签字 (per 启动会 决议 4 RACI SLA)
-    Audit,            // 审计查看 (DBA / QA Lead)
-    Deploy,           // K3s 部署 (SRE 平台 Lead, per SRE 估算 v1.0 §4)
+    Read,    // GET
+    Create,  // POST
+    Update,  // PUT / PATCH
+    Delete,  // DELETE
+    Approve, // 决议 / 签字 (per 启动会 决议 4 RACI SLA)
+    Audit,   // 审计查看 (DBA / QA Lead)
+    Deploy,  // K3s 部署 (SRE 平台 Lead, per SRE 估算 v1.0 §4)
 }
 
 // =====================================================================
@@ -129,23 +128,20 @@ pub enum RbacError {
     UserInactive,
     /// 操作未授权 (per 错误码表 v1.0 §3.7 operation_not_permitted / RBAC)
     #[error("operation not permitted: role insufficient")]
-    Forbidden { required_role: Role, actual_role: Role },
+    Forbidden {
+        required_role: Role,
+        actual_role: Role,
+    },
     /// 资源不存在 (per 错误码表 v1.0 §3.4 resource_not_found)
     #[error("resource not found: {0}")]
     NotFound(String),
 }
 
 impl RbacError {
-    /// 转换为 ErrorBody.error 枚举 (per 错误码表 v1.0 §3)
-    pub fn to_error_code(&self) -> &'static str {
-        match self {
-            RbacError::Unauthenticated => "missing_authorization",
-            RbacError::InvalidCredentials => "invalid_credentials",
-            RbacError::UserInactive => "user_inactive",
-            RbacError::Forbidden { .. } => "operation_not_permitted",
-            RbacError::NotFound(_) => "resource_not_found",
-        }
-    }
+    // 2026-10-05 删除 `RbacError::to_error_code()`: 全仓 0 调用方。同一张错误码
+    // 表 (v1.0 §3) 已在两处落地 —— `cats-common::ErrorCode` 的序列化映射
+    // (common/src/error.rs) 和各 service crate 自己的 `rbac_error_to_response()`
+    // (硬编码同 5 个字符串), 本函数是第三份重复实现。
 
     /// HTTP 状态码 (per 错误码表 v1.0 §3.3-§3.7 + 接口设计书 v2.0+2 §3.5.2)
     pub fn http_status(&self) -> u16 {
@@ -184,62 +180,128 @@ pub fn default_permissions() -> Vec<Permission> {
     // Sponsor: 全权
     for r in resource_all() {
         for a in action_all() {
-            perms.push(Permission { role: Role::Sponsor, resource: r, action: a });
+            perms.push(Permission {
+                role: Role::Sponsor,
+                resource: r,
+                action: a,
+            });
         }
     }
 
     // 架构师 Lead: ApiDesign / ModuleDesign 全权, 其他 Read
     for r in [Resource::ApiDesign, Resource::ModuleDesign] {
         for a in action_all() {
-            perms.push(Permission { role: Role::ArchitectLead, resource: r, action: a });
+            perms.push(Permission {
+                role: Role::ArchitectLead,
+                resource: r,
+                action: a,
+            });
         }
     }
     for r in resource_all() {
-        perms.push(Permission { role: Role::ArchitectLead, resource: r, action: Action::Read });
+        perms.push(Permission {
+            role: Role::ArchitectLead,
+            resource: r,
+            action: Action::Read,
+        });
     }
 
     // Rust Lead: Service 全权
     for a in action_all() {
-        perms.push(Permission { role: Role::RustLead, resource: Resource::Service, action: a });
+        perms.push(Permission {
+            role: Role::RustLead,
+            resource: Resource::Service,
+            action: a,
+        });
     }
 
     // DBA Lead: Audit / Report 全权 + 16 域 Read
     for a in [Action::Read, Action::Audit, Action::Approve] {
         for r in [Resource::Audit, Resource::Report] {
-            perms.push(Permission { role: Role::DatabaseLead, resource: r, action: a });
+            perms.push(Permission {
+                role: Role::DatabaseLead,
+                resource: r,
+                action: a,
+            });
         }
     }
-    for r in [Resource::User, Resource::Task, Resource::Project, Resource::File] {
-        perms.push(Permission { role: Role::DatabaseLead, resource: r, action: Action::Read });
+    for r in [
+        Resource::User,
+        Resource::Task,
+        Resource::Project,
+        Resource::File,
+    ] {
+        perms.push(Permission {
+            role: Role::DatabaseLead,
+            resource: r,
+            action: Action::Read,
+        });
     }
 
     // QA Lead: 16 域 Read (评审类)
     for r in resource_all() {
-        perms.push(Permission { role: Role::QualityLead, resource: r, action: Action::Read });
+        perms.push(Permission {
+            role: Role::QualityLead,
+            resource: r,
+            action: Action::Read,
+        });
     }
 
     // PMO Lead: Sprint / Decision / Risk / Gap 全权
-    for r in [Resource::Sprint, Resource::Decision, Resource::Risk, Resource::Gap] {
+    for r in [
+        Resource::Sprint,
+        Resource::Decision,
+        Resource::Risk,
+        Resource::Gap,
+    ] {
         for a in action_all() {
-            perms.push(Permission { role: Role::ProjectLead, resource: r, action: a });
+            perms.push(Permission {
+                role: Role::ProjectLead,
+                resource: r,
+                action: a,
+            });
         }
     }
 
     // SRE Lead: Alert / KafkaTopic / K8sResource 全权 (含 Create 部署)
-    for a in [Action::Read, Action::Create, Action::Update, Action::Deploy, Action::Audit] {
+    for a in [
+        Action::Read,
+        Action::Create,
+        Action::Update,
+        Action::Deploy,
+        Action::Audit,
+    ] {
         for r in [Resource::Alert, Resource::KafkaTopic, Resource::K8sResource] {
-            perms.push(Permission { role: Role::SRELead, resource: r, action: a });
+            perms.push(Permission {
+                role: Role::SRELead,
+                resource: r,
+                action: a,
+            });
         }
     }
 
     // User: 自己的资源 Read / Update
-    for r in [Resource::User, Resource::Task, Resource::Project, Resource::File, Resource::Translation] {
-        perms.push(Permission { role: Role::User, resource: r, action: Action::Read });
+    for r in [
+        Resource::User,
+        Resource::Task,
+        Resource::Project,
+        Resource::File,
+        Resource::Translation,
+    ] {
+        perms.push(Permission {
+            role: Role::User,
+            resource: r,
+            action: Action::Read,
+        });
     }
 
     // Guest: 仅公开资源 Read
     for r in [Resource::ApiDesign, Resource::ModuleDesign] {
-        perms.push(Permission { role: Role::Guest, resource: r, action: Action::Read });
+        perms.push(Permission {
+            role: Role::Guest,
+            resource: r,
+            action: Action::Read,
+        });
     }
 
     perms
@@ -247,18 +309,35 @@ pub fn default_permissions() -> Vec<Permission> {
 
 fn resource_all() -> Vec<Resource> {
     vec![
-        Resource::ApiDesign, Resource::ModuleDesign, Resource::User, Resource::Task,
-        Resource::Project, Resource::File, Resource::Audit, Resource::Report,
-        Resource::Alert, Resource::KafkaTopic, Resource::K8sResource, Resource::Service,
-        Resource::Translation, Resource::Sprint, Resource::Decision, Resource::Risk,
+        Resource::ApiDesign,
+        Resource::ModuleDesign,
+        Resource::User,
+        Resource::Task,
+        Resource::Project,
+        Resource::File,
+        Resource::Audit,
+        Resource::Report,
+        Resource::Alert,
+        Resource::KafkaTopic,
+        Resource::K8sResource,
+        Resource::Service,
+        Resource::Translation,
+        Resource::Sprint,
+        Resource::Decision,
+        Resource::Risk,
         Resource::Gap,
     ]
 }
 
 fn action_all() -> Vec<Action> {
     vec![
-        Action::Read, Action::Create, Action::Update, Action::Delete,
-        Action::Approve, Action::Audit, Action::Deploy,
+        Action::Read,
+        Action::Create,
+        Action::Update,
+        Action::Delete,
+        Action::Approve,
+        Action::Audit,
+        Action::Deploy,
     ]
 }
 
@@ -324,12 +403,15 @@ impl RbacChecker {
         // 无匹配, 取第一个角色作为 actual_role
         let actual_role = user_roles.first().copied().unwrap_or(Role::Guest);
         let required_role = match action {
-            Action::Approve => Role::Sponsor, // 决议类需 Sponsor
-            Action::Deploy => Role::SRELead,  // 部署类需 SRE Lead
+            Action::Approve => Role::Sponsor,    // 决议类需 Sponsor
+            Action::Deploy => Role::SRELead,     // 部署类需 SRE Lead
             Action::Audit => Role::DatabaseLead, // 审计需 DBA Lead
-            _ => Role::User,                  // 其他业务操作需 User+
+            _ => Role::User,                     // 其他业务操作需 User+
         };
-        Err(RbacError::Forbidden { required_role, actual_role })
+        Err(RbacError::Forbidden {
+            required_role,
+            actual_role,
+        })
     }
 
     /// 路径 → 资源 解析 (per 接口设计书 v2.0+2 §1)
@@ -415,9 +497,7 @@ mod tests {
     #[tokio::test]
     async fn test_guest_cannot_access_user_resource() {
         let checker = RbacChecker::new();
-        let result = checker
-            .check(&[Role::Guest], "/v1/users/123", "GET")
-            .await;
+        let result = checker.check(&[Role::Guest], "/v1/users/123", "GET").await;
         assert!(matches!(result, Err(RbacError::Unauthenticated)));
     }
 
@@ -481,12 +561,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_path_method_parsing() {
-        assert_eq!(RbacChecker::parse_path_to_resource("/v1/users/123"), Some(Resource::User));
-        assert_eq!(RbacChecker::parse_path_to_resource("/v1/api-designs/v2"), Some(Resource::ApiDesign));
+        assert_eq!(
+            RbacChecker::parse_path_to_resource("/v1/users/123"),
+            Some(Resource::User)
+        );
+        assert_eq!(
+            RbacChecker::parse_path_to_resource("/v1/api-designs/v2"),
+            Some(Resource::ApiDesign)
+        );
         assert_eq!(RbacChecker::parse_path_to_resource("/v1/unknown"), None);
-        assert_eq!(RbacChecker::parse_method_to_action("GET"), Some(Action::Read));
-        assert_eq!(RbacChecker::parse_method_to_action("POST"), Some(Action::Create));
-        assert_eq!(RbacChecker::parse_method_to_action("DELETE"), Some(Action::Delete));
+        assert_eq!(
+            RbacChecker::parse_method_to_action("GET"),
+            Some(Action::Read)
+        );
+        assert_eq!(
+            RbacChecker::parse_method_to_action("POST"),
+            Some(Action::Create)
+        );
+        assert_eq!(
+            RbacChecker::parse_method_to_action("DELETE"),
+            Some(Action::Delete)
+        );
     }
 }
 

@@ -16,6 +16,7 @@
 pub mod db;
 pub mod handlers;
 pub mod models;
+pub mod rbac;
 
 pub use models::{CreateUserRequest, ErrorBody, GetUserResponse, UpdateUserRequest, UserProfile};
 

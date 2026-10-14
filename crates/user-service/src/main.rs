@@ -32,21 +32,11 @@ async fn main() -> std::io::Result<()> {
 
     let pool_data = web::Data::new(pool);
     HttpServer::new(move || {
-        App::new()
-            .app_data(pool_data.clone())
-            .route("/healthz", web::get().to(user_service::handlers::healthz))
-            .route(
-                "/v1/users",
-                web::post().to(user_service::handlers::create_user),
-            )
-            .route(
-                "/v1/users/{id}",
-                web::get().to(user_service::handlers::get_user),
-            )
-            .route(
-                "/v1/users/{id}",
-                web::put().to(user_service::handlers::update_user),
-            )
+        // 路由表只有这一份 —— main.rs 与集成测试共用
+        // `handlers::configure_routes`（per BACKEND_STATUS §4.1t）。
+        // 先 clone 再 move：这个闭包是 `Fn`，不能把 `pool_data` 直接 move 进去。
+        let pool = pool_data.clone();
+        App::new().configure(move |c| user_service::handlers::configure_routes(c, pool.clone()))
     })
     .bind(&bind_addr)?
     .run()

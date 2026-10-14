@@ -34,7 +34,14 @@ struct HealthResponse {
 async fn healthz() -> HttpResponse {
     HttpResponse::Ok().json(HealthResponse {
         status: "ok",
-        app: AppMeta::current(),
+        // 2026-10-05: 原来用 AppMeta::current(), 它返回的是 **cats-common 自己的**
+        // CARGO_PKG_NAME —— 于是所有 service 的 /healthz 都自报 "cats-common",
+        // 监控无法区分是哪个服务应答的, 版本号也是共享库的版本。
+        // env! 是编译期按**本 crate** 展开的, 所以这里报的是本服务自己。
+        app: AppMeta {
+            name: env!("CARGO_PKG_NAME").to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
     })
 }
 

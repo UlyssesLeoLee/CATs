@@ -1,0 +1,29 @@
+{
+  "provider": "anthropic",
+  "description": "cats-ai-gateway mock provider fixture for Anthropic. Schema: provider_schema.json.",
+  "default_model": "claude-3-5-sonnet",
+  "cost_per_1k_tokens_usd": 0.0003,
+  "responses": [
+    {
+      "prompt_substring": "translate",
+      "content": "High-quality translation from claude-3-5-sonnet: hello -> 你好",
+      "prompt_tokens": 14,
+      "completion_tokens": 9,
+      "latency_ms": 0
+    },
+    {
+      "prompt_substring": "review",
+      "content": "Code review notes from claude-3-5-sonnet: no blocking issues found.",
+      "prompt_tokens": 60,
+      "completion_tokens": 32,
+      "latency_ms": 0
+    },
+    {
+      "prompt_substring": "default",
+      "content": "Mock Anthropic response",
+      "prompt_tokens": 12,
+      "completion_tokens": 18,
+      "latency_ms": 0
+    }
+  ]
+}

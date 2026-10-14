@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::api;
 use crate::offline::{OfflineAction, OfflineStatus};
@@ -102,7 +102,12 @@ pub async fn sync_offline_queue(
     for action in pending {
         let result: anyhow::Result<()> = match action.action_type.as_str() {
             "create_project" => {
-                let v: serde_json::Value = serde_json::from_str(&action.payload_json)?;
+                let v: serde_json::Value = match serde_json::from_str(&action.payload_json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(format!("payload_json parse: {e}"));
+                    }
+                };
                 let req = api::projects::CreateProjectRequest {
                     name: v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
                     source_lang: v.get("source_lang").and_then(|x| x.as_str()).unwrap_or(""),

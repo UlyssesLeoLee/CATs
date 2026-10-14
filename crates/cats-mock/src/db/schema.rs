@@ -4,6 +4,10 @@
 //!
 //! 注意: 这是 DDL 的**测试快照**, 与各 service 的 migrations 同步
 //! (每次 service migration 变更, 这里需要同步更新 — 由 Test Quality Lead 兜底)
+//!
+//! 已清理 (全仓零调用): `audit_only()` / `users_only()` — 均为 `audit_log_schema()` /
+//! `users_schema()` 的单行别名, 直接调底层 fn 即可; `translation_unit_schema()` —
+//! 无任何 migration 或测试引用, 16 个 service crate 对本 crate 只用 `name_matches_crate`
 
 /// Schema 集合: 一组表 + 索引的 DDL
 #[derive(Debug, Clone, Default)]
@@ -14,7 +18,9 @@ pub struct SchemaSet {
 
 impl SchemaSet {
     /// 空 schema
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// 加一条 DDL
     pub fn push(mut self, sql: impl Into<String>) -> Self {
@@ -36,16 +42,9 @@ impl SchemaSet {
             .merge(audit_log_schema())
     }
 
-    /// 仅 audit_log (auth-service 用)
-    pub fn audit_only() -> SchemaSet { audit_log_schema() }
-
-    /// 仅 users (user-service 用)
-    pub fn users_only() -> SchemaSet { users_schema() }
-
     /// pgvector 扩展 (translation-core 用)
     pub fn pgvector_ext() -> SchemaSet {
-        SchemaSet::new()
-            .push("CREATE EXTENSION IF NOT EXISTS vector;")
+        SchemaSet::new().push("CREATE EXTENSION IF NOT EXISTS vector;")
     }
 }
 
@@ -80,7 +79,8 @@ pub fn users_schema() -> SchemaSet {
 /// projects schema (per project-service migrations)
 pub fn projects_schema() -> SchemaSet {
     SchemaSet::new()
-        .push(r#"
+        .push(
+            r#"
             CREATE TABLE IF NOT EXISTS project (
                 id          UUID PRIMARY KEY,
                 owner_id    UUID NOT NULL,
@@ -92,7 +92,8 @@ pub fn projects_schema() -> SchemaSet {
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
-        "#)
+        "#,
+        )
         .push("CREATE INDEX IF NOT EXISTS idx_project_owner_id ON project(owner_id);")
         .push("CREATE INDEX IF NOT EXISTS idx_project_status ON project(status);")
 }
@@ -100,7 +101,8 @@ pub fn projects_schema() -> SchemaSet {
 /// tasks schema (per task-service migrations)
 pub fn tasks_schema() -> SchemaSet {
     SchemaSet::new()
-        .push(r#"
+        .push(
+            r#"
             CREATE TABLE IF NOT EXISTS task (
                 id          UUID PRIMARY KEY,
                 project_id  UUID NOT NULL,
@@ -112,7 +114,8 @@ pub fn tasks_schema() -> SchemaSet {
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
-        "#)
+        "#,
+        )
         .push("CREATE INDEX IF NOT EXISTS idx_task_project_id ON task(project_id);")
         .push("CREATE INDEX IF NOT EXISTS idx_task_status ON task(status);")
 }
@@ -120,7 +123,8 @@ pub fn tasks_schema() -> SchemaSet {
 /// audit_log schema (per auth-service T-01 migrations)
 pub fn audit_log_schema() -> SchemaSet {
     SchemaSet::new()
-        .push(r#"
+        .push(
+            r#"
             CREATE TABLE IF NOT EXISTS audit_log (
                 event_id    UUID PRIMARY KEY,
                 user_id     UUID,
@@ -131,26 +135,11 @@ pub fn audit_log_schema() -> SchemaSet {
                 user_agent  TEXT,
                 occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
-        "#)
+        "#,
+        )
         .push("CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);")
         .push("CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type);")
         .push("CREATE INDEX IF NOT EXISTS idx_audit_log_occurred_at ON audit_log(occurred_at);")
-}
-
-/// pgvector translation_unit schema (per translation-core)
-pub fn translation_unit_schema() -> SchemaSet {
-    SchemaSet::new()
-        .push("CREATE EXTENSION IF NOT EXISTS vector;")
-        .push(r#"
-            CREATE TABLE IF NOT EXISTS translation_unit (
-                id         UUID PRIMARY KEY,
-                project_id UUID NOT NULL,
-                source     TEXT NOT NULL,
-                target     TEXT,
-                embedding  vector(384),
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-        "#)
 }
 
 #[cfg(test)]

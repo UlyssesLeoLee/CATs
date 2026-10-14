@@ -23,7 +23,9 @@ use super::error::ApiError;
 /// API 客户端（持有 AppState 弱引用，便于传入子模块调用）
 #[derive(Clone)]
 pub struct ApiClient {
-    state: Arc<AppState>,
+    // 切片 D (ULYS-154) + 已有 projects.rs 需要访问内部 http client
+    //   加 Idempotency-Key 头. 改为 pub(crate) 让同 crate 子模块可见.
+    pub(crate) state: Arc<AppState>,
 }
 
 impl ApiClient {
@@ -116,7 +118,7 @@ impl ApiClient {
         Ok(req)
     }
 
-    async fn parse_json<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, ApiError> {
+    pub(crate) async fn parse_json<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, ApiError> {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         serde_json::from_str::<T>(&text).map_err(|e| {

@@ -10,15 +10,29 @@
 //! - `enqueue_offline_action`   — 离线模式把请求写本地队列
 //! - `sync_offline_queue`       — 联网后批量同步队列
 //!
+//! 切片 D (ULYS-154) 新增:
+//! - `dispatch_translation_task`  — POST /v1/tasks + 写本地 task 记录
+//! - `list_local_tasks`           — 列出本地任务
+//! - `update_local_task_status`   — 改本地任务状态 (模拟进度, 等 SSE)
+//! - `list_task_events`           — 列出一个任务的事件流
+//! - `add_local_glossary_entry`   — 新增本地术语
+//! - `list_local_glossary_entries`— 列出本地术语
+//!
 //! 已知缺口（per apps/cats-client/TODO.md）:
 //! - 大段数据传输（如文档上传 / TM 导入）未实现
+//! - SSE 任务进度推送: task-service 已实现, BFF 未代理 → 客户端先用本地 SQLite 镜像
 
 pub mod auth_cmd;
 pub mod offline_cmd;
 pub mod project_cmd;
+pub mod task_cmd;
 pub mod translate_cmd;
 
 pub use auth_cmd::{auth_login, auth_refresh};
 pub use offline_cmd::{enqueue_offline_action, get_offline_status, sync_offline_queue};
 pub use project_cmd::{create_project, list_projects};
+pub use task_cmd::{
+    add_local_glossary_entry, dispatch_translation_task, list_local_glossary_entries,
+    list_local_tasks, list_task_events, update_local_task_status,
+};
 pub use translate_cmd::fetch_translation_lookup;

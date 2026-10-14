@@ -47,3 +47,36 @@ CREATE TABLE IF NOT EXISTS outbox_queue (
 
 CREATE INDEX IF NOT EXISTS idx_outbox_status
     ON outbox_queue (status, seq);
+
+-- 4. 本地术语库 (Work, per ULYS-154 切片 D)
+--    后端 BFF 当前不暴露 glossary browse endpoint (translation-core 仅
+--    glossary_match), 客户端先把用户新增的术语条目落到本地, 等后端 expose
+--    后批量同步 (per ULYS-154 §honest scope).
+CREATE TABLE IF NOT EXISTS local_glossary (
+    entry_id       TEXT PRIMARY KEY,     -- UUID, 前端生成
+    source_term    TEXT NOT NULL,
+    target_term    TEXT NOT NULL,
+    domain         TEXT,                 -- 自由标签 (产品名 / 品牌 / 法律 / ...)
+    notes          TEXT,
+    project_id     TEXT,                 -- 可选, NULL = 全局
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (source_term, target_term, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_local_glossary_project
+    ON local_glossary (project_id, created_at DESC);
+
+-- 5. 任务事件流 (Work, per ULYS-154 切片 D)
+--    客户端 POST /v1/tasks dispatch 成功后, 记录 task_id + 后续由客户端手动
+--    状态变更 (mark_local_task_status) 或本地 SSE 镜像.
+--    真 SSE 由 task-service 暴露, 但 BFF 当前不代理 (M2 范畴).
+CREATE TABLE IF NOT EXISTS task_events (
+    event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id        TEXT NOT NULL,
+    event_type     TEXT NOT NULL,        -- 'dispatched' | 'progress' | 'status_changed' | 'completed' | 'failed' | 'sse_received'
+    payload_json   TEXT,                 -- 事件细节 (progress, status, error 等)
+    recorded_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_events_task
+    ON task_events (task_id, recorded_at ASC);

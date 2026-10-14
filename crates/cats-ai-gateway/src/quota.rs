@@ -58,8 +58,8 @@ impl QuotaTracker {
     fn now_ts() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
     }
 
     /// 当前分钟窗口起点 (向下取整到分钟)
@@ -151,7 +151,9 @@ impl QuotaTracker {
 }
 
 impl Default for QuotaTracker {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 用量快照 (GET /v1/llm/usage 响应)
@@ -179,14 +181,18 @@ mod tests {
     #[tokio::test]
     async fn exceeding_limit_returns_rate_limited_with_retry_after() {
         let q = QuotaTracker::with_limit(100); // 小限额便于测试
-        // 90 token 占用
+                                               // 90 token 占用
         q.commit("org-1", 90).await;
         // 再 20 token → 110 > 100
         let err = q.check("org-1", 20).await.unwrap_err();
         match err {
-            ProviderError::RateLimited { org_id, retry_after_secs, .. } => {
+            ProviderError::RateLimited {
+                org_id,
+                retry_after_secs,
+                ..
+            } => {
                 assert_eq!(org_id, "org-1");
-                assert!(retry_after_secs >= 1 && retry_after_secs <= 60);
+                assert!((1..=60).contains(&retry_after_secs));
             }
             other => panic!("expected RateLimited, got {:?}", other),
         }

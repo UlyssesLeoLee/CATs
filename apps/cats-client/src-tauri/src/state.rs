@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use reqwest::Client;
+use tauri::Manager;
 
 use crate::offline::OfflineDb;
 

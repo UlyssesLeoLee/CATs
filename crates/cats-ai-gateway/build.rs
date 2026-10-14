@@ -21,10 +21,7 @@ fn main() -> Result<()> {
         .field_attribute(".", "#[allow(missing_docs)]")
         .build_server(true)
         .build_client(true)
-        .compile_protos(
-            &["./proto/cats/llm/v1/llm_gateway.proto"],
-            &["./proto"],
-        )?;
+        .compile_protos(&["./proto/cats/llm/v1/llm_gateway.proto"], &["./proto"])?;
 
     Ok(())
 }

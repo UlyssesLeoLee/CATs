@@ -12,9 +12,9 @@
 //! - **行为可配置**: 每个 route handler 接受 state (e.g. fixed response, dynamic factory)
 //! - **生产路径同步**: 路由表与 `api/openapi/cats-openapi-v1.yaml` 保持路径一致
 
+pub mod response;
 pub mod routes;
 pub mod server;
-pub mod response;
 
 pub use response::*;
 pub use routes::*;

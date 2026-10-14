@@ -9,11 +9,22 @@
 //! - 固定 id (用于幂等测试)
 //! - 批量 (默认 count=1)
 //! - 边界: inactive / 重复 username / 长 username
+//!
+//! 已清理: `with_password_hash()` — 全仓零调用; 它是工厂侧 `password_hash` 字段的
+//! 唯一写入口。移除后该字段恒为 `None`、`build_one` 的 `unwrap_or_else` 成为唯一可达
+//! 分支，于是把字段与那条恒假的分支一起删掉，改为直接用下面的 `FAKE_PASSWORD_HASH`。
 
 use super::{now_utc, random_past_within_days, Factory};
 use fake::faker::internet::en::Username;
 use fake::Fake;
 use serde::{Deserialize, Serialize};
+
+/// mock 用的 argon2 占位 hash —— 形如 `$argon2id$...`，不真算，测试也不验证其内容。
+///
+/// 2026-10-06 由 `format!` 内联提为常量：原来那个 `format!` 的两个实参都是字面量，
+/// 结果是一个恒定字符串，却每次 `build_one` 都要重新拼一遍。
+const FAKE_PASSWORD_HASH: &str =
+    "$argon2id$v=19$m=19456,t=2,p=1$fakesalt0123456789$fakehash0123456789";
 
 /// 生成随机 email (不依赖 fake crate 的 faker 模块, 自己造, 跨 fake 版本稳定)
 fn random_email() -> String {
@@ -54,8 +65,6 @@ pub struct UserFactory {
     username: Option<String>,
     /// 自定义 email (None = 随机生成)
     email: Option<String>,
-    /// 自定义 password_hash (None = 形如 argon2 字符串占位)
-    password_hash: Option<String>,
     /// 创建时间偏移天数 (None = 随机过去 365 天内)
     created_within_days: Option<i64>,
     /// 批量构造的 count
@@ -70,7 +79,6 @@ impl UserFactory {
             is_active: Some(true),
             username: None,
             email: None,
-            password_hash: None,
             created_within_days: None,
             count: 1,
         }
@@ -100,12 +108,6 @@ impl UserFactory {
         self
     }
 
-    /// 自定义 password_hash
-    pub fn with_password_hash(mut self, hash: impl Into<String>) -> Self {
-        self.password_hash = Some(hash.into());
-        self
-    }
-
     /// 创建时间在最近 N 天内
     pub fn created_within_days(mut self, days: i64) -> Self {
         self.created_within_days = Some(days);
@@ -125,14 +127,8 @@ impl UserFactory {
             .username
             .clone()
             .unwrap_or_else(|| Username().fake::<String>());
-        let email = self
-            .email
-            .clone()
-            .unwrap_or_else(random_email);
-        let password_hash = self.password_hash.clone().unwrap_or_else(|| {
-            // 形如 argon2 占位 (不实际算, 测试不验证 hash 内容)
-            format!("$argon2id$v=19$m=19456,t=2,p=1${}${}", "fakesalt0123456789", "fakehash0123456789")
-        });
+        let email = self.email.clone().unwrap_or_else(random_email);
+        let password_hash = FAKE_PASSWORD_HASH.to_string();
         let is_active = self.is_active.unwrap_or(true);
         let created_at = self
             .created_within_days
@@ -151,17 +147,23 @@ impl UserFactory {
     }
 
     /// 默认 count (供 lib.rs 回归测试用)
-    pub fn default_count() -> usize { 1 }
+    pub fn default_count() -> usize {
+        1
+    }
 }
 
 impl Default for UserFactory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Factory for UserFactory {
     type Output = User;
 
-    fn build(&self) -> User { self.build_one() }
+    fn build(&self) -> User {
+        self.build_one()
+    }
 
     fn build_many(&self, count: usize) -> Vec<User> {
         (0..count).map(|_| self.build_one()).collect()
